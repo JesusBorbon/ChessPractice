@@ -1,0 +1,39 @@
+{
+  "name": "practice",
+  "version": "1.0.0",
+  "description": "Realtime web chess with Socket.IO multiplayer for desktop and mobile players.",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "concurrently \"npm:dev:client\" \"npm:dev:analyze\" \"npm:dev:server\"",
+    "dev:client": "esbuild src/client/main.ts --bundle --sourcemap --format=esm --outdir=public/assets --watch",
+    "dev:analyze": "esbuild src/client/analyze.ts --bundle --sourcemap --format=esm --outdir=public/assets --watch",
+    "dev:server": "tsx watch src/server/index.ts",
+    "build": "npm run clean && npm run build:client && npm run build:server && npm run build:html",
+    "build:client": "esbuild src/client/main.ts --bundle --minify --format=esm --outdir=dist/public/assets && esbuild src/client/analyze.ts --bundle --minify --format=esm --outdir=dist/public/assets",
+    "build:server": "esbuild src/server/index.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/server.js",
+    "build:html": "shx mkdir -p dist/public && shx cp public/index.html dist/public/index.html && shx cp public/analyze.html dist/public/analyze.html",
+    "clean": "shx rm -rf dist public/assets",
+    "check": "tsc --noEmit",
+    "start": "node dist/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.5.0",
+    "chess.js": "^1.4.0",
+    "concurrently": "^9.2.1",
+    "esbuild": "^0.27.4",
+    "express": "^5.2.1",
+    "shx": "^0.4.0",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
+    "stockfish": "^18.0.5",
+    "tsx": "^4.21.0"
+  }
+}
