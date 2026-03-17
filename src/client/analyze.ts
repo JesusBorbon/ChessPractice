@@ -22,6 +22,7 @@ let suppressClickUntil = 0;
 let fenHistory: string[] = [chess.fen()];
 let moveHistory: Move[] = [];
 let cursor = 0; // which FEN we're currently viewing
+const arrowAnnotations = new Set<string>();
 
 // ── Mount ──────────────────────────────────────────────────────────────────────
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -43,7 +44,10 @@ app.innerHTML = `
         <button class="btn-ghost"   id="loadFenBtn">Load FEN</button>
       </div>
 
-      <div class="board" id="board"></div>
+      <div class="board-wrap">
+        <div class="board" id="board"></div>
+        <svg class="analyze-arrows" id="arrowLayer" viewBox="0 0 800 800" aria-hidden="true"></svg>
+      </div>
 
       <div class="nav-row">
         <button id="navFirst" title="Go to start">⏮</button>
@@ -99,6 +103,7 @@ app.innerHTML = `
 
 // ── Element refs ───────────────────────────────────────────────────────────────
 const boardEl    = q<HTMLDivElement>("#board");
+const arrowLayer = q<SVGSVGElement>("#arrowLayer");
 const statusBar  = q<HTMLDivElement>("#statusBar");
 const fenDisplay = q<HTMLTextAreaElement>("#fenDisplay");
 const pgnDisplay = q<HTMLTextAreaElement>("#pgnDisplay");
@@ -125,6 +130,7 @@ q<HTMLButtonElement>("#resetBtn").addEventListener("click", () => {
 q<HTMLButtonElement>("#flipBtn").addEventListener("click", () => {
   orientation = orientation === "w" ? "b" : "w";
   renderBoard();
+  renderArrows();
 });
 
 q<HTMLButtonElement>("#undoBtn").addEventListener("click", () => {
@@ -198,7 +204,14 @@ boardEl.addEventListener("click", (e) => {
 
   suppressClickSquare = null;
   suppressClickUntil = 0;
-  if (sq) onSquareClick(sq);
+  if (sq) {
+    clearArrows();
+    onSquareClick(sq);
+  }
+});
+
+boardEl.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
 });
 
 // ── Pointer drag ───────────────────────────────────────────────────────────────
@@ -207,8 +220,23 @@ let ptrDragNode: HTMLElement | null = null;
 let ptrDragMoved = false;
 let ptrStartX = 0;
 let ptrStartY = 0;
+let arrowDragFrom: Square | null = null;
+let arrowDragMoved = false;
 
 boardEl.addEventListener("pointerdown", (event) => {
+  if (event.button === 2) {
+    const square = getSquareFromPoint(event.clientX, event.clientY);
+    if (!square) return;
+
+    arrowDragFrom = square;
+    arrowDragMoved = false;
+    ptrStartX = event.clientX;
+    ptrStartY = event.clientY;
+    boardEl.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    return;
+  }
+
   if (event.button !== 0) return;
   const squareButton = (event.target as HTMLElement).closest<HTMLButtonElement>(".square");
   const square = squareButton?.dataset.square as Square | undefined;
@@ -222,6 +250,10 @@ boardEl.addEventListener("pointerdown", (event) => {
 });
 
 boardEl.addEventListener("pointermove", (event) => {
+  if (arrowDragFrom && !arrowDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) >= 5) {
+    arrowDragMoved = true;
+  }
+
   if (!ptrDragFrom) return;
   if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 5) return;
 
@@ -282,6 +314,7 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
     // Handle tap/click here because pointer capture can swallow the native click target.
     suppressClickSquare = targetSquare;
     suppressClickUntil = performance.now() + 250;
+    clearArrows();
     onSquareClick(targetSquare);
     return;
   }
@@ -296,8 +329,41 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
   renderBoard();
 }
 
-boardEl.addEventListener("pointerup", (event) => endPointerDrag(event, true));
-boardEl.addEventListener("pointercancel", (event) => endPointerDrag(event, false));
+function endArrowDrag(event: PointerEvent, commit: boolean): void {
+  if (!arrowDragFrom) return;
+
+  const fromSquare = arrowDragFrom;
+  arrowDragFrom = null;
+
+  if (!commit) {
+    arrowDragMoved = false;
+    return;
+  }
+
+  const targetSquare = getSquareFromPoint(event.clientX, event.clientY);
+  if (!targetSquare || !arrowDragMoved || targetSquare === fromSquare) {
+    arrowDragMoved = false;
+    return;
+  }
+
+  toggleArrow(fromSquare, targetSquare);
+  arrowDragMoved = false;
+  renderArrows();
+}
+
+boardEl.addEventListener("pointerup", (event) => {
+  if (event.button === 2 || arrowDragFrom) {
+    endArrowDrag(event, true);
+    return;
+  }
+
+  endPointerDrag(event, true);
+});
+
+boardEl.addEventListener("pointercancel", (event) => {
+  endArrowDrag(event, false);
+  endPointerDrag(event, false);
+});
 
 // Promotion choice
 promoDialog.addEventListener("click", (e) => {
@@ -449,6 +515,7 @@ function renderBoard(): void {
   }
 
   boardEl.replaceChildren(fragment);
+  renderArrows();
 }
 
 function syncBoardInteractionState(): void {
@@ -532,6 +599,64 @@ function renderNav(): void {
   navPrev.disabled  = cursor === 0;
   navNext.disabled  = cursor === fenHistory.length - 1;
   navLast.disabled  = cursor === fenHistory.length - 1;
+}
+
+function toggleArrow(from: Square, to: Square): void {
+  const key = `${from}-${to}`;
+  if (arrowAnnotations.has(key)) {
+    arrowAnnotations.delete(key);
+    return;
+  }
+
+  arrowAnnotations.add(key);
+}
+
+function clearArrows(): void {
+  if (arrowAnnotations.size === 0) {
+    return;
+  }
+
+  arrowAnnotations.clear();
+  renderArrows();
+}
+
+function getSquareFromPoint(clientX: number, clientY: number): Square | null {
+  const node = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+  const squareButton = node?.closest<HTMLButtonElement>(".square");
+  return (squareButton?.dataset.square as Square | undefined) ?? null;
+}
+
+function squareCenter(square: Square): { x: number; y: number } {
+  const file = square.charCodeAt(0) - 97;
+  const rank = Number(square[1]) - 1;
+  const col = orientation === "w" ? file : 7 - file;
+  const row = orientation === "w" ? 7 - rank : rank;
+
+  return {
+    x: col * 100 + 50,
+    y: row * 100 + 50,
+  };
+}
+
+function renderArrows(): void {
+  const defs = `
+    <defs>
+      <marker id="arrow-head-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(219, 52, 52, 0.95)"></path>
+      </marker>
+    </defs>
+  `;
+
+  const arrows = [...arrowAnnotations]
+    .map((entry) => {
+      const [from, to] = entry.split("-") as [Square, Square];
+      const start = squareCenter(from);
+      const end = squareCenter(to);
+      return `<line x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="rgba(219, 52, 52, 0.88)" stroke-width="12" stroke-linecap="round" marker-end="url(#arrow-head-red)"/>`;
+    })
+    .join("");
+
+  arrowLayer.innerHTML = `${defs}${arrows}`;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
