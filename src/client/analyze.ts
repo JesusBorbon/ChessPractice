@@ -215,6 +215,7 @@ let analysisDepth = 12;
 let analysisByPly: Array<MoveAnalysis | undefined> = [];
 let analysisRunId = 0;
 let analysisInProgress = false;
+let fullAnalysisInProgress = false;
 
 // ── Mount ──────────────────────────────────────────────────────────────────────
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -385,7 +386,7 @@ analyzeBtn.addEventListener("click", () => {
 });
 
 stopAnalyzeBtn.addEventListener("click", () => {
-  if (!analysisInProgress) return;
+  if (!fullAnalysisInProgress) return;
   cancelAnalysis();
   showToast("Analysis stopped.");
   renderSide();
@@ -1172,6 +1173,7 @@ async function runGameAnalysis(): Promise<void> {
   analysisRunId += 1;
   const runId = analysisRunId;
   analysisInProgress = true;
+  fullAnalysisInProgress = true;
   renderSide();
 
   try {
@@ -1209,6 +1211,7 @@ async function runGameAnalysis(): Promise<void> {
   } finally {
     if (runId === analysisRunId) {
       analysisInProgress = false;
+      fullAnalysisInProgress = false;
       renderSide();
     }
   }
@@ -1270,6 +1273,7 @@ function ensureStockfish(): StockfishBridge {
 function cancelAnalysis(): void {
   analysisRunId += 1;
   analysisInProgress = false;
+  fullAnalysisInProgress = false;
 }
 
 function classifyMove(
@@ -1389,7 +1393,8 @@ function buildMoveNote(category: MoveCategory, cpl: number, before: EngineEval, 
 }
 
 function renderEngineFeedback(): void {
-  stopAnalyzeBtn.disabled = !analysisInProgress;
+  stopAnalyzeBtn.hidden = !fullAnalysisInProgress;
+  stopAnalyzeBtn.disabled = !fullAnalysisInProgress;
   analyzeBtn.disabled = analysisInProgress;
 
   if (analysisInProgress) {

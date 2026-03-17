@@ -3676,6 +3676,7 @@ var require_analyze = __commonJS({
     var analysisByPly = [];
     var analysisRunId = 0;
     var analysisInProgress = false;
+    var fullAnalysisInProgress = false;
     var app = document.querySelector("#app");
     app.innerHTML = `
 <div class="analyze-shell">
@@ -3832,7 +3833,7 @@ var require_analyze = __commonJS({
       void runGameAnalysis();
     });
     stopAnalyzeBtn.addEventListener("click", () => {
-      if (!analysisInProgress) return;
+      if (!fullAnalysisInProgress) return;
       cancelAnalysis();
       showToast("Analysis stopped.");
       renderSide();
@@ -4468,6 +4469,7 @@ var require_analyze = __commonJS({
       analysisRunId += 1;
       const runId = analysisRunId;
       analysisInProgress = true;
+      fullAnalysisInProgress = true;
       renderSide();
       try {
         const engine = ensureStockfish();
@@ -4498,6 +4500,7 @@ var require_analyze = __commonJS({
       } finally {
         if (runId === analysisRunId) {
           analysisInProgress = false;
+          fullAnalysisInProgress = false;
           renderSide();
         }
       }
@@ -4548,6 +4551,7 @@ var require_analyze = __commonJS({
     function cancelAnalysis() {
       analysisRunId += 1;
       analysisInProgress = false;
+      fullAnalysisInProgress = false;
     }
     function classifyMove(ply, move, before, after, beforeFen, afterFen) {
       const playedMove = toUci(move);
@@ -4640,7 +4644,8 @@ var require_analyze = __commonJS({
       return `Stable move (${cpl} CPL).`;
     }
     function renderEngineFeedback() {
-      stopAnalyzeBtn.disabled = !analysisInProgress;
+      stopAnalyzeBtn.hidden = !fullAnalysisInProgress;
+      stopAnalyzeBtn.disabled = !fullAnalysisInProgress;
       analyzeBtn.disabled = analysisInProgress;
       if (analysisInProgress) {
         engineFeedback.innerHTML = `<p class="engine-inline">Analyzing... ${analysisByPly.filter(Boolean).length}/${moveHistory.length} moves complete.</p>`;
