@@ -3524,6 +3524,8 @@ var require_analyze = __commonJS({
     var selectedSquare = null;
     var legalTargets = [];
     var pendingPromotion = null;
+    var dragFromSquare = null;
+    var suppressClickOnce = false;
     var fenHistory = [chess.fen()];
     var cursor = 0;
     var app = document.querySelector("#app");
@@ -3668,9 +3670,61 @@ var require_analyze = __commonJS({
       render();
     }
     boardEl.addEventListener("click", (e) => {
+      if (suppressClickOnce) {
+        suppressClickOnce = false;
+        return;
+      }
       const btn = e.target.closest(".square");
       const sq = btn?.dataset.square;
       if (sq) onSquareClick(sq);
+    });
+    boardEl.addEventListener("dragstart", (event) => {
+      const btn = event.target.closest(".square");
+      const square = btn?.dataset.square;
+      if (!square || !canStartMoveFrom(square)) {
+        event.preventDefault();
+        return;
+      }
+      dragFromSquare = square;
+      selectedSquare = square;
+      legalTargets = chess.moves({ square, verbose: true }).map((m) => m.to);
+      syncBoardInteractionState();
+      setPieceDragImage(event, btn, square);
+      btn?.classList.add("dragging");
+    });
+    boardEl.addEventListener("dragover", (event) => {
+      const btn = event.target.closest(".square");
+      const targetSquare = btn?.dataset.square;
+      if (!targetSquare || !dragFromSquare) {
+        return;
+      }
+      if (targetSquare === dragFromSquare || legalTargets.includes(targetSquare)) {
+        event.preventDefault();
+      }
+    });
+    boardEl.addEventListener("drop", (event) => {
+      const btn = event.target.closest(".square");
+      const targetSquare = btn?.dataset.square;
+      const fromSquare = dragFromSquare;
+      if (!targetSquare || !fromSquare) {
+        dragFromSquare = null;
+        return;
+      }
+      event.preventDefault();
+      suppressClickOnce = true;
+      if (targetSquare !== fromSquare) {
+        tryMoveFromTo(fromSquare, targetSquare);
+      }
+      dragFromSquare = null;
+      document.querySelector(".square.dragging")?.classList.remove("dragging");
+      clearSelection();
+      renderBoard();
+    });
+    boardEl.addEventListener("dragend", () => {
+      dragFromSquare = null;
+      document.querySelector(".square.dragging")?.classList.remove("dragging");
+      clearSelection();
+      renderBoard();
     });
     promoDialog.addEventListener("click", (e) => {
       const btn = e.target.closest("[data-p]");
@@ -3704,13 +3758,7 @@ var require_analyze = __commonJS({
         return;
       }
       if (legalTargets.includes(square)) {
-        const movingPiece = chess.get(selectedSquare);
-        if (movingPiece?.type === "p" && isPromotionRank(square, chess.turn())) {
-          pendingPromotion = { from: selectedSquare, to: square };
-          promoDialog.hidden = false;
-        } else {
-          commitMove(selectedSquare, square, "q");
-        }
+        tryMoveFromTo(selectedSquare, square);
         clearSelection();
         renderBoard();
         return;
@@ -3729,6 +3777,22 @@ var require_analyze = __commonJS({
       fenHistory.push(chess.fen());
       cursor = fenHistory.length - 1;
       render();
+    }
+    function tryMoveFromTo(from, to) {
+      const movingPiece = chess.get(from);
+      if (movingPiece?.type === "p" && isPromotionRank(to, chess.turn())) {
+        pendingPromotion = { from, to };
+        promoDialog.hidden = false;
+        return;
+      }
+      commitMove(from, to, "q");
+    }
+    function canStartMoveFrom(square) {
+      if (cursor < fenHistory.length - 1 || chess.isGameOver()) {
+        return false;
+      }
+      const piece = chess.get(square);
+      return Boolean(piece && piece.color === chess.turn());
     }
     function selectSquare(square) {
       selectedSquare = square;
@@ -3768,11 +3832,26 @@ var require_analyze = __commonJS({
           const span = document.createElement("span");
           span.className = `piece ${piece.color === "w" ? "white" : "black"}`;
           span.textContent = PIECES[`${piece.color}${piece.type}`] ?? "";
+          const pieceIsDraggable = canStartMoveFrom(sq);
+          span.draggable = pieceIsDraggable;
+          if (pieceIsDraggable) {
+            span.classList.add("draggable-piece");
+          }
           btn.append(span);
         }
         fragment.append(btn);
       }
       boardEl.replaceChildren(fragment);
+    }
+    function syncBoardInteractionState() {
+      for (const squareButton of boardEl.querySelectorAll(".square")) {
+        const square = squareButton.dataset.square;
+        if (!square) {
+          continue;
+        }
+        squareButton.classList.toggle("selected", selectedSquare === square);
+        squareButton.classList.toggle("legal", legalTargets.includes(square));
+      }
     }
     function renderStatus() {
       let text;
@@ -3847,6 +3926,38 @@ var require_analyze = __commonJS({
       if (cursor === 0) return void 0;
       const cur = new Chess(fenHistory[cursor]);
       return cur.history({ verbose: true }).at(-1);
+    }
+    function setPieceDragImage(event, squareButton, square) {
+      if (!event.dataTransfer) {
+        return;
+      }
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("application/x-chess-square", square);
+      const pieceElement = squareButton?.querySelector(".piece");
+      if (!pieceElement) {
+        return;
+      }
+      const pieceStyle = window.getComputedStyle(pieceElement);
+      const dragScale = 1.34;
+      const dragImage = pieceElement.cloneNode(true);
+      dragImage.style.position = "fixed";
+      dragImage.style.top = "-9999px";
+      dragImage.style.left = "-9999px";
+      dragImage.style.margin = "0";
+      dragImage.style.display = "inline-block";
+      dragImage.style.pointerEvents = "none";
+      dragImage.style.fontSize = pieceStyle.fontSize;
+      dragImage.style.lineHeight = pieceStyle.lineHeight;
+      dragImage.style.fontFamily = pieceStyle.fontFamily;
+      dragImage.style.fontWeight = pieceStyle.fontWeight;
+      dragImage.style.color = pieceStyle.color;
+      dragImage.style.textShadow = pieceStyle.textShadow;
+      dragImage.style.filter = pieceStyle.filter;
+      dragImage.style.transform = `scale(${dragScale})`;
+      dragImage.style.transformOrigin = "center center";
+      document.body.append(dragImage);
+      event.dataTransfer.setDragImage(dragImage, Math.round(dragImage.offsetWidth * dragScale / 2), Math.round(dragImage.offsetHeight * dragScale / 2));
+      requestAnimationFrame(() => dragImage.remove());
     }
     function q(sel) {
       const el = document.querySelector(sel);
