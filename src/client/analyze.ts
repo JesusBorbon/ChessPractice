@@ -4,6 +4,18 @@ import "./analyze.css";
 
 type PromotionPiece = "q" | "r" | "b" | "n";
 
+// ── Sound ────────────────────────────────────────────────────────────────────
+const _audioCache: Record<string, HTMLAudioElement> = {};
+function playSound(name: string): void {
+  let audio = _audioCache[name];
+  if (!audio) {
+    audio = new Audio(`/sounds/${name}.mp3`);
+    _audioCache[name] = audio;
+  }
+  audio.currentTime = 0;
+  audio.play().catch(() => {});
+}
+
 const PIECES: Record<string, string> = {
   wp: "♟", wn: "♞", wb: "♝", wr: "♜", wq: "♛", wk: "♚",
   bp: "♟", bn: "♞", bb: "♝", br: "♜", bq: "♛", bk: "♚",
@@ -23,6 +35,11 @@ let fenHistory: string[] = [chess.fen()];
 let moveHistory: Move[] = [];
 let cursor = 0; // which FEN we're currently viewing
 const arrowAnnotations = new Set<string>();
+let lastAnimatedMoveKey: string | null = null;
+let suppressAnimationForMove: { from: Square; to: Square } | null = null;
+let activeGhostAnimation: Animation | null = null;
+let activeGhostNode: HTMLElement | null = null;
+let activeGhostDestinationPiece: HTMLElement | null = null;
 
 // ── Mount ──────────────────────────────────────────────────────────────────────
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -296,6 +313,7 @@ boardEl.addEventListener("pointermove", (event) => {
 
 function endPointerDrag(event: PointerEvent, commit: boolean): void {
   if (!ptrDragFrom) return;
+  const fromSquare = ptrDragFrom;
   const wasDrag = ptrDragMoved;
   ptrDragFrom = null;
   ptrDragMoved = false;
@@ -322,6 +340,7 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
   if (targetSquare) {
     suppressClickSquare = targetSquare;
     suppressClickUntil = performance.now() + 250;
+    suppressAnimationForMove = { from: fromSquare, to: targetSquare };
     onSquareClick(targetSquare);
   }
 
@@ -437,6 +456,18 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
   moveHistory.push(move);
   fenHistory.push(chess.fen());
   cursor = fenHistory.length - 1;
+  // Play sound based on outcome
+  if (chess.isCheckmate() || chess.isStalemate() || chess.isDraw()) {
+    playSound("gameEndOrCheckmate");
+  } else if (chess.isCheck()) {
+    playSound("checkMove");
+  } else if (move.flags.includes("k") || move.flags.includes("q")) {
+    playSound("castle");
+  } else if (move.captured) {
+    playSound("capture");
+  } else {
+    playSound("move-self");
+  }
   render();
 }
 
@@ -488,6 +519,7 @@ function renderBoard(): void {
   const squares = buildSquareList(orientation);
   const lastMove = getLastMove();
   const lastMoveSquares = new Set([lastMove?.from, lastMove?.to].filter(Boolean) as string[]);
+  const checkedKingSquare = getCheckedKingSquare();
   const fragment = document.createDocumentFragment();
 
   for (const squareName of squares) {
@@ -502,6 +534,7 @@ function renderBoard(): void {
     if (selectedSquare === sq)       btn.classList.add("selected");
     if (legalTargets.includes(sq))   btn.classList.add("legal");
     if (lastMoveSquares.has(sq))     btn.classList.add("last-move");
+    if (checkedKingSquare === sq)    btn.classList.add("in-check");
 
     if (piece) {
       const span = document.createElement("span");
@@ -515,6 +548,7 @@ function renderBoard(): void {
   }
 
   boardEl.replaceChildren(fragment);
+  animateLastMove(lastMove);
   renderArrows();
 }
 
@@ -599,6 +633,135 @@ function renderNav(): void {
   navPrev.disabled  = cursor === 0;
   navNext.disabled  = cursor === fenHistory.length - 1;
   navLast.disabled  = cursor === fenHistory.length - 1;
+}
+
+function getCheckedKingSquare(): Square | null {
+  if (!chess.isCheck()) {
+    return null;
+  }
+
+  const checkedColor = chess.turn();
+  for (const squareName of buildSquareList("w")) {
+    const square = squareName as Square;
+    const piece = chess.get(square);
+    if (piece?.type === "k" && piece.color === checkedColor) {
+      return square;
+    }
+  }
+
+  return null;
+}
+
+function animateLastMove(lastMove: Move | undefined): void {
+  if (!lastMove || cursor === 0) {
+    lastAnimatedMoveKey = null;
+    return;
+  }
+
+  const moveKey = `${cursor}:${lastMove.from}:${lastMove.to}:${lastMove.san ?? ""}`;
+  if (lastAnimatedMoveKey === moveKey) {
+    return;
+  }
+
+  lastAnimatedMoveKey = moveKey;
+
+  if (suppressAnimationForMove) {
+    const matchesSuppressedDrag =
+      suppressAnimationForMove.from === lastMove.from &&
+      suppressAnimationForMove.to === lastMove.to;
+    suppressAnimationForMove = null;
+    if (matchesSuppressedDrag) {
+      return;
+    }
+  }
+
+  const fromSquareButton = boardEl.querySelector<HTMLButtonElement>(`[data-square="${lastMove.from}"]`);
+  const toSquareButton = boardEl.querySelector<HTMLButtonElement>(`[data-square="${lastMove.to}"]`);
+  const destinationPiece = toSquareButton?.querySelector<HTMLElement>(".piece");
+  if (!fromSquareButton || !toSquareButton || !destinationPiece) {
+    return;
+  }
+
+  if (activeGhostAnimation) {
+    activeGhostAnimation.cancel();
+  }
+  if (activeGhostNode) {
+    activeGhostNode.remove();
+    activeGhostNode = null;
+  }
+  if (activeGhostDestinationPiece) {
+    activeGhostDestinationPiece.style.visibility = "";
+    activeGhostDestinationPiece = null;
+  }
+
+  const fromRect = fromSquareButton.getBoundingClientRect();
+  const toRect = toSquareButton.getBoundingClientRect();
+  const startX = fromRect.left + fromRect.width / 2;
+  const startY = fromRect.top + fromRect.height / 2;
+  const endX = toRect.left + toRect.width / 2;
+  const endY = toRect.top + toRect.height / 2;
+  const deltaX = startX - endX;
+  const deltaY = startY - endY;
+
+  const computed = window.getComputedStyle(destinationPiece);
+  const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
+  Object.assign(ghostPiece.style, {
+    position: "fixed",
+    left: `${endX}px`,
+    top: `${endY}px`,
+    transform: "translate3d(-50%, -50%, 0)",
+    margin: "0",
+    zIndex: "9999",
+    pointerEvents: "none",
+    fontSize: computed.fontSize,
+    fontFamily: computed.fontFamily,
+    color: computed.color,
+    filter: computed.filter,
+    textShadow: computed.textShadow,
+    lineHeight: "1",
+    animation: "none",
+    opacity: "0.98",
+    willChange: "transform, opacity",
+  });
+
+  destinationPiece.style.visibility = "hidden";
+  activeGhostNode = ghostPiece;
+  activeGhostDestinationPiece = destinationPiece;
+  document.body.append(ghostPiece);
+
+  const animation = ghostPiece.animate(
+    [
+      { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) scale(0.88)`, opacity: 0.55, offset: 0 },
+      { transform: "translate3d(-50%, -50%, 0) scale(1.015)", opacity: 0.97, offset: 0.7 },
+      { transform: "translate3d(-50%, -50%, 0) scale(1)", opacity: 1, offset: 1 },
+    ],
+    {
+      duration: 950,
+      easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+    },
+  );
+
+  activeGhostAnimation = animation;
+
+  animation.addEventListener("finish", () => {
+    ghostPiece.remove();
+    destinationPiece.style.visibility = "";
+    if (activeGhostAnimation === animation) {
+      activeGhostAnimation = null;
+      activeGhostNode = null;
+      activeGhostDestinationPiece = null;
+    }
+  });
+
+  animation.addEventListener("cancel", () => {
+    ghostPiece.remove();
+    destinationPiece.style.visibility = "";
+    if (activeGhostAnimation === animation) {
+      activeGhostAnimation = null;
+      activeGhostNode = null;
+      activeGhostDestinationPiece = null;
+    }
+  });
 }
 
 function toggleArrow(from: Square, to: Square): void {

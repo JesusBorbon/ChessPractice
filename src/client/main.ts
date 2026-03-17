@@ -96,6 +96,40 @@ const state: AppState = {
   suppressClickOnce: false,
 };
 
+let lastAnimatedMoveKey: string | null = null;
+let suppressAnimationForMove: { from: Square; to: Square } | null = null;
+let activeGhostAnimation: Animation | null = null;
+let activeGhostNode: HTMLElement | null = null;
+let activeGhostDestinationPiece: HTMLElement | null = null;
+
+// ── Sound ────────────────────────────────────────────────────────────────────
+const _audioCache: Record<string, HTMLAudioElement> = {};
+function playSound(name: string): void {
+  let audio = _audioCache[name];
+  if (!audio) {
+    audio = new Audio(`/sounds/${name}.mp3`);
+    _audioCache[name] = audio;
+  }
+  audio.currentTime = 0;
+  audio.play().catch(() => {});
+}
+let _lastPlayedMoveCount = -1;
+function playSoundForSnapshot(snapshot: RoomSnapshot): void {
+  const last = snapshot.lastMove;
+  if (!last) return;
+  if (snapshot.checkmate || snapshot.draw) {
+    playSound("gameEndOrCheckmate");
+  } else if (snapshot.check) {
+    playSound("checkMove");
+  } else if (last.san.startsWith("O-O")) {
+    playSound("castle");
+  } else if (last.san.includes("x")) {
+    playSound("capture");
+  } else {
+    playSound("move-self");
+  }
+}
+
 app.innerHTML = `
   <div class="app-shell">
     <header class="hero">
@@ -396,6 +430,7 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
     const squareButton = el?.closest<HTMLButtonElement>(".square");
     const targetSquare = squareButton?.dataset.square as Square | undefined;
     if (targetSquare && targetSquare !== fromSquare) {
+      suppressAnimationForMove = { from: fromSquare, to: targetSquare };
       tryMoveFromTo(fromSquare, targetSquare);
     }
   }
@@ -467,6 +502,10 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
   state.snapshot = snapshot;
   chess.load(snapshot.fen);
 
+  const isNewMove = _lastPlayedMoveCount !== -1 && snapshot.moveCount > _lastPlayedMoveCount;
+  _lastPlayedMoveCount = snapshot.moveCount;
+  if (isNewMove) playSoundForSnapshot(snapshot);
+
   if (state.selectedSquare) {
     const currentPiece = chess.get(state.selectedSquare);
     if (!currentPiece || !isOwnPiece(currentPiece.color)) {
@@ -480,6 +519,7 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
 });
 
 socket.on("room:error", (payload: { message: string }) => {
+  suppressAnimationForMove = null;
   showToast(payload.message);
 });
 
@@ -547,10 +587,12 @@ function renderBoard(): void {
   const fragment = document.createDocumentFragment();
   const squares = buildSquareList(state.orientation);
   const lastMoveSquares = new Set<string>();
+  const checkedKingSquare = getCheckedKingSquare();
+  const lastMove = state.snapshot?.lastMove ?? null;
 
-  if (state.snapshot?.lastMove) {
-    lastMoveSquares.add(state.snapshot.lastMove.from);
-    lastMoveSquares.add(state.snapshot.lastMove.to);
+  if (lastMove) {
+    lastMoveSquares.add(lastMove.from);
+    lastMoveSquares.add(lastMove.to);
   }
 
   for (const squareName of squares) {
@@ -574,6 +616,10 @@ function renderBoard(): void {
       button.classList.add("last-move");
     }
 
+    if (checkedKingSquare === squareName) {
+      button.classList.add("in-check");
+    }
+
     if (piece) {
       const glyph = PIECES[`${piece.color}${piece.type}`];
       const pieceElement = document.createElement("span");
@@ -587,6 +633,7 @@ function renderBoard(): void {
   }
 
   board.replaceChildren(fragment);
+  animateLastMove(lastMove);
 }
 
 function syncBoardInteractionState(): void {
@@ -650,6 +697,148 @@ function updateCaption(): void {
   boardCaption.textContent = state.selectedSquare
     ? `Selected ${state.selectedSquare}. Choose one of the highlighted targets.`
     : `Your move as ${state.role === "w" ? "White" : "Black"}.`;
+}
+
+function getCheckedKingSquare(): Square | null {
+  if (!chess.isCheck()) {
+    return null;
+  }
+
+  const checkedColor = chess.turn();
+  for (const squareName of buildSquareList("w")) {
+    const square = squareName as Square;
+    const piece = chess.get(square);
+    if (piece?.type === "k" && piece.color === checkedColor) {
+      return square;
+    }
+  }
+
+  return null;
+}
+
+function animateLastMove(lastMove: MoveSummary | null): void {
+  if (!state.snapshot || !lastMove) {
+    lastAnimatedMoveKey = null;
+    return;
+  }
+
+  const moveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
+
+  if (lastAnimatedMoveKey === moveKey) {
+    return;
+  }
+
+  lastAnimatedMoveKey = moveKey;
+
+  if (suppressAnimationForMove) {
+    const matchesSuppressedDrag =
+      suppressAnimationForMove.from === lastMove.from &&
+      suppressAnimationForMove.to === lastMove.to;
+    suppressAnimationForMove = null;
+    if (matchesSuppressedDrag) {
+      return;
+    }
+  }
+
+  const fromSquareButton = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.from}"]`);
+  const toSquareButton = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.to}"]`);
+  const destinationPiece = toSquareButton?.querySelector<HTMLElement>(".piece");
+  if (!fromSquareButton || !toSquareButton || !destinationPiece) {
+    return;
+  }
+
+  if (activeGhostAnimation) {
+    activeGhostAnimation.cancel();
+  }
+  if (activeGhostNode) {
+    activeGhostNode.remove();
+    activeGhostNode = null;
+  }
+  if (activeGhostDestinationPiece) {
+    activeGhostDestinationPiece.style.visibility = "";
+    activeGhostDestinationPiece = null;
+  }
+
+  const fromRect = fromSquareButton.getBoundingClientRect();
+  const toRect = toSquareButton.getBoundingClientRect();
+  const startX = fromRect.left + fromRect.width / 2;
+  const startY = fromRect.top + fromRect.height / 2;
+  const endX = toRect.left + toRect.width / 2;
+  const endY = toRect.top + toRect.height / 2;
+  const deltaX = startX - endX;
+  const deltaY = startY - endY;
+
+  const computed = window.getComputedStyle(destinationPiece);
+  const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
+  Object.assign(ghostPiece.style, {
+    position: "fixed",
+    left: `${endX}px`,
+    top: `${endY}px`,
+    transform: "translate3d(-50%, -50%, 0)",
+    margin: "0",
+    zIndex: "9999",
+    pointerEvents: "none",
+    fontSize: computed.fontSize,
+    fontFamily: computed.fontFamily,
+    color: computed.color,
+    filter: computed.filter,
+    textShadow: computed.textShadow,
+    lineHeight: "1",
+    animation: "none",
+    opacity: "0.98",
+    willChange: "transform, opacity",
+  });
+
+  destinationPiece.style.visibility = "hidden";
+  activeGhostNode = ghostPiece;
+  activeGhostDestinationPiece = destinationPiece;
+  document.body.append(ghostPiece);
+
+  const animation = ghostPiece.animate(
+    [
+      {
+        transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) scale(0.88)`,
+        opacity: 0.55,
+        offset: 0,
+      },
+      {
+        transform: "translate3d(-50%, -50%, 0) scale(1.015)",
+        opacity: 0.97,
+        offset: 0.7,
+      },
+      {
+        transform: "translate3d(-50%, -50%, 0) scale(1)",
+        opacity: 1,
+        offset: 1,
+      },
+    ],
+    {
+      duration: 950,
+      easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+    },
+  );
+
+  activeGhostAnimation = animation;
+
+  animation.addEventListener("finish", () => {
+    ghostPiece.remove();
+    destinationPiece.style.visibility = "";
+    if (activeGhostAnimation === animation) {
+      activeGhostAnimation = null;
+      activeGhostNode = null;
+      activeGhostDestinationPiece = null;
+    }
+  });
+
+  animation.addEventListener("cancel", () => {
+    ghostPiece.remove();
+    destinationPiece.style.visibility = "";
+    if (activeGhostAnimation === animation) {
+      activeGhostAnimation = null;
+      activeGhostNode = null;
+      activeGhostDestinationPiece = null;
+    }
+  });
 }
 
 function onSquarePressed(square: Square): void {
