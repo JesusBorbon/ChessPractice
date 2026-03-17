@@ -7109,14 +7109,15 @@ function setTheme(theme) {
   } else {
     document.documentElement.setAttribute("data-theme", theme);
   }
-  localStorage.setItem(STORAGE_KEY, theme);
+  localStorage.setItem(THEME_STORAGE_KEY, theme);
   document.querySelectorAll(".theme-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.theme === theme);
   });
 }
 function mountThemeSwitcher() {
-  const saved = localStorage.getItem(STORAGE_KEY) ?? "forest";
-  setTheme(saved);
+  const themeRaw = localStorage.getItem(THEME_STORAGE_KEY);
+  const savedTheme = themeRaw === "forest" || themeRaw === "purple" || themeRaw === "walnut" || themeRaw === "refined" ? themeRaw : "forest";
+  setTheme(savedTheme);
   const widget = document.createElement("div");
   widget.className = "theme-switcher";
   widget.setAttribute("role", "group");
@@ -7126,6 +7127,7 @@ function mountThemeSwitcher() {
     <button class="theme-btn" data-theme="forest" title="Classic Forest" aria-label="Classic Forest theme"></button>
     <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
     <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
+    <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
   `;
   document.body.appendChild(widget);
   widget.addEventListener("click", (e) => {
@@ -7133,11 +7135,11 @@ function mountThemeSwitcher() {
     if (btn?.dataset.theme) setTheme(btn.dataset.theme);
   });
 }
-var STORAGE_KEY;
+var THEME_STORAGE_KEY;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
-    STORAGE_KEY = "chess-theme";
+    THEME_STORAGE_KEY = "chess-theme";
   }
 });
 
@@ -7639,10 +7641,16 @@ var require_main = __commonJS({
       return element;
     }
     function render() {
+      const savedScroll = window.scrollY;
       renderBoard();
       renderSession();
       renderMoves();
       updateCaption();
+      requestAnimationFrame(() => {
+        if (window.scrollY !== savedScroll) {
+          window.scrollTo({ top: savedScroll, behavior: "instant" });
+        }
+      });
     }
     function renderSession() {
       const snapshot = state.snapshot;
@@ -7686,6 +7694,7 @@ var require_main = __commonJS({
         const piece = chess.get(square);
         const button = document.createElement("button");
         button.type = "button";
+        button.tabIndex = -1;
         button.className = `square ${isLightSquare(squareName) ? "light" : "dark"}`;
         button.dataset.square = squareName;
         button.setAttribute("aria-label", squareName);
@@ -7710,7 +7719,7 @@ var require_main = __commonJS({
         if (piece) {
           const glyph = PIECES[`${piece.color}${piece.type}`];
           const pieceElement = document.createElement("span");
-          pieceElement.className = `piece ${piece.color === "w" ? "white" : "black"}`;
+          pieceElement.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
           pieceElement.textContent = glyph;
           button.append(pieceElement);
         }
@@ -7813,7 +7822,7 @@ var require_main = __commonJS({
         if (!pathData) {
           return "";
         }
-        return `<path class="board-arrow" d="${pathData}" fill="rgba(219, 52, 52, 0.72)"/>`;
+        return `<path class="board-arrow" d="${pathData}" fill="rgba(219, 52, 52, 0.88)"/>`;
       }).join("");
       const previewArrow = arrowDragFrom && arrowDragPointer ? (() => {
         const start = squareCenter(arrowDragFrom);
@@ -7822,7 +7831,7 @@ var require_main = __commonJS({
         if (!pathData) {
           return "";
         }
-        return `<path class="board-arrow board-arrow-preview" d="${pathData}" fill="rgba(219, 52, 52, 0.72)"/>`;
+        return `<path class="board-arrow board-arrow-preview" d="${pathData}" fill="rgba(219, 52, 52, 0.88)"/>`;
       })() : "";
       arrowLayer.innerHTML = `${arrows}${previewArrow}`;
     }
@@ -7937,9 +7946,9 @@ var require_main = __commonJS({
       const computed = window.getComputedStyle(destinationPiece);
       const ghostPiece = destinationPiece.cloneNode(true);
       Object.assign(ghostPiece.style, {
-        position: "absolute",
-        left: `${endX + pageX}px`,
-        top: `${endY + pageY}px`,
+        position: "fixed",
+        left: `${endX}px`,
+        top: `${endY}px`,
         transform: "translate3d(-50%, -50%, 0)",
         margin: "0",
         zIndex: "9999",

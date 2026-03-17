@@ -29,6 +29,11 @@ body {
   min-height: 100%;
 }
 
+html {
+  scrollbar-gutter: stable;
+  overflow-y: scroll;
+}
+
 body {
   background:
     radial-gradient(circle at top left, rgba(181, 131, 59, 0.22), transparent 32%),
@@ -226,10 +231,13 @@ button {
   padding: 0;
   border: 0;
   background: transparent;
-  font-size: clamp(2.9rem, 6.3vw, 4.95rem);
+  font-size: clamp(3.95rem, 8.6vw, 6.5rem);
   user-select: none;
   -webkit-tap-highlight-color: transparent;
   transition: background-color 220ms ease, box-shadow 220ms ease;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .square.dragging {
@@ -290,7 +298,7 @@ button {
 
 .square.legal::before {
   background: rgba(25, 35, 32, 0.18);
-  inset: 32%;
+  inset: 37%;
   border-radius: 50%;
 }
 
@@ -298,6 +306,19 @@ button {
   position: relative;
   z-index: 1;
   line-height: 1;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.piece.piece-b {
+  font-size: 0.92em;
+}
+
+.piece.piece-n {
+  font-size: 1.07em;
 }
 
 .piece.black {
@@ -342,16 +363,26 @@ button {
 .card-title {
   margin: 0 0 10px;
   font-size: 1rem;
+  flex-shrink: 0;
 }
 
 .control-card,
 .seat-card,
-.moves-card,
 .summary-card {
   padding: 18px;
   background: var(--paper-strong);
   border: 1px solid rgba(25, 35, 32, 0.08);
   border-radius: var(--radius-lg);
+}
+
+.moves-card {
+  padding: 18px;
+  background: var(--paper-strong);
+  border: 1px solid rgba(25, 35, 32, 0.08);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  height: 320px;
 }
 
 .control-row {
@@ -402,8 +433,9 @@ button {
 .move-list {
   display: grid;
   gap: 10px;
-  max-height: 292px;
+  min-height: 0;
   overflow: auto;
+  flex: 1 1 auto;
 }
 
 .move-row {
@@ -502,7 +534,7 @@ button {
   }
 
   .square {
-    font-size: clamp(1.6rem, 8vw, 2.6rem);
+    font-size: clamp(2.35rem, 10.8vw, 3.65rem);
   }
 }
 
@@ -516,11 +548,12 @@ button {
   }
 }
 
-  /* ── Themes ──────────────────────────────────────────────────────────────────
-     data-theme="purple"  → Cosmic Purple (dark)
-     data-theme="walnut"  → Walnut & Cream (warm brown / chess.com palette)
-     No attribute          → Classic Forest (default)
-  ─────────────────────────────────────────────────────────────────────────── */
+    /* ── Themes ──────────────────────────────────────────────────────────────────
+      data-theme="purple"  → Cosmic Purple (dark)
+      data-theme="walnut"  → Walnut & Cream (warm brown / chess.com palette)
+      data-theme="refined" → Refined (slate blue + gold accents)
+      No attribute          → Classic Forest (default)
+    ─────────────────────────────────────────────────────────────────────────── */
 
   [data-theme="purple"] {
     --bg: #120d1e;
@@ -560,6 +593,25 @@ button {
     --radius-md: 14px;
   }
 
+  [data-theme="refined"] {
+    --bg: #e8eef5;
+    --paper: rgba(248, 252, 255, 0.88);
+    --paper-strong: rgba(251, 254, 255, 0.96);
+    --ink: #102437;
+    --muted: #4b6277;
+    --accent: #2f678f;
+    --accent-strong: #13486e;
+    --accent-soft: #d8e7f3;
+    --gold: #c79a3b;
+    --board-light: #eaf0f5;
+    --board-dark: #6c879d;
+    --board-highlight: #ffd166;
+    --shadow: 0 24px 70px rgba(16, 36, 55, 0.16);
+    --radius-xl: 28px;
+    --radius-lg: 20px;
+    --radius-md: 14px;
+  }
+
   /* Body backgrounds */
   [data-theme="purple"] body {
     background:
@@ -575,14 +627,27 @@ button {
       linear-gradient(135deg, #f5edd8, #ece0c4);
   }
 
+  [data-theme="refined"] body {
+    background:
+      radial-gradient(circle at top left, rgba(84, 132, 176, 0.18), transparent 34%),
+      radial-gradient(circle at bottom right, rgba(199, 154, 59, 0.12), transparent 30%),
+      linear-gradient(135deg, #edf3f9, #e1e9f2);
+  }
+
   /* Board gap-fill colour (background of the .board grid container) */
   [data-theme="purple"] .board { background: #28105a; }
   [data-theme="walnut"]  .board { background: #a07848; }
+  [data-theme="refined"] .board { background: #4d687f; }
 
   /* Card / panel borders on purple dark bg */
   [data-theme="purple"] .hero-card,
   [data-theme="purple"] .panel {
     border-color: rgba(160, 100, 255, 0.16);
+  }
+
+  [data-theme="refined"] .hero-card,
+  [data-theme="refined"] .panel {
+    border-color: rgba(36, 95, 142, 0.14);
   }
 
   /* Ghost / chip / nav buttons — transparent dark tint is invisible on dark bg */
@@ -598,6 +663,18 @@ button {
     background: rgba(200, 160, 255, 0.22);
   }
 
+  [data-theme="refined"] .ghost,
+  [data-theme="refined"] .chip,
+  [data-theme="refined"] .promotion-button {
+    background: rgba(31, 93, 139, 0.1);
+    color: var(--ink);
+  }
+  [data-theme="refined"] .ghost:hover,
+  [data-theme="refined"] .chip:hover,
+  [data-theme="refined"] .promotion-button:hover {
+    background: rgba(31, 93, 139, 0.18);
+  }
+
   /* Text inputs on purple dark bg */
   [data-theme="purple"] .join-input {
     background: rgba(40, 25, 72, 0.85);
@@ -605,9 +682,19 @@ button {
     color: var(--ink);
   }
 
+  [data-theme="refined"] .join-input {
+    background: rgba(246, 251, 255, 0.95);
+    border-color: rgba(24, 71, 108, 0.18);
+    color: var(--ink);
+  }
+
   /* Promotion card on purple */
   [data-theme="purple"] .promotion-card {
     background: #1c1232;
+  }
+
+  [data-theme="refined"] .promotion-card {
+    background: #f6fafe;
   }
 
   /* Seat & row backgrounds */
@@ -619,6 +706,16 @@ button {
   }
   [data-theme="purple"] .status-pill {
     background: rgba(160, 100, 255, 0.12);
+  }
+
+  [data-theme="refined"] .seat {
+    background: rgba(31, 93, 139, 0.08);
+  }
+  [data-theme="refined"] .move-row {
+    background: rgba(31, 93, 139, 0.06);
+  }
+  [data-theme="refined"] .status-pill {
+    background: rgba(31, 93, 139, 0.1);
   }
 
   /* Board square interactions on purple */
@@ -646,6 +743,35 @@ button {
     background: rgba(200, 140, 50, 0.36);
   }
 
+  [data-theme="refined"] .square.selected {
+    box-shadow: inset 0 0 0 5px rgba(255, 209, 102, 0.84);
+  }
+  [data-theme="refined"] .square.last-move::before {
+    background: rgba(70, 130, 180, 0.32);
+  }
+  [data-theme="refined"] .square.legal::before {
+    background: rgba(16, 56, 88, 0.2);
+  }
+  [data-theme="refined"] .square.premove-from::before {
+    box-shadow: inset 0 0 0 4px rgba(37, 96, 142, 0.72);
+  }
+  [data-theme="refined"] .square.premove-to::before {
+    background: radial-gradient(circle at center, rgba(47, 103, 143, 0.3), rgba(47, 103, 143, 0.08));
+  }
+
+  [data-theme="refined"] .piece.black {
+    color: #0a1f33;
+    filter:
+      drop-shadow(0 0 1.5px rgba(255, 255, 255, 0.45))
+      drop-shadow(0 2px 5px rgba(0, 0, 0, 0.4));
+  }
+  [data-theme="refined"] .piece.white {
+    color: #fefefe;
+    filter:
+      drop-shadow(0 0 1.5px rgba(8, 28, 46, 0.88))
+      drop-shadow(0 2px 5px rgba(0, 0, 0, 0.3));
+  }
+
   /* ── Theme Switcher Widget ───────────────────────────────────────── */
   .theme-switcher {
     position: fixed;
@@ -669,6 +795,10 @@ button {
 
   [data-theme="walnut"] .theme-switcher {
     border-color: rgba(92, 58, 30, 0.14);
+  }
+
+  [data-theme="refined"] .theme-switcher {
+    border-color: rgba(24, 71, 108, 0.16);
   }
 
   .theme-switcher-label {
@@ -706,4 +836,19 @@ button {
   }
   .theme-btn[data-theme="walnut"] {
     background: linear-gradient(135deg, #b58863 40%, #f0d9b5 100%);
+  }
+  .theme-btn[data-theme="refined"] {
+    background: linear-gradient(135deg, #6c879d 40%, #eaf0f5 100%);
+  }
+
+  @media (max-width: 640px) {
+    .theme-switcher {
+      right: 10px;
+      bottom: 10px;
+      padding: 7px 10px;
+      gap: 6px;
+      max-width: calc(100vw - 16px);
+      overflow-x: auto;
+      white-space: nowrap;
+    }
   }

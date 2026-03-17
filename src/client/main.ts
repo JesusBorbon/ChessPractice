@@ -627,10 +627,16 @@ function must<TElement extends Element>(selector: string): TElement {
 }
 
 function render(): void {
+  const savedScroll = window.scrollY;
   renderBoard();
   renderSession();
   renderMoves();
   updateCaption();
+  requestAnimationFrame(() => {
+    if (window.scrollY !== savedScroll) {
+      window.scrollTo({ top: savedScroll, behavior: "instant" });
+    }
+  });
 }
 
 function renderSession(): void {
@@ -689,6 +695,7 @@ function renderBoard(): void {
     const piece = chess.get(square);
     const button = document.createElement("button");
     button.type = "button";
+    button.tabIndex = -1;
     button.className = `square ${isLightSquare(squareName) ? "light" : "dark"}`;
     button.dataset.square = squareName;
     button.setAttribute("aria-label", squareName);
@@ -720,7 +727,7 @@ function renderBoard(): void {
     if (piece) {
       const glyph = PIECES[`${piece.color}${piece.type}`];
       const pieceElement = document.createElement("span");
-      pieceElement.className = `piece ${piece.color === "w" ? "white" : "black"}`;
+      pieceElement.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
       pieceElement.textContent = glyph;
 
       button.append(pieceElement);
@@ -852,7 +859,7 @@ function renderArrows(): void {
       if (!pathData) {
         return "";
       }
-      return `<path class="board-arrow" d="${pathData}" fill="rgba(219, 52, 52, 0.72)"/>`;
+      return `<path class="board-arrow" d="${pathData}" fill="rgba(219, 52, 52, 0.88)"/>`;
     })
     .join("");
 
@@ -864,7 +871,7 @@ function renderArrows(): void {
         if (!pathData) {
           return "";
         }
-        return `<path class="board-arrow board-arrow-preview" d="${pathData}" fill="rgba(219, 52, 52, 0.72)"/>`;
+        return `<path class="board-arrow board-arrow-preview" d="${pathData}" fill="rgba(219, 52, 52, 0.88)"/>`;
       })()
     : "";
 
@@ -1010,9 +1017,9 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   const computed = window.getComputedStyle(destinationPiece);
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
   Object.assign(ghostPiece.style, {
-    position: "absolute",
-    left: `${endX + pageX}px`,
-    top: `${endY + pageY}px`,
+    position: "fixed",
+    left: `${endX}px`,
+    top: `${endY}px`,
     transform: "translate3d(-50%, -50%, 0)",
     margin: "0",
     zIndex: "9999",

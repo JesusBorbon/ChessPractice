@@ -26,12 +26,12 @@ type MoveAnalysis = {
 };
 
 const CATEGORY_LABELS: Record<MoveCategory, string> = {
-  brilliant: "Brillante",
-  great: "Genial",
-  excellent: "Excelente",
-  good: "Bueno",
-  inaccuracy: "Inexactitud",
-  mistake: "Error",
+  brilliant: "Brilliant",
+  great: "Great",
+  excellent: "Excellent",
+  good: "Good",
+  inaccuracy: "Inaccuracy",
+  mistake: "Mistake",
   blunder: "Blunder",
 };
 
@@ -278,11 +278,6 @@ app.innerHTML = `
         <h2>Engine feedback</h2>
         <div class="engine-feedback" id="engineFeedback">Run analysis to get move quality feedback.</div>
       </div>
-
-      <div class="info-card">
-        <h2>PGN export</h2>
-        <textarea class="pgn-export" id="pgnDisplay" rows="4" readonly></textarea>
-      </div>
     </aside>
   </div>
 </div>
@@ -310,7 +305,6 @@ const arrowLayer = q<SVGSVGElement>("#arrowLayer");
 const boardEl    = q<HTMLDivElement>("#board");
 const statusBar  = q<HTMLDivElement>("#statusBar");
 const fenDisplay = q<HTMLTextAreaElement>("#fenDisplay");
-const pgnDisplay = q<HTMLTextAreaElement>("#pgnDisplay");
 const moveList   = q<HTMLDivElement>("#moveList");
 const engineFeedback = q<HTMLDivElement>("#engineFeedback");
 const turnDot    = q<HTMLDivElement>("#turnDot");
@@ -753,6 +747,7 @@ function renderBoard(): void {
     const piece = chess.get(sq);
     const btn   = document.createElement("button");
     btn.type = "button";
+    btn.tabIndex = -1;
     btn.className = `square ${isLightSquare(squareName as SquareName) ? "light" : "dark"}`;
     btn.dataset.square = sq;
     btn.setAttribute("aria-label", sq);
@@ -764,7 +759,7 @@ function renderBoard(): void {
 
     if (piece) {
       const span = document.createElement("span");
-      span.className = `piece ${piece.color === "w" ? "white" : "black"}`;
+      span.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
       span.textContent = PIECES[`${piece.color}${piece.type}`] ?? "";
 
       btn.append(span);
@@ -829,7 +824,6 @@ function renderSide(): void {
   turnDot.className = `turn-dot ${isWhite ? "white" : "black"}`;
   turnLabel.textContent = isWhite ? "White" : "Black";
   fenDisplay.value = chess.fen();
-  pgnDisplay.value = chess.pgn({ maxWidth: 60, newline: "\n" });
   renderMoveList();
   renderEngineFeedback();
 }
@@ -868,8 +862,19 @@ function renderMoveList(): void {
   }
 
   moveList.innerHTML = rows.join("");
-  // Scroll active row into view
-  moveList.querySelector(".active-half")?.scrollIntoView({ block: "nearest" });
+  // Scroll active row into view within the container only
+  const activeEl = moveList.querySelector<HTMLElement>(".active-half");
+  if (activeEl) {
+    const containerRect = moveList.getBoundingClientRect();
+    const elRect = activeEl.getBoundingClientRect();
+    const relTop = elRect.top - containerRect.top + moveList.scrollTop;
+    const relBottom = relTop + elRect.height;
+    if (relBottom > moveList.scrollTop + moveList.clientHeight) {
+      moveList.scrollTop = relBottom - moveList.clientHeight;
+    } else if (relTop < moveList.scrollTop) {
+      moveList.scrollTop = relTop;
+    }
+  }
 }
 
 function renderNav(): void {
@@ -952,9 +957,9 @@ function animateLastMove(lastMove: Move | undefined): void {
   const computed = window.getComputedStyle(destinationPiece);
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
   Object.assign(ghostPiece.style, {
-    position: "absolute",
-    left: `${endX + pageX}px`,
-    top: `${endY + pageY}px`,
+    position: "fixed",
+    left: `${endX}px`,
+    top: `${endY}px`,
     transform: "translate3d(-50%, -50%, 0)",
     margin: "0",
     zIndex: "9999",

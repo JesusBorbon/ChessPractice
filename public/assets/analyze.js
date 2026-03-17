@@ -3506,14 +3506,15 @@ function setTheme(theme) {
   } else {
     document.documentElement.setAttribute("data-theme", theme);
   }
-  localStorage.setItem(STORAGE_KEY, theme);
+  localStorage.setItem(THEME_STORAGE_KEY, theme);
   document.querySelectorAll(".theme-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.theme === theme);
   });
 }
 function mountThemeSwitcher() {
-  const saved = localStorage.getItem(STORAGE_KEY) ?? "forest";
-  setTheme(saved);
+  const themeRaw = localStorage.getItem(THEME_STORAGE_KEY);
+  const savedTheme = themeRaw === "forest" || themeRaw === "purple" || themeRaw === "walnut" || themeRaw === "refined" ? themeRaw : "forest";
+  setTheme(savedTheme);
   const widget = document.createElement("div");
   widget.className = "theme-switcher";
   widget.setAttribute("role", "group");
@@ -3523,6 +3524,7 @@ function mountThemeSwitcher() {
     <button class="theme-btn" data-theme="forest" title="Classic Forest" aria-label="Classic Forest theme"></button>
     <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
     <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
+    <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
   `;
   document.body.appendChild(widget);
   widget.addEventListener("click", (e) => {
@@ -3530,11 +3532,11 @@ function mountThemeSwitcher() {
     if (btn?.dataset.theme) setTheme(btn.dataset.theme);
   });
 }
-var STORAGE_KEY;
+var THEME_STORAGE_KEY;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
-    STORAGE_KEY = "chess-theme";
+    THEME_STORAGE_KEY = "chess-theme";
   }
 });
 
@@ -3546,12 +3548,12 @@ var require_analyze = __commonJS({
     init_analyze();
     init_theme();
     var CATEGORY_LABELS = {
-      brilliant: "Brillante",
-      great: "Genial",
-      excellent: "Excelente",
-      good: "Bueno",
-      inaccuracy: "Inexactitud",
-      mistake: "Error",
+      brilliant: "Brilliant",
+      great: "Great",
+      excellent: "Excellent",
+      good: "Good",
+      inaccuracy: "Inaccuracy",
+      mistake: "Mistake",
       blunder: "Blunder"
     };
     var CATEGORY_SYMBOLS = {
@@ -3775,11 +3777,6 @@ var require_analyze = __commonJS({
         <h2>Engine feedback</h2>
         <div class="engine-feedback" id="engineFeedback">Run analysis to get move quality feedback.</div>
       </div>
-
-      <div class="info-card">
-        <h2>PGN export</h2>
-        <textarea class="pgn-export" id="pgnDisplay" rows="4" readonly></textarea>
-      </div>
     </aside>
   </div>
 </div>
@@ -3803,7 +3800,6 @@ var require_analyze = __commonJS({
     var boardEl = q("#board");
     var statusBar = q("#statusBar");
     var fenDisplay = q("#fenDisplay");
-    var pgnDisplay = q("#pgnDisplay");
     var moveList = q("#moveList");
     var engineFeedback = q("#engineFeedback");
     var turnDot = q("#turnDot");
@@ -4165,6 +4161,7 @@ var require_analyze = __commonJS({
         const piece = chess.get(sq);
         const btn = document.createElement("button");
         btn.type = "button";
+        btn.tabIndex = -1;
         btn.className = `square ${isLightSquare(squareName) ? "light" : "dark"}`;
         btn.dataset.square = sq;
         btn.setAttribute("aria-label", sq);
@@ -4174,7 +4171,7 @@ var require_analyze = __commonJS({
         if (checkedKingSquare === sq) btn.classList.add("in-check");
         if (piece) {
           const span = document.createElement("span");
-          span.className = `piece ${piece.color === "w" ? "white" : "black"}`;
+          span.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
           span.textContent = PIECES[`${piece.color}${piece.type}`] ?? "";
           btn.append(span);
           if (selectedMoveEval && selectedMoveTo === sq) {
@@ -4227,7 +4224,6 @@ var require_analyze = __commonJS({
       turnDot.className = `turn-dot ${isWhite ? "white" : "black"}`;
       turnLabel.textContent = isWhite ? "White" : "Black";
       fenDisplay.value = chess.fen();
-      pgnDisplay.value = chess.pgn({ maxWidth: 60, newline: "\n" });
       renderMoveList();
       renderEngineFeedback();
     }
@@ -4257,7 +4253,18 @@ var require_analyze = __commonJS({
       </div>`);
       }
       moveList.innerHTML = rows.join("");
-      moveList.querySelector(".active-half")?.scrollIntoView({ block: "nearest" });
+      const activeEl = moveList.querySelector(".active-half");
+      if (activeEl) {
+        const containerRect = moveList.getBoundingClientRect();
+        const elRect = activeEl.getBoundingClientRect();
+        const relTop = elRect.top - containerRect.top + moveList.scrollTop;
+        const relBottom = relTop + elRect.height;
+        if (relBottom > moveList.scrollTop + moveList.clientHeight) {
+          moveList.scrollTop = relBottom - moveList.clientHeight;
+        } else if (relTop < moveList.scrollTop) {
+          moveList.scrollTop = relTop;
+        }
+      }
     }
     function renderNav() {
       navFirst.disabled = cursor === 0;
@@ -4326,9 +4333,9 @@ var require_analyze = __commonJS({
       const computed = window.getComputedStyle(destinationPiece);
       const ghostPiece = destinationPiece.cloneNode(true);
       Object.assign(ghostPiece.style, {
-        position: "absolute",
-        left: `${endX + pageX}px`,
-        top: `${endY + pageY}px`,
+        position: "fixed",
+        left: `${endX}px`,
+        top: `${endY}px`,
         transform: "translate3d(-50%, -50%, 0)",
         margin: "0",
         zIndex: "9999",
