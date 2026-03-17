@@ -3505,6 +3505,130 @@ var require_analyze = __commonJS({
     init_chess();
     init_engine();
     init_analyze();
+    var CATEGORY_LABELS = {
+      brilliant: "Brillante",
+      great: "Genial",
+      excellent: "Excelente",
+      good: "Bueno",
+      inaccuracy: "Inexactitud",
+      mistake: "Error",
+      blunder: "Blunder"
+    };
+    var CATEGORY_SYMBOLS = {
+      brilliant: "!!",
+      great: "!",
+      excellent: "\u2605",
+      good: "+",
+      inaccuracy: "?!",
+      mistake: "x",
+      blunder: "X"
+    };
+    var PIECE_VALUES = {
+      p: 100,
+      n: 320,
+      b: 330,
+      r: 500,
+      q: 900,
+      k: 0
+    };
+    var MATE_CP = 1e5;
+    var StockfishBridge = class {
+      worker;
+      ready = false;
+      initResolve;
+      initReject;
+      initPromise;
+      activeEval = null;
+      queue = Promise.resolve();
+      constructor(workerPath = "/stockfish/stockfish-18-lite-single.js") {
+        this.worker = new Worker(workerPath);
+        this.initPromise = new Promise((resolve, reject) => {
+          this.initResolve = resolve;
+          this.initReject = reject;
+        });
+        this.worker.onmessage = (event) => this.onMessage(String(event.data ?? ""));
+        this.worker.onerror = () => {
+          if (!this.ready) {
+            this.initReject(new Error("No se pudo iniciar Stockfish."));
+          }
+          this.activeEval?.reject(new Error("Stockfish worker error."));
+          this.activeEval = null;
+        };
+        this.send("uci");
+        this.send("isready");
+      }
+      async evaluateFen(fen, depth) {
+        await this.initPromise;
+        const evalPromise = this.queue.then(() => {
+          return new Promise((resolve, reject) => {
+            this.activeEval = {
+              resolve,
+              reject,
+              lastCp: 0,
+              mate: null,
+              pv: "",
+              bestMove: ""
+            };
+            this.send(`position fen ${fen}`);
+            this.send(`go depth ${depth}`);
+          });
+        });
+        this.queue = evalPromise.then(() => void 0).catch(() => void 0);
+        return evalPromise;
+      }
+      terminate() {
+        this.worker.terminate();
+      }
+      onMessage(line) {
+        if (!line) return;
+        if (line === "readyok" && !this.ready) {
+          this.ready = true;
+          this.initResolve();
+          return;
+        }
+        if (!this.activeEval) {
+          return;
+        }
+        if (line.startsWith("info ")) {
+          const parsed = parseInfoLine(line);
+          if (parsed) {
+            this.activeEval.lastCp = parsed.cp;
+            this.activeEval.mate = parsed.mate;
+            this.activeEval.pv = parsed.pv;
+          }
+          return;
+        }
+        if (line.startsWith("bestmove ")) {
+          const bestMove = line.split(" ")[1] ?? "";
+          this.activeEval.bestMove = bestMove;
+          this.activeEval.resolve({
+            cp: this.activeEval.lastCp,
+            mate: this.activeEval.mate,
+            bestMove: this.activeEval.bestMove,
+            pv: this.activeEval.pv
+          });
+          this.activeEval = null;
+        }
+      }
+      send(command) {
+        this.worker.postMessage(command);
+      }
+    };
+    function parseInfoLine(line) {
+      const scoreMatch = line.match(/score (cp|mate) (-?\d+)/);
+      if (!scoreMatch) {
+        return null;
+      }
+      const kind = scoreMatch[1];
+      const value = Number(scoreMatch[2]);
+      const pvMatch = line.match(/\spv\s(.+)$/);
+      const pv = pvMatch?.[1]?.trim() ?? "";
+      if (kind === "mate") {
+        const cp = value > 0 ? MATE_CP - Math.min(Math.abs(value), 99) * 100 : -MATE_CP + Math.min(Math.abs(value), 99) * 100;
+        return { cp, mate: value, pv };
+      }
+      return { cp: value, mate: null, pv };
+    }
     var _audioCache = {};
     function playSound(name) {
       let audio = _audioCache[name];
@@ -3546,6 +3670,12 @@ var require_analyze = __commonJS({
     var activeGhostAnimation = null;
     var activeGhostNode = null;
     var activeGhostDestinationPiece = null;
+    var pendingBoardRefresh = false;
+    var stockfish = null;
+    var analysisDepth = 12;
+    var analysisByPly = [];
+    var analysisRunId = 0;
+    var analysisInProgress = false;
     var app = document.querySelector("#app");
     app.innerHTML = `
 <div class="analyze-shell">
@@ -3562,6 +3692,8 @@ var require_analyze = __commonJS({
         <button class="btn-ghost"   id="undoBtn">Undo move</button>
         <button class="btn-ghost"   id="copyFenBtn">Copy FEN</button>
         <button class="btn-ghost"   id="loadFenBtn">Load FEN</button>
+        <button class="btn-primary" id="analyzeBtn">Analyze game</button>
+        <button class="btn-ghost"   id="stopAnalyzeBtn">Stop</button>
       </div>
 
       <div class="board-wrap">
@@ -3599,6 +3731,11 @@ var require_analyze = __commonJS({
       </div>
 
       <div class="info-card">
+        <h2>Engine feedback</h2>
+        <div class="engine-feedback" id="engineFeedback">Run analysis to get move quality feedback.</div>
+      </div>
+
+      <div class="info-card">
         <h2>PGN export</h2>
         <textarea class="pgn-export" id="pgnDisplay" rows="4" readonly></textarea>
       </div>
@@ -3626,6 +3763,7 @@ var require_analyze = __commonJS({
     var fenDisplay = q("#fenDisplay");
     var pgnDisplay = q("#pgnDisplay");
     var moveList = q("#moveList");
+    var engineFeedback = q("#engineFeedback");
     var turnDot = q("#turnDot");
     var turnLabel = q("#turnLabel");
     var promoDialog = q("#promoDialog");
@@ -3634,11 +3772,15 @@ var require_analyze = __commonJS({
     var navPrev = q("#navPrev");
     var navNext = q("#navNext");
     var navLast = q("#navLast");
+    var analyzeBtn = q("#analyzeBtn");
+    var stopAnalyzeBtn = q("#stopAnalyzeBtn");
     q("#resetBtn").addEventListener("click", () => {
+      cancelAnalysis();
       chess.reset();
       fenHistory = [chess.fen()];
       moveHistory = [];
       cursor = 0;
+      analysisByPly = [];
       clearSelection();
       render();
     });
@@ -3657,6 +3799,7 @@ var require_analyze = __commonJS({
       moveHistory.pop();
       cursor = fenHistory.length - 1;
       chess.load(fenHistory[cursor]);
+      analysisByPly = analysisByPly.slice(0, moveHistory.length + 1);
       clearSelection();
       render();
     });
@@ -3672,16 +3815,27 @@ var require_analyze = __commonJS({
       const raw = prompt("Paste a FEN string:");
       if (!raw) return;
       try {
+        cancelAnalysis();
         chess.load(raw.trim());
         fenHistory = [chess.fen()];
         moveHistory = [];
         cursor = 0;
+        analysisByPly = [];
         clearSelection();
         render();
         showToast("Position loaded.");
       } catch {
         showToast("Invalid FEN \u2014 position was not changed.");
       }
+    });
+    analyzeBtn.addEventListener("click", () => {
+      void runGameAnalysis();
+    });
+    stopAnalyzeBtn.addEventListener("click", () => {
+      if (!analysisInProgress) return;
+      cancelAnalysis();
+      showToast("Analysis stopped.");
+      renderSide();
     });
     navFirst.addEventListener("click", () => goTo(0));
     navPrev.addEventListener("click", () => goTo(cursor - 1));
@@ -3897,12 +4051,14 @@ var require_analyze = __commonJS({
       renderBoard();
     }
     function commitMove(from, to, promotion) {
+      cancelAnalysis();
       const move = chess.move({ from, to, promotion });
       if (!move) return;
       fenHistory = fenHistory.slice(0, cursor + 1);
       moveHistory = moveHistory.slice(0, cursor);
       moveHistory.push(move);
       fenHistory.push(chess.fen());
+      analysisByPly = analysisByPly.slice(0, moveHistory.length);
       cursor = fenHistory.length - 1;
       clearArrows();
       clearSelection();
@@ -3918,6 +4074,7 @@ var require_analyze = __commonJS({
         playSound("move-self");
       }
       render();
+      void analyzeLatestMove();
     }
     function tryMoveFromTo(from, to) {
       const movingPiece = chess.get(from);
@@ -3956,6 +4113,8 @@ var require_analyze = __commonJS({
     function renderBoard() {
       const squares = buildSquareList(orientation);
       const lastMove = getLastMove();
+      const selectedMoveEval = cursor > 0 ? analysisByPly[cursor] : void 0;
+      const selectedMoveTo = moveHistory[cursor - 1]?.to;
       const lastMoveSquares = new Set([lastMove?.from, lastMove?.to].filter(Boolean));
       const checkedKingSquare = getCheckedKingSquare();
       const fragment = document.createDocumentFragment();
@@ -3976,6 +4135,13 @@ var require_analyze = __commonJS({
           span.className = `piece ${piece.color === "w" ? "white" : "black"}`;
           span.textContent = PIECES[`${piece.color}${piece.type}`] ?? "";
           btn.append(span);
+          if (selectedMoveEval && selectedMoveTo === sq) {
+            const marker = document.createElement("span");
+            marker.className = `piece-quality-marker ${selectedMoveEval.category}`;
+            marker.textContent = CATEGORY_SYMBOLS[selectedMoveEval.category];
+            marker.title = `${selectedMoveEval.label} (${selectedMoveEval.cpl} CPL)`;
+            btn.append(marker);
+          }
         }
         fragment.append(btn);
       }
@@ -4021,6 +4187,7 @@ var require_analyze = __commonJS({
       fenDisplay.value = chess.fen();
       pgnDisplay.value = chess.pgn({ maxWidth: 60, newline: "\n" });
       renderMoveList();
+      renderEngineFeedback();
     }
     function renderMoveList() {
       const sans = moveHistory.map((move) => move.san ?? "\u2014");
@@ -4036,11 +4203,15 @@ var require_analyze = __commonJS({
         const wActive = cursor === wIdx ? " active-half" : "";
         const bActive = cursor === bIdx ? " active-half" : "";
         const bSan = sans[i + 1] ?? "";
+        const whiteEval = analysisByPly[wIdx];
+        const blackEval = analysisByPly[bIdx];
+        const whiteBadge = whiteEval ? `<span class="move-quality-badge ${whiteEval.category}">${whiteEval.label}</span>` : "";
+        const blackBadge = blackEval ? `<span class="move-quality-badge ${blackEval.category}">${blackEval.label}</span>` : "";
         rows.push(`
       <div class="analyze-move-row">
         <strong>${num}.</strong>
-        <span class="${wActive}" data-idx="${wIdx}">${sans[i]}</span>
-        <span class="${bActive}" data-idx="${bIdx}">${bSan}</span>
+        <span class="${wActive}" data-idx="${wIdx}">${sans[i]}${whiteBadge}</span>
+        <span class="${bActive}" data-idx="${bIdx}">${bSan}${blackBadge}</span>
       </div>`);
       }
       moveList.innerHTML = rows.join("");
@@ -4152,6 +4323,10 @@ var require_analyze = __commonJS({
           activeGhostAnimation = null;
           activeGhostNode = null;
           activeGhostDestinationPiece = null;
+          if (pendingBoardRefresh) {
+            pendingBoardRefresh = false;
+            renderBoard();
+          }
         }
       });
       animation.addEventListener("cancel", () => {
@@ -4161,8 +4336,19 @@ var require_analyze = __commonJS({
           activeGhostAnimation = null;
           activeGhostNode = null;
           activeGhostDestinationPiece = null;
+          if (pendingBoardRefresh) {
+            pendingBoardRefresh = false;
+            renderBoard();
+          }
         }
       });
+    }
+    function requestBoardRefresh() {
+      if (activeGhostAnimation) {
+        pendingBoardRefresh = true;
+        return;
+      }
+      renderBoard();
     }
     function toggleArrow(from, to) {
       const key = `${from}-${to}`;
@@ -4270,6 +4456,225 @@ var require_analyze = __commonJS({
       })() : "";
       arrowLayer.innerHTML = `${arrows}${previewArrow}`;
     }
+    async function runGameAnalysis() {
+      if (analysisInProgress) {
+        showToast("Analysis is already running.");
+        return;
+      }
+      if (moveHistory.length === 0) {
+        showToast("Play or load moves first.");
+        return;
+      }
+      analysisRunId += 1;
+      const runId = analysisRunId;
+      analysisInProgress = true;
+      renderSide();
+      try {
+        const engine = ensureStockfish();
+        for (let ply = 1; ply <= moveHistory.length; ply += 1) {
+          if (runId !== analysisRunId) {
+            return;
+          }
+          const beforeFen = fenHistory[ply - 1];
+          const afterFen = fenHistory[ply];
+          const move = moveHistory[ply - 1];
+          const before = await engine.evaluateFen(beforeFen, analysisDepth);
+          if (runId !== analysisRunId) {
+            return;
+          }
+          const after = await engine.evaluateFen(afterFen, analysisDepth);
+          if (runId !== analysisRunId) {
+            return;
+          }
+          analysisByPly[ply] = classifyMove(ply, move, before, after, beforeFen, afterFen);
+          if (cursor === ply) {
+            requestBoardRefresh();
+          }
+          renderSide();
+        }
+        showToast("Analysis complete.");
+      } catch {
+        showToast("Engine failed to analyze this game.");
+      } finally {
+        if (runId === analysisRunId) {
+          analysisInProgress = false;
+          renderSide();
+        }
+      }
+    }
+    async function analyzeLatestMove() {
+      const ply = moveHistory.length;
+      if (ply <= 0) {
+        return;
+      }
+      if (analysisByPly[ply]) {
+        return;
+      }
+      analysisRunId += 1;
+      const runId = analysisRunId;
+      analysisInProgress = true;
+      renderSide();
+      try {
+        const engine = ensureStockfish();
+        const beforeFen = fenHistory[ply - 1];
+        const afterFen = fenHistory[ply];
+        const move = moveHistory[ply - 1];
+        const before = await engine.evaluateFen(beforeFen, analysisDepth);
+        if (runId !== analysisRunId) {
+          return;
+        }
+        const after = await engine.evaluateFen(afterFen, analysisDepth);
+        if (runId !== analysisRunId) {
+          return;
+        }
+        analysisByPly[ply] = classifyMove(ply, move, before, after, beforeFen, afterFen);
+        if (cursor === ply) {
+          requestBoardRefresh();
+        }
+      } catch {
+      } finally {
+        if (runId === analysisRunId) {
+          analysisInProgress = false;
+          renderSide();
+        }
+      }
+    }
+    function ensureStockfish() {
+      if (!stockfish) {
+        stockfish = new StockfishBridge();
+      }
+      return stockfish;
+    }
+    function cancelAnalysis() {
+      analysisRunId += 1;
+      analysisInProgress = false;
+    }
+    function classifyMove(ply, move, before, after, beforeFen, afterFen) {
+      const playedMove = toUci(move);
+      const beforeMoverCp = before.cp;
+      const afterMoverCp = -after.cp;
+      const cpl = Math.max(0, Math.round(beforeMoverCp - afterMoverCp));
+      const matchesBest = before.bestMove === playedMove;
+      const materialDrop = materialFromPerspective(afterFen, move.color) - materialFromPerspective(beforeFen, move.color);
+      const sacrificed = materialDrop <= -200;
+      let category;
+      if (matchesBest && sacrificed && cpl <= 30) {
+        category = "brilliant";
+      } else if (matchesBest && cpl <= 20 && (move.captured || move.san.includes("+") || move.promotion)) {
+        category = "great";
+      } else if (cpl <= 20) {
+        category = "excellent";
+      } else if (cpl <= 70) {
+        category = "good";
+      } else if (cpl <= 140) {
+        category = "inaccuracy";
+      } else if (cpl <= 260) {
+        category = "mistake";
+      } else {
+        category = "blunder";
+      }
+      const note = buildMoveNote(category, cpl, before, playedMove, move);
+      return {
+        ply,
+        label: CATEGORY_LABELS[category],
+        category,
+        cpl,
+        playedMove,
+        bestMove: before.bestMove,
+        note,
+        beforeCp: Math.round(beforeMoverCp),
+        afterCp: Math.round(afterMoverCp)
+      };
+    }
+    function toUci(move) {
+      const promotion = move.promotion ?? "";
+      return `${move.from}${move.to}${promotion}`;
+    }
+    function materialFromPerspective(fen, color) {
+      const board = fen.split(" ")[0] ?? "";
+      let white = 0;
+      let black = 0;
+      for (const ch of board) {
+        if (ch === "/" || /\d/.test(ch)) {
+          continue;
+        }
+        const value = PIECE_VALUES[ch.toLowerCase()] ?? 0;
+        if (ch === ch.toUpperCase()) {
+          white += value;
+        } else {
+          black += value;
+        }
+      }
+      return color === "w" ? white - black : black - white;
+    }
+    function formatCp(cp) {
+      if (cp >= MATE_CP - 1e4) {
+        return "+M";
+      }
+      if (cp <= -MATE_CP + 1e4) {
+        return "-M";
+      }
+      const pawns = cp / 100;
+      const signed = pawns >= 0 ? `+${pawns.toFixed(2)}` : pawns.toFixed(2);
+      return signed;
+    }
+    function buildMoveNote(category, cpl, before, playedMove, move) {
+      if (category === "brilliant") {
+        return `Sacrifice-based top engine move (${playedMove}).`;
+      }
+      if (category === "great") {
+        return `Strong tactical best move by engine (${playedMove}).`;
+      }
+      if (category === "blunder") {
+        return `Large drop (${cpl} CPL). Engine preferred ${before.bestMove || "another move"}.`;
+      }
+      if (category === "mistake") {
+        return `Significant accuracy loss (${cpl} CPL). Better: ${before.bestMove || "engine alternative"}.`;
+      }
+      if (category === "inaccuracy") {
+        return `Minor loss (${cpl} CPL). Better was ${before.bestMove || "engine line"}.`;
+      }
+      if (move.san.includes("+") || move.captured) {
+        return "Active move that keeps practical pressure.";
+      }
+      return `Stable move (${cpl} CPL).`;
+    }
+    function renderEngineFeedback() {
+      stopAnalyzeBtn.disabled = !analysisInProgress;
+      analyzeBtn.disabled = analysisInProgress;
+      if (analysisInProgress) {
+        engineFeedback.innerHTML = `<p class="engine-inline">Analyzing... ${analysisByPly.filter(Boolean).length}/${moveHistory.length} moves complete.</p>`;
+        return;
+      }
+      if (analysisByPly.filter(Boolean).length === 0) {
+        engineFeedback.innerHTML = "Run analysis to get move quality feedback.";
+        return;
+      }
+      if (cursor === 0) {
+        const all = analysisByPly.filter((entry) => Boolean(entry));
+        const avgCpl = all.length > 0 ? Math.round(all.reduce((sum, item) => sum + item.cpl, 0) / all.length) : 0;
+        const blunders = all.filter((item) => item.category === "blunder").length;
+        const brilliants = all.filter((item) => item.category === "brilliant").length;
+        engineFeedback.innerHTML = `
+      <p class="engine-inline"><strong>Game summary</strong></p>
+      <p class="engine-inline">Average CPL: <strong>${avgCpl}</strong></p>
+      <p class="engine-inline">Brilliants: <strong>${brilliants}</strong> \xB7 Blunders: <strong>${blunders}</strong></p>
+      <p class="engine-inline">Select a move in the list to see detailed feedback.</p>
+    `;
+        return;
+      }
+      const details = analysisByPly[cursor];
+      if (!details) {
+        engineFeedback.innerHTML = "This move has no analysis yet.";
+        return;
+      }
+      engineFeedback.innerHTML = `
+    <p class="engine-inline"><strong>${details.label}</strong> \xB7 Move ${details.ply}</p>
+    <p class="engine-inline">Played: <strong>${details.playedMove}</strong> \xB7 Best: <strong>${details.bestMove || "(none)"}</strong></p>
+    <p class="engine-inline">Eval: <strong>${formatCp(details.beforeCp)}</strong> \u2192 <strong>${formatCp(details.afterCp)}</strong> (${details.cpl} CPL)</p>
+    <p class="engine-inline">${details.note}</p>
+  `;
+    }
     function getLastMove() {
       if (cursor === 0) return void 0;
       return moveHistory[cursor - 1];
@@ -4286,6 +4691,9 @@ var require_analyze = __commonJS({
       clearTimeout(toastTimer);
       toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 2400);
     }
+    window.addEventListener("beforeunload", () => {
+      stockfish?.terminate();
+    });
     render();
   }
 });

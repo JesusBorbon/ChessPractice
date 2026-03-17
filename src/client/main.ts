@@ -142,19 +142,11 @@ app.innerHTML = `
   <div class="app-shell">
     <header class="hero">
       <section class="hero-card hero-copy">
-        <p class="eyebrow">Realtime Chess Arena</p>
-        <h1>One room. Two devices. One authoritative board.</h1>
-        <p>
-          Create a match, share the code or link, and let desktop and mobile players join the same game.
-          The server validates every move so both screens stay in sync.
-        </p>
+        <h1>Multiplayer Chess</h1>
+        <p>Create a room or join one with code.</p>
         <a href="/analyze" style="display:inline-flex;align-items:center;gap:8px;margin-top:18px;padding:12px 22px;background:var(--accent-strong);color:#fffdf8;border-radius:999px;font-weight:700;text-decoration:none;box-shadow:0 10px 24px rgba(25,63,48,0.18);transition:transform 150ms ease;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">♟ Open Analysis Board</a>
       </section>
       <aside class="hero-card status-card">
-        <div class="status-pill">
-          <span class="status-dot" id="connectionDot"></span>
-          <span id="connectionText">Connecting…</span>
-        </div>
         <div class="status-grid">
           <div>
             <strong>Room</strong>
@@ -181,6 +173,7 @@ app.innerHTML = `
         </div>
         <div class="board-wrap">
           <div class="board" id="board"></div>
+          <svg class="board-arrows" id="arrowLayer" viewBox="0 0 800 800" aria-hidden="true"></svg>
         </div>
         <div class="board-caption" id="boardCaption">
           Tap or click one of your pieces, then choose a legal destination.
@@ -265,8 +258,6 @@ app.innerHTML = `
 
 const board = must<HTMLDivElement>("#board");
 const roomInput = must<HTMLInputElement>("#roomInput");
-const connectionDot = must<HTMLSpanElement>("#connectionDot");
-const connectionText = must<HTMLSpanElement>("#connectionText");
 const roomBadge = must<HTMLDivElement>("#roomBadge");
 const roleBadge = must<HTMLDivElement>("#roleBadge");
 const matchStatus = must<HTMLDivElement>("#matchStatus");
@@ -287,6 +278,8 @@ const copyLinkButton = must<HTMLButtonElement>("#copyLinkButton");
 const leaveRoomButton = must<HTMLButtonElement>("#leaveRoomButton");
 const flipBoardButton = must<HTMLButtonElement>("#flipBoardButton");
 const rematchButton = must<HTMLButtonElement>("#rematchButton");
+const arrowLayer = must<SVGSVGElement>("#arrowLayer");
+const arrowAnnotations = new Set<string>();
 
 createRoomButton.addEventListener("click", () => {
   socket.emit("room:create");
@@ -354,7 +347,12 @@ board.addEventListener("click", (event) => {
     return;
   }
 
+  clearArrows();
   onSquarePressed(square);
+});
+
+board.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
 });
 
 // ── Pointer drag ───────────────────────────────────────────────────────────────
@@ -363,8 +361,27 @@ let ptrDragNode: HTMLElement | null = null;
 let ptrDragMoved = false;
 let ptrStartX = 0;
 let ptrStartY = 0;
+let arrowDragFrom: Square | null = null;
+let arrowDragTo: Square | null = null;
+let arrowDragPointer: { x: number; y: number } | null = null;
+let arrowDragMoved = false;
 
 board.addEventListener("pointerdown", (event) => {
+  if (event.button === 2) {
+    const square = getSquareFromPoint(event.clientX, event.clientY);
+    if (!square) return;
+
+    arrowDragFrom = square;
+    arrowDragTo = null;
+    arrowDragPointer = squareCenter(square);
+    arrowDragMoved = false;
+    ptrStartX = event.clientX;
+    ptrStartY = event.clientY;
+    board.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    return;
+  }
+
   if (event.button !== 0) return;
   const squareButton = (event.target as HTMLElement).closest<HTMLButtonElement>(".square");
   const square = squareButton?.dataset.square as Square | undefined;
@@ -378,6 +395,17 @@ board.addEventListener("pointerdown", (event) => {
 });
 
 board.addEventListener("pointermove", (event) => {
+  if (arrowDragFrom) {
+    const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
+    arrowDragTo = hoverSquare && hoverSquare !== arrowDragFrom ? hoverSquare : null;
+    arrowDragPointer = boardPointFromClient(event.clientX, event.clientY);
+    renderArrows();
+  }
+
+  if (arrowDragFrom && !arrowDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) >= 5) {
+    arrowDragMoved = true;
+  }
+
   if (!ptrDragFrom) return;
   if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 5) return;
 
@@ -448,8 +476,45 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
   updateCaption();
 }
 
-board.addEventListener("pointerup", (event) => endPointerDrag(event, true));
-board.addEventListener("pointercancel", (event) => endPointerDrag(event, false));
+function endArrowDrag(event: PointerEvent, commit: boolean): void {
+  if (!arrowDragFrom) return;
+
+  const fromSquare = arrowDragFrom;
+  const previewTo = arrowDragTo;
+  arrowDragFrom = null;
+  arrowDragTo = null;
+  arrowDragPointer = null;
+  renderArrows();
+
+  if (!commit) {
+    arrowDragMoved = false;
+    return;
+  }
+
+  const targetSquare = previewTo ?? getSquareFromPoint(event.clientX, event.clientY);
+  if (!targetSquare || !arrowDragMoved || targetSquare === fromSquare) {
+    arrowDragMoved = false;
+    return;
+  }
+
+  toggleArrow(fromSquare, targetSquare);
+  arrowDragMoved = false;
+  renderArrows();
+}
+
+board.addEventListener("pointerup", (event) => {
+  if (event.button === 2 || arrowDragFrom) {
+    endArrowDrag(event, true);
+    return;
+  }
+
+  endPointerDrag(event, true);
+});
+
+board.addEventListener("pointercancel", (event) => {
+  endArrowDrag(event, false);
+  endPointerDrag(event, false);
+});
 
 promotionDialog.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-promotion]");
@@ -469,7 +534,6 @@ promotionDialog.addEventListener("click", (event) => {
 
 socket.on("connect", () => {
   state.connected = true;
-  renderConnection();
 
   if (state.autoJoinCode) {
     socket.emit("room:join", { roomId: state.autoJoinCode });
@@ -479,12 +543,10 @@ socket.on("connect", () => {
 
 socket.on("disconnect", () => {
   state.connected = false;
-  renderConnection();
 });
 
 socket.on("connection:status", () => {
   state.connected = true;
-  renderConnection();
 });
 
 socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl: string }) => {
@@ -507,12 +569,17 @@ socket.on("session:left", () => {
 });
 
 socket.on("room:state", (snapshot: RoomSnapshot) => {
+  const previousMoveCount = state.snapshot?.moveCount ?? 0;
   state.snapshot = snapshot;
   chess.load(snapshot.fen);
 
   const isNewMove = _lastPlayedMoveCount !== -1 && snapshot.moveCount > _lastPlayedMoveCount;
   _lastPlayedMoveCount = snapshot.moveCount;
   if (isNewMove) playSoundForSnapshot(snapshot);
+
+  if (snapshot.moveCount > previousMoveCount) {
+    clearArrows();
+  }
 
   if (state.selectedSquare) {
     const currentPiece = chess.get(state.selectedSquare);
@@ -556,16 +623,10 @@ function must<TElement extends Element>(selector: string): TElement {
 }
 
 function render(): void {
-  renderConnection();
   renderBoard();
   renderSession();
   renderMoves();
   updateCaption();
-}
-
-function renderConnection(): void {
-  connectionDot.classList.toggle("live", state.connected);
-  connectionText.textContent = state.connected ? "Socket connected" : "Disconnected";
 }
 
 function renderSession(): void {
@@ -582,7 +643,7 @@ function renderSession(): void {
     turnMeta.textContent = "White";
     movesMeta.textContent = "0";
     spectatorMeta.textContent = "0";
-    summaryText.textContent = "The server will keep this board authoritative for every device in the room.";
+    summaryText.textContent = "Ready to play.";
     return;
   }
 
@@ -594,10 +655,10 @@ function renderSession(): void {
   spectatorMeta.textContent = String(snapshot.players.spectatorCount);
 
   const roleDescription = state.role === "spectator"
-    ? "You are watching live and can still flip the board orientation."
+    ? "Spectating."
     : state.role
-      ? `You are playing ${state.role === "w" ? "White" : "Black"}.`
-      : "You are not seated in this room yet.";
+      ? `Playing ${state.role === "w" ? "White" : "Black"}.`
+      : "Not seated.";
   const lastMoveDescription = snapshot.lastMove
     ? ` Last move: ${snapshot.lastMove.san} (${snapshot.lastMove.from} to ${snapshot.lastMove.to}).`
     : "";
@@ -666,6 +727,144 @@ function renderBoard(): void {
 
   board.replaceChildren(fragment);
   animateLastMove(lastMove);
+  renderArrows();
+}
+
+function buildArrowPath(
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  shaftWidth = 10,
+  headLength = 46,
+  headWidth = 38,
+): string {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 1) {
+    return "";
+  }
+
+  const ux = dx / length;
+  const uy = dy / length;
+  const px = -uy;
+  const py = ux;
+
+  const safeHeadLength = Math.min(headLength, Math.max(18, length * 0.45));
+  const shaftHalf = shaftWidth / 2;
+  const headHalf = headWidth / 2;
+
+  const baseX = end.x - ux * safeHeadLength;
+  const baseY = end.y - uy * safeHeadLength;
+
+  const tailLeftX = start.x + px * shaftHalf;
+  const tailLeftY = start.y + py * shaftHalf;
+  const tailRightX = start.x - px * shaftHalf;
+  const tailRightY = start.y - py * shaftHalf;
+
+  const baseLeftX = baseX + px * shaftHalf;
+  const baseLeftY = baseY + py * shaftHalf;
+  const baseRightX = baseX - px * shaftHalf;
+  const baseRightY = baseY - py * shaftHalf;
+
+  const wingLeftX = baseX + px * headHalf;
+  const wingLeftY = baseY + py * headHalf;
+  const wingRightX = baseX - px * headHalf;
+  const wingRightY = baseY - py * headHalf;
+
+  return [
+    `M ${tailLeftX.toFixed(2)} ${tailLeftY.toFixed(2)}`,
+    `L ${baseLeftX.toFixed(2)} ${baseLeftY.toFixed(2)}`,
+    `L ${wingLeftX.toFixed(2)} ${wingLeftY.toFixed(2)}`,
+    `L ${end.x.toFixed(2)} ${end.y.toFixed(2)}`,
+    `L ${wingRightX.toFixed(2)} ${wingRightY.toFixed(2)}`,
+    `L ${baseRightX.toFixed(2)} ${baseRightY.toFixed(2)}`,
+    `L ${tailRightX.toFixed(2)} ${tailRightY.toFixed(2)}`,
+    `A ${shaftHalf.toFixed(2)} ${shaftHalf.toFixed(2)} 0 0 0 ${tailLeftX.toFixed(2)} ${tailLeftY.toFixed(2)}`,
+    "Z",
+  ].join(" ");
+}
+
+function getSquareFromPoint(clientX: number, clientY: number): Square | null {
+  const node = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+  const squareButton = node?.closest<HTMLButtonElement>(".square");
+  return (squareButton?.dataset.square as Square | undefined) ?? null;
+}
+
+function boardPointFromClient(clientX: number, clientY: number): { x: number; y: number } {
+  const rect = board.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return { x: 400, y: 400 };
+  }
+
+  const localX = clientX - rect.left;
+  const localY = clientY - rect.top;
+  const clampedX = Math.max(0, Math.min(rect.width, localX));
+  const clampedY = Math.max(0, Math.min(rect.height, localY));
+
+  return {
+    x: (clampedX / rect.width) * 800,
+    y: (clampedY / rect.height) * 800,
+  };
+}
+
+function squareCenter(square: Square): { x: number; y: number } {
+  const file = square.charCodeAt(0) - 97;
+  const rank = Number(square[1]) - 1;
+  const col = state.orientation === "w" ? file : 7 - file;
+  const row = state.orientation === "w" ? 7 - rank : rank;
+
+  return {
+    x: col * 100 + 50,
+    y: row * 100 + 50,
+  };
+}
+
+function toggleArrow(from: Square, to: Square): void {
+  const key = `${from}-${to}`;
+  if (arrowAnnotations.has(key)) {
+    arrowAnnotations.delete(key);
+    return;
+  }
+
+  arrowAnnotations.add(key);
+}
+
+function clearArrows(): void {
+  if (arrowAnnotations.size === 0) {
+    return;
+  }
+
+  arrowAnnotations.clear();
+  renderArrows();
+}
+
+function renderArrows(): void {
+  const arrows = [...arrowAnnotations]
+    .map((entry) => {
+      const [from, to] = entry.split("-") as [Square, Square];
+      const start = squareCenter(from);
+      const end = squareCenter(to);
+      const pathData = buildArrowPath(start, end, 10, 46, 38);
+      if (!pathData) {
+        return "";
+      }
+      return `<path class="board-arrow" d="${pathData}" fill="rgba(219, 52, 52, 0.72)"/>`;
+    })
+    .join("");
+
+  const previewArrow = arrowDragFrom && arrowDragPointer
+    ? (() => {
+        const start = squareCenter(arrowDragFrom);
+        const end = arrowDragPointer;
+        const pathData = buildArrowPath(start, end, 10, 46, 38);
+        if (!pathData) {
+          return "";
+        }
+        return `<path class="board-arrow board-arrow-preview" d="${pathData}" fill="rgba(219, 52, 52, 0.72)"/>`;
+      })()
+    : "";
+
+  arrowLayer.innerHTML = `${arrows}${previewArrow}`;
 }
 
 function syncBoardInteractionState(): void {
@@ -1097,6 +1296,7 @@ function clearLocalRoomState(): void {
   state.snapshot = null;
   state.pendingPromotion = null;
   state.premove = null;
+  clearArrows();
   clearSelection();
   chess.reset();
   syncUrl(null);

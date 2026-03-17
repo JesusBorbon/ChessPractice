@@ -185,6 +185,17 @@ button {
 .board-wrap {
   position: relative;
 }
+.board-arrows {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 3;
+}
+.board-arrow-preview {
+  animation: arrow-flow 520ms linear infinite;
+}
 .board {
   width: 100%;
   aspect-ratio: 1;
@@ -445,6 +456,14 @@ button {
   }
   .square {
     font-size: clamp(1.6rem, 8vw, 2.6rem);
+  }
+}
+@keyframes arrow-flow {
+  from {
+    opacity: 0.58;
+  }
+  to {
+    opacity: 0.78;
   }
 }
 /*# sourceMappingURL=main.css.map */

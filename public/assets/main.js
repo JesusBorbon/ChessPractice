@@ -7181,19 +7181,11 @@ var require_main = __commonJS({
   <div class="app-shell">
     <header class="hero">
       <section class="hero-card hero-copy">
-        <p class="eyebrow">Realtime Chess Arena</p>
-        <h1>One room. Two devices. One authoritative board.</h1>
-        <p>
-          Create a match, share the code or link, and let desktop and mobile players join the same game.
-          The server validates every move so both screens stay in sync.
-        </p>
+        <h1>Multiplayer Chess</h1>
+        <p>Create a room or join one with code.</p>
         <a href="/analyze" style="display:inline-flex;align-items:center;gap:8px;margin-top:18px;padding:12px 22px;background:var(--accent-strong);color:#fffdf8;border-radius:999px;font-weight:700;text-decoration:none;box-shadow:0 10px 24px rgba(25,63,48,0.18);transition:transform 150ms ease;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">\u265F Open Analysis Board</a>
       </section>
       <aside class="hero-card status-card">
-        <div class="status-pill">
-          <span class="status-dot" id="connectionDot"></span>
-          <span id="connectionText">Connecting\u2026</span>
-        </div>
         <div class="status-grid">
           <div>
             <strong>Room</strong>
@@ -7220,6 +7212,7 @@ var require_main = __commonJS({
         </div>
         <div class="board-wrap">
           <div class="board" id="board"></div>
+          <svg class="board-arrows" id="arrowLayer" viewBox="0 0 800 800" aria-hidden="true"></svg>
         </div>
         <div class="board-caption" id="boardCaption">
           Tap or click one of your pieces, then choose a legal destination.
@@ -7303,8 +7296,6 @@ var require_main = __commonJS({
 `;
     var board = must("#board");
     var roomInput = must("#roomInput");
-    var connectionDot = must("#connectionDot");
-    var connectionText = must("#connectionText");
     var roomBadge = must("#roomBadge");
     var roleBadge = must("#roleBadge");
     var matchStatus = must("#matchStatus");
@@ -7325,6 +7316,8 @@ var require_main = __commonJS({
     var leaveRoomButton = must("#leaveRoomButton");
     var flipBoardButton = must("#flipBoardButton");
     var rematchButton = must("#rematchButton");
+    var arrowLayer = must("#arrowLayer");
+    var arrowAnnotations = /* @__PURE__ */ new Set();
     createRoomButton.addEventListener("click", () => {
       socket.emit("room:create");
     });
@@ -7379,14 +7372,35 @@ var require_main = __commonJS({
       if (!square) {
         return;
       }
+      clearArrows();
       onSquarePressed(square);
+    });
+    board.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
     });
     var ptrDragFrom = null;
     var ptrDragNode = null;
     var ptrDragMoved = false;
     var ptrStartX = 0;
     var ptrStartY = 0;
+    var arrowDragFrom = null;
+    var arrowDragTo = null;
+    var arrowDragPointer = null;
+    var arrowDragMoved = false;
     board.addEventListener("pointerdown", (event) => {
+      if (event.button === 2) {
+        const square2 = getSquareFromPoint(event.clientX, event.clientY);
+        if (!square2) return;
+        arrowDragFrom = square2;
+        arrowDragTo = null;
+        arrowDragPointer = squareCenter(square2);
+        arrowDragMoved = false;
+        ptrStartX = event.clientX;
+        ptrStartY = event.clientY;
+        board.setPointerCapture(event.pointerId);
+        event.preventDefault();
+        return;
+      }
       if (event.button !== 0) return;
       const squareButton = event.target.closest(".square");
       const square = squareButton?.dataset.square;
@@ -7398,6 +7412,15 @@ var require_main = __commonJS({
       board.setPointerCapture(event.pointerId);
     });
     board.addEventListener("pointermove", (event) => {
+      if (arrowDragFrom) {
+        const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
+        arrowDragTo = hoverSquare && hoverSquare !== arrowDragFrom ? hoverSquare : null;
+        arrowDragPointer = boardPointFromClient(event.clientX, event.clientY);
+        renderArrows();
+      }
+      if (arrowDragFrom && !arrowDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) >= 5) {
+        arrowDragMoved = true;
+      }
       if (!ptrDragFrom) return;
       if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 5) return;
       if (!ptrDragMoved) {
@@ -7459,8 +7482,38 @@ var require_main = __commonJS({
       renderBoard();
       updateCaption();
     }
-    board.addEventListener("pointerup", (event) => endPointerDrag(event, true));
-    board.addEventListener("pointercancel", (event) => endPointerDrag(event, false));
+    function endArrowDrag(event, commit) {
+      if (!arrowDragFrom) return;
+      const fromSquare = arrowDragFrom;
+      const previewTo = arrowDragTo;
+      arrowDragFrom = null;
+      arrowDragTo = null;
+      arrowDragPointer = null;
+      renderArrows();
+      if (!commit) {
+        arrowDragMoved = false;
+        return;
+      }
+      const targetSquare = previewTo ?? getSquareFromPoint(event.clientX, event.clientY);
+      if (!targetSquare || !arrowDragMoved || targetSquare === fromSquare) {
+        arrowDragMoved = false;
+        return;
+      }
+      toggleArrow(fromSquare, targetSquare);
+      arrowDragMoved = false;
+      renderArrows();
+    }
+    board.addEventListener("pointerup", (event) => {
+      if (event.button === 2 || arrowDragFrom) {
+        endArrowDrag(event, true);
+        return;
+      }
+      endPointerDrag(event, true);
+    });
+    board.addEventListener("pointercancel", (event) => {
+      endArrowDrag(event, false);
+      endPointerDrag(event, false);
+    });
     promotionDialog.addEventListener("click", (event) => {
       const button = event.target.closest("[data-promotion]");
       if (!button) {
@@ -7476,7 +7529,6 @@ var require_main = __commonJS({
     });
     socket.on("connect", () => {
       state.connected = true;
-      renderConnection();
       if (state.autoJoinCode) {
         socket.emit("room:join", { roomId: state.autoJoinCode });
         state.autoJoinCode = null;
@@ -7484,11 +7536,9 @@ var require_main = __commonJS({
     });
     socket.on("disconnect", () => {
       state.connected = false;
-      renderConnection();
     });
     socket.on("connection:status", () => {
       state.connected = true;
-      renderConnection();
     });
     socket.on("session:joined", (payload) => {
       state.roomId = payload.roomId;
@@ -7506,11 +7556,15 @@ var require_main = __commonJS({
       render();
     });
     socket.on("room:state", (snapshot) => {
+      const previousMoveCount = state.snapshot?.moveCount ?? 0;
       state.snapshot = snapshot;
       chess.load(snapshot.fen);
       const isNewMove = _lastPlayedMoveCount !== -1 && snapshot.moveCount > _lastPlayedMoveCount;
       _lastPlayedMoveCount = snapshot.moveCount;
       if (isNewMove) playSoundForSnapshot(snapshot);
+      if (snapshot.moveCount > previousMoveCount) {
+        clearArrows();
+      }
       if (state.selectedSquare) {
         const currentPiece = chess.get(state.selectedSquare);
         if (!currentPiece || !isOwnPiece(currentPiece.color)) {
@@ -7544,15 +7598,10 @@ var require_main = __commonJS({
       return element;
     }
     function render() {
-      renderConnection();
       renderBoard();
       renderSession();
       renderMoves();
       updateCaption();
-    }
-    function renderConnection() {
-      connectionDot.classList.toggle("live", state.connected);
-      connectionText.textContent = state.connected ? "Socket connected" : "Disconnected";
     }
     function renderSession() {
       const snapshot = state.snapshot;
@@ -7566,7 +7615,7 @@ var require_main = __commonJS({
         turnMeta.textContent = "White";
         movesMeta.textContent = "0";
         spectatorMeta.textContent = "0";
-        summaryText.textContent = "The server will keep this board authoritative for every device in the room.";
+        summaryText.textContent = "Ready to play.";
         return;
       }
       matchStatus.textContent = snapshot.status;
@@ -7575,7 +7624,7 @@ var require_main = __commonJS({
       turnMeta.textContent = snapshot.turn === "w" ? "White" : "Black";
       movesMeta.textContent = String(snapshot.moveCount);
       spectatorMeta.textContent = String(snapshot.players.spectatorCount);
-      const roleDescription = state.role === "spectator" ? "You are watching live and can still flip the board orientation." : state.role ? `You are playing ${state.role === "w" ? "White" : "Black"}.` : "You are not seated in this room yet.";
+      const roleDescription = state.role === "spectator" ? "Spectating." : state.role ? `Playing ${state.role === "w" ? "White" : "Black"}.` : "Not seated.";
       const lastMoveDescription = snapshot.lastMove ? ` Last move: ${snapshot.lastMove.san} (${snapshot.lastMove.from} to ${snapshot.lastMove.to}).` : "";
       const rematchDescription = snapshot.rematchVotes > 0 ? ` Rematch votes: ${snapshot.rematchVotes}/2.` : "";
       summaryText.textContent = `${roleDescription} ${snapshot.status}${lastMoveDescription}${rematchDescription}`.trim();
@@ -7628,6 +7677,113 @@ var require_main = __commonJS({
       }
       board.replaceChildren(fragment);
       animateLastMove(lastMove);
+      renderArrows();
+    }
+    function buildArrowPath(start, end, shaftWidth = 10, headLength = 46, headWidth = 38) {
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const length = Math.hypot(dx, dy);
+      if (length < 1) {
+        return "";
+      }
+      const ux = dx / length;
+      const uy = dy / length;
+      const px = -uy;
+      const py = ux;
+      const safeHeadLength = Math.min(headLength, Math.max(18, length * 0.45));
+      const shaftHalf = shaftWidth / 2;
+      const headHalf = headWidth / 2;
+      const baseX = end.x - ux * safeHeadLength;
+      const baseY = end.y - uy * safeHeadLength;
+      const tailLeftX = start.x + px * shaftHalf;
+      const tailLeftY = start.y + py * shaftHalf;
+      const tailRightX = start.x - px * shaftHalf;
+      const tailRightY = start.y - py * shaftHalf;
+      const baseLeftX = baseX + px * shaftHalf;
+      const baseLeftY = baseY + py * shaftHalf;
+      const baseRightX = baseX - px * shaftHalf;
+      const baseRightY = baseY - py * shaftHalf;
+      const wingLeftX = baseX + px * headHalf;
+      const wingLeftY = baseY + py * headHalf;
+      const wingRightX = baseX - px * headHalf;
+      const wingRightY = baseY - py * headHalf;
+      return [
+        `M ${tailLeftX.toFixed(2)} ${tailLeftY.toFixed(2)}`,
+        `L ${baseLeftX.toFixed(2)} ${baseLeftY.toFixed(2)}`,
+        `L ${wingLeftX.toFixed(2)} ${wingLeftY.toFixed(2)}`,
+        `L ${end.x.toFixed(2)} ${end.y.toFixed(2)}`,
+        `L ${wingRightX.toFixed(2)} ${wingRightY.toFixed(2)}`,
+        `L ${baseRightX.toFixed(2)} ${baseRightY.toFixed(2)}`,
+        `L ${tailRightX.toFixed(2)} ${tailRightY.toFixed(2)}`,
+        `A ${shaftHalf.toFixed(2)} ${shaftHalf.toFixed(2)} 0 0 0 ${tailLeftX.toFixed(2)} ${tailLeftY.toFixed(2)}`,
+        "Z"
+      ].join(" ");
+    }
+    function getSquareFromPoint(clientX, clientY) {
+      const node2 = document.elementFromPoint(clientX, clientY);
+      const squareButton = node2?.closest(".square");
+      return squareButton?.dataset.square ?? null;
+    }
+    function boardPointFromClient(clientX, clientY) {
+      const rect = board.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        return { x: 400, y: 400 };
+      }
+      const localX = clientX - rect.left;
+      const localY = clientY - rect.top;
+      const clampedX = Math.max(0, Math.min(rect.width, localX));
+      const clampedY = Math.max(0, Math.min(rect.height, localY));
+      return {
+        x: clampedX / rect.width * 800,
+        y: clampedY / rect.height * 800
+      };
+    }
+    function squareCenter(square) {
+      const file2 = square.charCodeAt(0) - 97;
+      const rank2 = Number(square[1]) - 1;
+      const col = state.orientation === "w" ? file2 : 7 - file2;
+      const row = state.orientation === "w" ? 7 - rank2 : rank2;
+      return {
+        x: col * 100 + 50,
+        y: row * 100 + 50
+      };
+    }
+    function toggleArrow(from, to) {
+      const key = `${from}-${to}`;
+      if (arrowAnnotations.has(key)) {
+        arrowAnnotations.delete(key);
+        return;
+      }
+      arrowAnnotations.add(key);
+    }
+    function clearArrows() {
+      if (arrowAnnotations.size === 0) {
+        return;
+      }
+      arrowAnnotations.clear();
+      renderArrows();
+    }
+    function renderArrows() {
+      const arrows = [...arrowAnnotations].map((entry) => {
+        const [from, to] = entry.split("-");
+        const start = squareCenter(from);
+        const end = squareCenter(to);
+        const pathData = buildArrowPath(start, end, 10, 46, 38);
+        if (!pathData) {
+          return "";
+        }
+        return `<path class="board-arrow" d="${pathData}" fill="rgba(219, 52, 52, 0.72)"/>`;
+      }).join("");
+      const previewArrow = arrowDragFrom && arrowDragPointer ? (() => {
+        const start = squareCenter(arrowDragFrom);
+        const end = arrowDragPointer;
+        const pathData = buildArrowPath(start, end, 10, 46, 38);
+        if (!pathData) {
+          return "";
+        }
+        return `<path class="board-arrow board-arrow-preview" d="${pathData}" fill="rgba(219, 52, 52, 0.72)"/>`;
+      })() : "";
+      arrowLayer.innerHTML = `${arrows}${previewArrow}`;
     }
     function syncBoardInteractionState() {
       for (const squareButton of board.querySelectorAll(".square")) {
@@ -7983,6 +8139,7 @@ var require_main = __commonJS({
       state.snapshot = null;
       state.pendingPromotion = null;
       state.premove = null;
+      clearArrows();
       clearSelection();
       chess.reset();
       syncUrl(null);

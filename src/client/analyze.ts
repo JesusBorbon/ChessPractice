@@ -3,6 +3,175 @@ import { buildSquareList, isLightSquare, SquareName, BoardOrientation } from "..
 import "./analyze.css";
 
 type PromotionPiece = "q" | "r" | "b" | "n";
+type MoveCategory = "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder";
+
+type EngineEval = {
+  cp: number;
+  mate: number | null;
+  bestMove: string;
+  pv: string;
+};
+
+type MoveAnalysis = {
+  ply: number;
+  label: string;
+  category: MoveCategory;
+  cpl: number;
+  playedMove: string;
+  bestMove: string;
+  note: string;
+  beforeCp: number;
+  afterCp: number;
+};
+
+const CATEGORY_LABELS: Record<MoveCategory, string> = {
+  brilliant: "Brillante",
+  great: "Genial",
+  excellent: "Excelente",
+  good: "Bueno",
+  inaccuracy: "Inexactitud",
+  mistake: "Error",
+  blunder: "Blunder",
+};
+
+const CATEGORY_SYMBOLS: Record<MoveCategory, string> = {
+  brilliant: "!!",
+  great: "!",
+  excellent: "★",
+  good: "+",
+  inaccuracy: "?!",
+  mistake: "x",
+  blunder: "X",
+};
+
+const PIECE_VALUES: Record<string, number> = {
+  p: 100,
+  n: 320,
+  b: 330,
+  r: 500,
+  q: 900,
+  k: 0,
+};
+
+const MATE_CP = 100000;
+
+class StockfishBridge {
+  private readonly worker: Worker;
+  private ready = false;
+  private initResolve!: () => void;
+  private initReject!: (error: Error) => void;
+  private readonly initPromise: Promise<void>;
+  private activeEval: {
+    resolve: (value: EngineEval) => void;
+    reject: (reason?: unknown) => void;
+    lastCp: number;
+    mate: number | null;
+    pv: string;
+    bestMove: string;
+  } | null = null;
+  private queue: Promise<void> = Promise.resolve();
+
+  constructor(workerPath = "/stockfish/stockfish-18-lite-single.js") {
+    this.worker = new Worker(workerPath);
+    this.initPromise = new Promise<void>((resolve, reject) => {
+      this.initResolve = resolve;
+      this.initReject = reject;
+    });
+    this.worker.onmessage = (event) => this.onMessage(String(event.data ?? ""));
+    this.worker.onerror = () => {
+      if (!this.ready) {
+        this.initReject(new Error("No se pudo iniciar Stockfish."));
+      }
+      this.activeEval?.reject(new Error("Stockfish worker error."));
+      this.activeEval = null;
+    };
+    this.send("uci");
+    this.send("isready");
+  }
+
+  async evaluateFen(fen: string, depth: number): Promise<EngineEval> {
+    await this.initPromise;
+    const evalPromise = this.queue.then(() => {
+      return new Promise<EngineEval>((resolve, reject) => {
+        this.activeEval = {
+          resolve,
+          reject,
+          lastCp: 0,
+          mate: null,
+          pv: "",
+          bestMove: "",
+        };
+        this.send(`position fen ${fen}`);
+        this.send(`go depth ${depth}`);
+      });
+    });
+
+    this.queue = evalPromise.then(() => undefined).catch(() => undefined);
+    return evalPromise;
+  }
+
+  terminate(): void {
+    this.worker.terminate();
+  }
+
+  private onMessage(line: string): void {
+    if (!line) return;
+
+    if (line === "readyok" && !this.ready) {
+      this.ready = true;
+      this.initResolve();
+      return;
+    }
+
+    if (!this.activeEval) {
+      return;
+    }
+
+    if (line.startsWith("info ")) {
+      const parsed = parseInfoLine(line);
+      if (parsed) {
+        this.activeEval.lastCp = parsed.cp;
+        this.activeEval.mate = parsed.mate;
+        this.activeEval.pv = parsed.pv;
+      }
+      return;
+    }
+
+    if (line.startsWith("bestmove ")) {
+      const bestMove = line.split(" ")[1] ?? "";
+      this.activeEval.bestMove = bestMove;
+      this.activeEval.resolve({
+        cp: this.activeEval.lastCp,
+        mate: this.activeEval.mate,
+        bestMove: this.activeEval.bestMove,
+        pv: this.activeEval.pv,
+      });
+      this.activeEval = null;
+    }
+  }
+
+  private send(command: string): void {
+    this.worker.postMessage(command);
+  }
+}
+
+function parseInfoLine(line: string): { cp: number; mate: number | null; pv: string } | null {
+  const scoreMatch = line.match(/score (cp|mate) (-?\d+)/);
+  if (!scoreMatch) {
+    return null;
+  }
+
+  const kind = scoreMatch[1];
+  const value = Number(scoreMatch[2]);
+  const pvMatch = line.match(/\spv\s(.+)$/);
+  const pv = pvMatch?.[1]?.trim() ?? "";
+  if (kind === "mate") {
+    const cp = value > 0 ? MATE_CP - Math.min(Math.abs(value), 99) * 100 : -MATE_CP + Math.min(Math.abs(value), 99) * 100;
+    return { cp, mate: value, pv };
+  }
+
+  return { cp: value, mate: null, pv };
+}
 
 // ── Sound ────────────────────────────────────────────────────────────────────
 const _audioCache: Record<string, HTMLAudioElement> = {};
@@ -40,6 +209,12 @@ let suppressAnimationForMove: { from: Square; to: Square } | null = null;
 let activeGhostAnimation: Animation | null = null;
 let activeGhostNode: HTMLElement | null = null;
 let activeGhostDestinationPiece: HTMLElement | null = null;
+let pendingBoardRefresh = false;
+let stockfish: StockfishBridge | null = null;
+let analysisDepth = 12;
+let analysisByPly: Array<MoveAnalysis | undefined> = [];
+let analysisRunId = 0;
+let analysisInProgress = false;
 
 // ── Mount ──────────────────────────────────────────────────────────────────────
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -59,6 +234,8 @@ app.innerHTML = `
         <button class="btn-ghost"   id="undoBtn">Undo move</button>
         <button class="btn-ghost"   id="copyFenBtn">Copy FEN</button>
         <button class="btn-ghost"   id="loadFenBtn">Load FEN</button>
+        <button class="btn-primary" id="analyzeBtn">Analyze game</button>
+        <button class="btn-ghost"   id="stopAnalyzeBtn">Stop</button>
       </div>
 
       <div class="board-wrap">
@@ -96,6 +273,11 @@ app.innerHTML = `
       </div>
 
       <div class="info-card">
+        <h2>Engine feedback</h2>
+        <div class="engine-feedback" id="engineFeedback">Run analysis to get move quality feedback.</div>
+      </div>
+
+      <div class="info-card">
         <h2>PGN export</h2>
         <textarea class="pgn-export" id="pgnDisplay" rows="4" readonly></textarea>
       </div>
@@ -125,6 +307,7 @@ const statusBar  = q<HTMLDivElement>("#statusBar");
 const fenDisplay = q<HTMLTextAreaElement>("#fenDisplay");
 const pgnDisplay = q<HTMLTextAreaElement>("#pgnDisplay");
 const moveList   = q<HTMLDivElement>("#moveList");
+const engineFeedback = q<HTMLDivElement>("#engineFeedback");
 const turnDot    = q<HTMLDivElement>("#turnDot");
 const turnLabel  = q<HTMLSpanElement>("#turnLabel");
 const promoDialog= q<HTMLDivElement>("#promoDialog");
@@ -133,13 +316,17 @@ const navFirst   = q<HTMLButtonElement>("#navFirst");
 const navPrev    = q<HTMLButtonElement>("#navPrev");
 const navNext    = q<HTMLButtonElement>("#navNext");
 const navLast    = q<HTMLButtonElement>("#navLast");
+const analyzeBtn = q<HTMLButtonElement>("#analyzeBtn");
+const stopAnalyzeBtn = q<HTMLButtonElement>("#stopAnalyzeBtn");
 
 // ── Button wiring ──────────────────────────────────────────────────────────────
 q<HTMLButtonElement>("#resetBtn").addEventListener("click", () => {
+  cancelAnalysis();
   chess.reset();
   fenHistory = [chess.fen()];
   moveHistory = [];
   cursor = 0;
+  analysisByPly = [];
   clearSelection();
   render();
 });
@@ -161,6 +348,7 @@ q<HTMLButtonElement>("#undoBtn").addEventListener("click", () => {
   moveHistory.pop();
   cursor = fenHistory.length - 1;
   chess.load(fenHistory[cursor]!);
+  analysisByPly = analysisByPly.slice(0, moveHistory.length + 1);
   clearSelection();
   render();
 });
@@ -178,16 +366,29 @@ q<HTMLButtonElement>("#loadFenBtn").addEventListener("click", () => {
   const raw = prompt("Paste a FEN string:");
   if (!raw) return;
   try {
+    cancelAnalysis();
     chess.load(raw.trim());
     fenHistory = [chess.fen()];
     moveHistory = [];
     cursor = 0;
+    analysisByPly = [];
     clearSelection();
     render();
     showToast("Position loaded.");
   } catch {
     showToast("Invalid FEN — position was not changed.");
   }
+});
+
+analyzeBtn.addEventListener("click", () => {
+  void runGameAnalysis();
+});
+
+stopAnalyzeBtn.addEventListener("click", () => {
+  if (!analysisInProgress) return;
+  cancelAnalysis();
+  showToast("Analysis stopped.");
+  renderSide();
 });
 
 // Navigation
@@ -461,6 +662,7 @@ function onSquareClick(square: Square): void {
 }
 
 function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
+  cancelAnalysis();
   const move = chess.move({ from, to, promotion });
   if (!move) return;
   // Truncate any "future" history if we somehow branched (guard, normally not needed)
@@ -468,6 +670,7 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
   moveHistory = moveHistory.slice(0, cursor);
   moveHistory.push(move);
   fenHistory.push(chess.fen());
+  analysisByPly = analysisByPly.slice(0, moveHistory.length);
   cursor = fenHistory.length - 1;
   clearArrows();
   clearSelection();
@@ -484,6 +687,7 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
     playSound("move-self");
   }
   render();
+  void analyzeLatestMove();
 }
 
 function tryMoveFromTo(from: Square, to: Square): void {
@@ -533,6 +737,8 @@ function render(): void {
 function renderBoard(): void {
   const squares = buildSquareList(orientation);
   const lastMove = getLastMove();
+  const selectedMoveEval = cursor > 0 ? analysisByPly[cursor] : undefined;
+  const selectedMoveTo = moveHistory[cursor - 1]?.to;
   const lastMoveSquares = new Set([lastMove?.from, lastMove?.to].filter(Boolean) as string[]);
   const checkedKingSquare = getCheckedKingSquare();
   const fragment = document.createDocumentFragment();
@@ -557,6 +763,14 @@ function renderBoard(): void {
       span.textContent = PIECES[`${piece.color}${piece.type}`] ?? "";
 
       btn.append(span);
+
+      if (selectedMoveEval && selectedMoveTo === sq) {
+        const marker = document.createElement("span");
+        marker.className = `piece-quality-marker ${selectedMoveEval.category}`;
+        marker.textContent = CATEGORY_SYMBOLS[selectedMoveEval.category];
+        marker.title = `${selectedMoveEval.label} (${selectedMoveEval.cpl} CPL)`;
+        btn.append(marker);
+      }
     }
 
     fragment.append(btn);
@@ -612,6 +826,7 @@ function renderSide(): void {
   fenDisplay.value = chess.fen();
   pgnDisplay.value = chess.pgn({ maxWidth: 60, newline: "\n" });
   renderMoveList();
+  renderEngineFeedback();
 }
 
 function renderMoveList(): void {
@@ -630,11 +845,20 @@ function renderMoveList(): void {
     const wActive   = cursor === wIdx ? " active-half" : "";
     const bActive   = cursor === bIdx ? " active-half" : "";
     const bSan      = sans[i + 1] ?? "";
+    const whiteEval = analysisByPly[wIdx];
+    const blackEval = analysisByPly[bIdx];
+    const whiteBadge = whiteEval
+      ? `<span class="move-quality-badge ${whiteEval.category}">${whiteEval.label}</span>`
+      : "";
+    const blackBadge = blackEval
+      ? `<span class="move-quality-badge ${blackEval.category}">${blackEval.label}</span>`
+      : "";
+
     rows.push(`
       <div class="analyze-move-row">
         <strong>${num}.</strong>
-        <span class="${wActive}" data-idx="${wIdx}">${sans[i]}</span>
-        <span class="${bActive}" data-idx="${bIdx}">${bSan}</span>
+        <span class="${wActive}" data-idx="${wIdx}">${sans[i]}${whiteBadge}</span>
+        <span class="${bActive}" data-idx="${bIdx}">${bSan}${blackBadge}</span>
       </div>`);
   }
 
@@ -766,6 +990,10 @@ function animateLastMove(lastMove: Move | undefined): void {
       activeGhostAnimation = null;
       activeGhostNode = null;
       activeGhostDestinationPiece = null;
+      if (pendingBoardRefresh) {
+        pendingBoardRefresh = false;
+        renderBoard();
+      }
     }
   });
 
@@ -776,8 +1004,21 @@ function animateLastMove(lastMove: Move | undefined): void {
       activeGhostAnimation = null;
       activeGhostNode = null;
       activeGhostDestinationPiece = null;
+      if (pendingBoardRefresh) {
+        pendingBoardRefresh = false;
+        renderBoard();
+      }
     }
   });
+}
+
+function requestBoardRefresh(): void {
+  if (activeGhostAnimation) {
+    pendingBoardRefresh = true;
+    return;
+  }
+
+  renderBoard();
 }
 
 function toggleArrow(from: Square, to: Square): void {
@@ -917,6 +1158,278 @@ function renderArrows(): void {
   arrowLayer.innerHTML = `${arrows}${previewArrow}`;
 }
 
+async function runGameAnalysis(): Promise<void> {
+  if (analysisInProgress) {
+    showToast("Analysis is already running.");
+    return;
+  }
+
+  if (moveHistory.length === 0) {
+    showToast("Play or load moves first.");
+    return;
+  }
+
+  analysisRunId += 1;
+  const runId = analysisRunId;
+  analysisInProgress = true;
+  renderSide();
+
+  try {
+    const engine = ensureStockfish();
+
+    for (let ply = 1; ply <= moveHistory.length; ply += 1) {
+      if (runId !== analysisRunId) {
+        return;
+      }
+
+      const beforeFen = fenHistory[ply - 1]!;
+      const afterFen = fenHistory[ply]!;
+      const move = moveHistory[ply - 1]!;
+
+      const before = await engine.evaluateFen(beforeFen, analysisDepth);
+      if (runId !== analysisRunId) {
+        return;
+      }
+
+      const after = await engine.evaluateFen(afterFen, analysisDepth);
+      if (runId !== analysisRunId) {
+        return;
+      }
+
+      analysisByPly[ply] = classifyMove(ply, move, before, after, beforeFen, afterFen);
+      if (cursor === ply) {
+        requestBoardRefresh();
+      }
+      renderSide();
+    }
+
+    showToast("Analysis complete.");
+  } catch {
+    showToast("Engine failed to analyze this game.");
+  } finally {
+    if (runId === analysisRunId) {
+      analysisInProgress = false;
+      renderSide();
+    }
+  }
+}
+
+async function analyzeLatestMove(): Promise<void> {
+  const ply = moveHistory.length;
+  if (ply <= 0) {
+    return;
+  }
+
+  if (analysisByPly[ply]) {
+    return;
+  }
+
+  analysisRunId += 1;
+  const runId = analysisRunId;
+  analysisInProgress = true;
+  renderSide();
+
+  try {
+    const engine = ensureStockfish();
+    const beforeFen = fenHistory[ply - 1]!;
+    const afterFen = fenHistory[ply]!;
+    const move = moveHistory[ply - 1]!;
+
+    const before = await engine.evaluateFen(beforeFen, analysisDepth);
+    if (runId !== analysisRunId) {
+      return;
+    }
+
+    const after = await engine.evaluateFen(afterFen, analysisDepth);
+    if (runId !== analysisRunId) {
+      return;
+    }
+
+    analysisByPly[ply] = classifyMove(ply, move, before, after, beforeFen, afterFen);
+    if (cursor === ply) {
+      requestBoardRefresh();
+    }
+  } catch {
+    // Keep auto-analysis silent to avoid interrupting play.
+  } finally {
+    if (runId === analysisRunId) {
+      analysisInProgress = false;
+      renderSide();
+    }
+  }
+}
+
+function ensureStockfish(): StockfishBridge {
+  if (!stockfish) {
+    stockfish = new StockfishBridge();
+  }
+
+  return stockfish;
+}
+
+function cancelAnalysis(): void {
+  analysisRunId += 1;
+  analysisInProgress = false;
+}
+
+function classifyMove(
+  ply: number,
+  move: Move,
+  before: EngineEval,
+  after: EngineEval,
+  beforeFen: string,
+  afterFen: string,
+): MoveAnalysis {
+  const playedMove = toUci(move);
+  const beforeMoverCp = before.cp;
+  const afterMoverCp = -after.cp;
+  const cpl = Math.max(0, Math.round(beforeMoverCp - afterMoverCp));
+  const matchesBest = before.bestMove === playedMove;
+  const materialDrop = materialFromPerspective(afterFen, move.color) - materialFromPerspective(beforeFen, move.color);
+  const sacrificed = materialDrop <= -200;
+
+  let category: MoveCategory;
+  if (matchesBest && sacrificed && cpl <= 30) {
+    category = "brilliant";
+  } else if (matchesBest && cpl <= 20 && (move.captured || move.san.includes("+") || move.promotion)) {
+    category = "great";
+  } else if (cpl <= 20) {
+    category = "excellent";
+  } else if (cpl <= 70) {
+    category = "good";
+  } else if (cpl <= 140) {
+    category = "inaccuracy";
+  } else if (cpl <= 260) {
+    category = "mistake";
+  } else {
+    category = "blunder";
+  }
+
+  const note = buildMoveNote(category, cpl, before, playedMove, move);
+
+  return {
+    ply,
+    label: CATEGORY_LABELS[category],
+    category,
+    cpl,
+    playedMove,
+    bestMove: before.bestMove,
+    note,
+    beforeCp: Math.round(beforeMoverCp),
+    afterCp: Math.round(afterMoverCp),
+  };
+}
+
+function toUci(move: Move): string {
+  const promotion = move.promotion ?? "";
+  return `${move.from}${move.to}${promotion}`;
+}
+
+function materialFromPerspective(fen: string, color: "w" | "b"): number {
+  const board = fen.split(" ")[0] ?? "";
+  let white = 0;
+  let black = 0;
+
+  for (const ch of board) {
+    if (ch === "/" || /\d/.test(ch)) {
+      continue;
+    }
+
+    const value = PIECE_VALUES[ch.toLowerCase()] ?? 0;
+    if (ch === ch.toUpperCase()) {
+      white += value;
+    } else {
+      black += value;
+    }
+  }
+
+  return color === "w" ? white - black : black - white;
+}
+
+function formatCp(cp: number): string {
+  if (cp >= MATE_CP - 10000) {
+    return "+M";
+  }
+
+  if (cp <= -MATE_CP + 10000) {
+    return "-M";
+  }
+
+  const pawns = cp / 100;
+  const signed = pawns >= 0 ? `+${pawns.toFixed(2)}` : pawns.toFixed(2);
+  return signed;
+}
+
+function buildMoveNote(category: MoveCategory, cpl: number, before: EngineEval, playedMove: string, move: Move): string {
+  if (category === "brilliant") {
+    return `Sacrifice-based top engine move (${playedMove}).`;
+  }
+
+  if (category === "great") {
+    return `Strong tactical best move by engine (${playedMove}).`;
+  }
+
+  if (category === "blunder") {
+    return `Large drop (${cpl} CPL). Engine preferred ${before.bestMove || "another move"}.`;
+  }
+
+  if (category === "mistake") {
+    return `Significant accuracy loss (${cpl} CPL). Better: ${before.bestMove || "engine alternative"}.`;
+  }
+
+  if (category === "inaccuracy") {
+    return `Minor loss (${cpl} CPL). Better was ${before.bestMove || "engine line"}.`;
+  }
+
+  if (move.san.includes("+") || move.captured) {
+    return "Active move that keeps practical pressure.";
+  }
+
+  return `Stable move (${cpl} CPL).`;
+}
+
+function renderEngineFeedback(): void {
+  stopAnalyzeBtn.disabled = !analysisInProgress;
+  analyzeBtn.disabled = analysisInProgress;
+
+  if (analysisInProgress) {
+    engineFeedback.innerHTML = `<p class="engine-inline">Analyzing... ${analysisByPly.filter(Boolean).length}/${moveHistory.length} moves complete.</p>`;
+    return;
+  }
+
+  if (analysisByPly.filter(Boolean).length === 0) {
+    engineFeedback.innerHTML = "Run analysis to get move quality feedback.";
+    return;
+  }
+
+  if (cursor === 0) {
+    const all = analysisByPly.filter((entry): entry is MoveAnalysis => Boolean(entry));
+    const avgCpl = all.length > 0 ? Math.round(all.reduce((sum, item) => sum + item.cpl, 0) / all.length) : 0;
+    const blunders = all.filter((item) => item.category === "blunder").length;
+    const brilliants = all.filter((item) => item.category === "brilliant").length;
+    engineFeedback.innerHTML = `
+      <p class="engine-inline"><strong>Game summary</strong></p>
+      <p class="engine-inline">Average CPL: <strong>${avgCpl}</strong></p>
+      <p class="engine-inline">Brilliants: <strong>${brilliants}</strong> · Blunders: <strong>${blunders}</strong></p>
+      <p class="engine-inline">Select a move in the list to see detailed feedback.</p>
+    `;
+    return;
+  }
+
+  const details = analysisByPly[cursor];
+  if (!details) {
+    engineFeedback.innerHTML = "This move has no analysis yet.";
+    return;
+  }
+
+  engineFeedback.innerHTML = `
+    <p class="engine-inline"><strong>${details.label}</strong> · Move ${details.ply}</p>
+    <p class="engine-inline">Played: <strong>${details.playedMove}</strong> · Best: <strong>${details.bestMove || "(none)"}</strong></p>
+    <p class="engine-inline">Eval: <strong>${formatCp(details.beforeCp)}</strong> → <strong>${formatCp(details.afterCp)}</strong> (${details.cpl} CPL)</p>
+    <p class="engine-inline">${details.note}</p>
+  `;
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function getLastMove(): Move | undefined {
   if (cursor === 0) return undefined;
@@ -936,6 +1449,10 @@ function showToast(msg: string): void {
   clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 2400);
 }
+
+window.addEventListener("beforeunload", () => {
+  stockfish?.terminate();
+});
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 render();

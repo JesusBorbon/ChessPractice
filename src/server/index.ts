@@ -70,6 +70,7 @@ const publicDir =
     : path.join(projectRoot, "public");
 
 app.use(express.static(publicDir));
+app.use("/stockfish", express.static(path.join(projectRoot, "node_modules", "stockfish", "bin")));
 app.get("/analyze", (_request, response) => {
   response.sendFile(path.join(publicDir, "analyze.html"));
 });
