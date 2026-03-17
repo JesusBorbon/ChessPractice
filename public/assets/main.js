@@ -8571,11 +8571,21 @@ var require_main = __commonJS({
       const computed = window.getComputedStyle(destinationPiece);
       const pieceRect = destinationPiece.getBoundingClientRect();
       const ghostPiece = destinationPiece.cloneNode(true);
-      const randomRotation = Math.random() * 1080 + 720;
+      const randomRotation = Math.random() * 300 + 220;
       const randomScale = Math.random() * 0.4 + 0.8;
-      const hasFlip = Math.random() > 0.5;
       const spinDirection = Math.random() > 0.5 ? 1 : -1;
       const settleWobble = Math.random() * 14 + 8;
+      const profileRoll = Math.random();
+      const motionProfile = profileRoll < 0.38 ? "spin" : profileRoll < 0.76 ? "inertia" : "tilt";
+      const hasFlip = motionProfile === "spin" ? Math.random() > 0.45 : motionProfile === "inertia" ? Math.random() > 0.92 : false;
+      const spinStart = motionProfile === "spin" ? randomRotation * 0.22 * spinDirection : motionProfile === "inertia" ? settleWobble * 1.25 * spinDirection : settleWobble * 0.85 * spinDirection;
+      const spinMid = motionProfile === "spin" ? randomRotation * 0.46 * spinDirection : motionProfile === "inertia" ? settleWobble * 0.72 * spinDirection : -settleWobble * 0.92 * spinDirection;
+      const spinPeak = motionProfile === "spin" ? randomRotation * 0.68 * spinDirection : motionProfile === "inertia" ? settleWobble * 1.05 * spinDirection : settleWobble * 0.55 * spinDirection;
+      const pullX = motionProfile === "inertia" ? deltaX * (0.14 + Math.random() * 0.1) * (Math.random() > 0.5 ? 1 : -1) : deltaX * (0.02 + Math.random() * 0.05) * (Math.random() > 0.5 ? 1 : -1);
+      const pullY = motionProfile === "inertia" ? 20 + Math.random() * 22 : 8 + Math.random() * 12;
+      const jumpA = motionProfile === "inertia" ? 62 + Math.random() * 36 : 74 + Math.random() * 44;
+      const jumpB = motionProfile === "spin" ? 100 + Math.random() * 32 : 84 + Math.random() * 28;
+      const duration = 900 + Math.floor(Math.random() * 170);
       Object.assign(ghostPiece.style, {
         position: "absolute",
         left: `${endX}px`,
@@ -8603,22 +8613,22 @@ var require_main = __commonJS({
       document.body.append(ghostPiece);
       const keyframes = [
         {
-          transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) rotateX(0deg) scaleY(1)`,
+          transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) rotateX(0deg) scale(1)`,
           filter: "brightness(1)",
           offset: 0
         },
         {
-          transform: `translate3d(calc(-50% + ${deltaX * 0.6}px), calc(-50% + ${deltaY * 0.6 - 80}px), 0) rotateZ(${randomRotation * 0.3 * spinDirection}deg) rotateX(${hasFlip ? 180 : 0}deg) scale(${Math.max(0.88, randomScale)})`,
+          transform: `translate3d(calc(-50% + ${deltaX * 0.58 + pullX}px), calc(-50% + ${deltaY * 0.58 - jumpA}px), 0) rotateZ(${spinStart}deg) rotateX(${hasFlip ? 180 : 0}deg) scale(${Math.max(0.88, randomScale)})`,
           filter: "brightness(1.1)",
           offset: 0.4
         },
         {
-          transform: `translate3d(calc(-50% + ${deltaX * 0.85}px), calc(-50% + ${deltaY * 0.85 - 120}px), 0) rotateZ(${randomRotation * 0.6 * spinDirection}deg) rotateX(${hasFlip ? 360 : 0}deg) scale(${Math.max(0.82, randomScale - 0.12)})`,
+          transform: `translate3d(calc(-50% + ${deltaX * 0.84 - pullX * 0.35}px), calc(-50% + ${deltaY * 0.84 - jumpB + pullY * 0.2}px), 0) rotateZ(${spinMid}deg) rotateX(${hasFlip ? 360 : 0}deg) scale(${Math.max(0.82, randomScale - 0.12)})`,
           filter: "brightness(1.2)",
           offset: 0.65
         },
         {
-          transform: `translate3d(-50%, calc(-50% + 6px), 0) rotateZ(${settleWobble * spinDirection}deg) rotateX(${hasFlip ? 12 : 0}deg) scale(1.04)`,
+          transform: `translate3d(calc(-50% + ${pullX * 0.22}px), calc(-50% + ${6 + pullY * 0.15}px), 0) rotateZ(${spinPeak}deg) rotateX(${hasFlip ? 12 : 0}deg) scale(1.04)`,
           filter: "brightness(1.06)",
           offset: 0.86
         },
@@ -8634,7 +8644,7 @@ var require_main = __commonJS({
         }
       ];
       const animation = ghostPiece.animate(keyframes, {
-        duration: 980,
+        duration,
         easing: "cubic-bezier(0.22, 0.61, 0.36, 1)"
       });
       activeGhostAnimation = animation;

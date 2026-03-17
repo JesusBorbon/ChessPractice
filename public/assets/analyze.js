@@ -3772,6 +3772,7 @@ var require_analyze = __commonJS({
     var analysisInProgress = false;
     var fullAnalysisInProgress = false;
     var focusMode = false;
+    var animationStyle = localStorage.getItem("chess-animation-style") || "smooth";
     var app = document.querySelector("#app");
     app.innerHTML = `
 <div class="analyze-shell">
@@ -3850,6 +3851,10 @@ var require_analyze = __commonJS({
 <div class="toast" id="toast"></div>
 `;
     mountThemeSwitcher();
+    window.addEventListener("animationchange", (event) => {
+      const customEvent = event;
+      animationStyle = customEvent.detail.style;
+    });
     var arrowLayer = q("#arrowLayer");
     var boardEl = q("#board");
     var statusBar = q("#statusBar");
@@ -4275,7 +4280,11 @@ var require_analyze = __commonJS({
         fragment.append(btn);
       }
       boardEl.replaceChildren(fragment);
-      animateLastMove(lastMove);
+      if (animationStyle === "epic") {
+        animateLastMoveEpic(lastMove);
+      } else {
+        animateLastMove(lastMove);
+      }
       renderArrows();
     }
     function syncBoardInteractionState() {
@@ -4455,6 +4464,155 @@ var require_analyze = __commonJS({
           easing: "cubic-bezier(0.22, 0.61, 0.36, 1)"
         }
       );
+      activeGhostAnimation = animation;
+      animation.addEventListener("finish", () => {
+        ghostPiece.remove();
+        destinationPiece.style.visibility = "";
+        if (activeGhostAnimation === animation) {
+          activeGhostAnimation = null;
+          activeGhostNode = null;
+          activeGhostDestinationPiece = null;
+          if (pendingBoardRefresh) {
+            pendingBoardRefresh = false;
+            renderBoard();
+          }
+        }
+      });
+      animation.addEventListener("cancel", () => {
+        ghostPiece.remove();
+        destinationPiece.style.visibility = "";
+        if (activeGhostAnimation === animation) {
+          activeGhostAnimation = null;
+          activeGhostNode = null;
+          activeGhostDestinationPiece = null;
+          if (pendingBoardRefresh) {
+            pendingBoardRefresh = false;
+            renderBoard();
+          }
+        }
+      });
+    }
+    function animateLastMoveEpic(lastMove) {
+      if (!lastMove || cursor === 0) {
+        lastAnimatedMoveKey = null;
+        return;
+      }
+      const moveKey = `${cursor}:${lastMove.from}:${lastMove.to}:${lastMove.san ?? ""}`;
+      if (lastAnimatedMoveKey === moveKey) {
+        return;
+      }
+      lastAnimatedMoveKey = moveKey;
+      if (suppressAnimationForMove) {
+        const matchesSuppressedDrag = suppressAnimationForMove.from === lastMove.from && suppressAnimationForMove.to === lastMove.to;
+        suppressAnimationForMove = null;
+        if (matchesSuppressedDrag) {
+          return;
+        }
+      }
+      const fromSquareButton = boardEl.querySelector(`[data-square="${lastMove.from}"]`);
+      const toSquareButton = boardEl.querySelector(`[data-square="${lastMove.to}"]`);
+      const destinationPiece = toSquareButton?.querySelector(".piece");
+      if (!fromSquareButton || !toSquareButton || !destinationPiece) {
+        return;
+      }
+      if (activeGhostAnimation) {
+        activeGhostAnimation.cancel();
+      }
+      if (activeGhostNode) {
+        activeGhostNode.remove();
+        activeGhostNode = null;
+      }
+      if (activeGhostDestinationPiece) {
+        activeGhostDestinationPiece.style.visibility = "";
+        activeGhostDestinationPiece = null;
+      }
+      const fromRect = fromSquareButton.getBoundingClientRect();
+      const toRect = toSquareButton.getBoundingClientRect();
+      const startX = fromRect.left + fromRect.width / 2 + window.scrollX;
+      const startY = fromRect.top + fromRect.height / 2 + window.scrollY;
+      const endX = toRect.left + toRect.width / 2 + window.scrollX;
+      const endY = toRect.top + toRect.height / 2 + window.scrollY;
+      const deltaX = startX - endX;
+      const deltaY = startY - endY;
+      const computed = window.getComputedStyle(destinationPiece);
+      const pieceRect = destinationPiece.getBoundingClientRect();
+      const ghostPiece = destinationPiece.cloneNode(true);
+      const randomRotation = Math.random() * 300 + 220;
+      const randomScale = Math.random() * 0.4 + 0.8;
+      const spinDirection = Math.random() > 0.5 ? 1 : -1;
+      const settleWobble = Math.random() * 14 + 8;
+      const profileRoll = Math.random();
+      const motionProfile = profileRoll < 0.38 ? "spin" : profileRoll < 0.76 ? "inertia" : "tilt";
+      const hasFlip = motionProfile === "spin" ? Math.random() > 0.45 : motionProfile === "inertia" ? Math.random() > 0.92 : false;
+      const spinStart = motionProfile === "spin" ? randomRotation * 0.22 * spinDirection : motionProfile === "inertia" ? settleWobble * 1.25 * spinDirection : settleWobble * 0.85 * spinDirection;
+      const spinMid = motionProfile === "spin" ? randomRotation * 0.46 * spinDirection : motionProfile === "inertia" ? settleWobble * 0.72 * spinDirection : -settleWobble * 0.92 * spinDirection;
+      const spinPeak = motionProfile === "spin" ? randomRotation * 0.68 * spinDirection : motionProfile === "inertia" ? settleWobble * 1.05 * spinDirection : settleWobble * 0.55 * spinDirection;
+      const pullX = motionProfile === "inertia" ? deltaX * (0.14 + Math.random() * 0.1) * (Math.random() > 0.5 ? 1 : -1) : deltaX * (0.02 + Math.random() * 0.05) * (Math.random() > 0.5 ? 1 : -1);
+      const pullY = motionProfile === "inertia" ? 20 + Math.random() * 22 : 8 + Math.random() * 12;
+      const jumpA = motionProfile === "inertia" ? 62 + Math.random() * 36 : 74 + Math.random() * 44;
+      const jumpB = motionProfile === "spin" ? 100 + Math.random() * 32 : 84 + Math.random() * 28;
+      const duration = 900 + Math.floor(Math.random() * 170);
+      Object.assign(ghostPiece.style, {
+        position: "absolute",
+        left: `${endX}px`,
+        top: `${endY}px`,
+        width: `${pieceRect.width}px`,
+        height: `${pieceRect.height}px`,
+        transform: "translate3d(-50%, -50%, 0)",
+        margin: "0",
+        zIndex: "9999",
+        pointerEvents: "none",
+        fontSize: computed.fontSize,
+        fontFamily: computed.fontFamily,
+        color: computed.color,
+        filter: computed.filter,
+        textShadow: computed.textShadow,
+        lineHeight: "1",
+        animation: "none",
+        opacity: "1",
+        willChange: "transform",
+        perspective: "1000px"
+      });
+      destinationPiece.style.visibility = "hidden";
+      activeGhostNode = ghostPiece;
+      activeGhostDestinationPiece = destinationPiece;
+      document.body.append(ghostPiece);
+      const keyframes = [
+        {
+          transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) rotateX(0deg) scale(1)`,
+          filter: "brightness(1)",
+          offset: 0
+        },
+        {
+          transform: `translate3d(calc(-50% + ${deltaX * 0.58 + pullX}px), calc(-50% + ${deltaY * 0.58 - jumpA}px), 0) rotateZ(${spinStart}deg) rotateX(${hasFlip ? 180 : 0}deg) scale(${Math.max(0.88, randomScale)})`,
+          filter: "brightness(1.1)",
+          offset: 0.4
+        },
+        {
+          transform: `translate3d(calc(-50% + ${deltaX * 0.84 - pullX * 0.35}px), calc(-50% + ${deltaY * 0.84 - jumpB + pullY * 0.2}px), 0) rotateZ(${spinMid}deg) rotateX(${hasFlip ? 360 : 0}deg) scale(${Math.max(0.82, randomScale - 0.12)})`,
+          filter: "brightness(1.2)",
+          offset: 0.65
+        },
+        {
+          transform: `translate3d(calc(-50% + ${pullX * 0.22}px), calc(-50% + ${6 + pullY * 0.15}px), 0) rotateZ(${spinPeak}deg) rotateX(${hasFlip ? 12 : 0}deg) scale(1.04)`,
+          filter: "brightness(1.06)",
+          offset: 0.86
+        },
+        {
+          transform: `translate3d(-50%, calc(-50% - 2px), 0) rotateZ(${-(settleWobble * 0.55) * spinDirection}deg) rotateX(${hasFlip ? -6 : 0}deg) scale(0.985)`,
+          filter: "brightness(1.02)",
+          offset: 0.94
+        },
+        {
+          transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) rotateX(0deg) scale(1)",
+          filter: "brightness(1)",
+          offset: 1
+        }
+      ];
+      const animation = ghostPiece.animate(keyframes, {
+        duration,
+        easing: "cubic-bezier(0.22, 0.61, 0.36, 1)"
+      });
       activeGhostAnimation = animation;
       animation.addEventListener("finish", () => {
         ghostPiece.remove();
