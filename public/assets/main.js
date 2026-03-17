@@ -7114,32 +7114,57 @@ function setTheme(theme) {
     btn.classList.toggle("active", btn.dataset.theme === theme);
   });
 }
+function setPanelCollapsed(widget, toggleButton, collapsed) {
+  widget.classList.toggle("is-collapsed", collapsed);
+  toggleButton.setAttribute("aria-expanded", String(!collapsed));
+  toggleButton.textContent = collapsed ? "\u25C0" : "\u25B6";
+  toggleButton.title = collapsed ? "Show themes" : "Hide themes";
+  localStorage.setItem(THEME_PANEL_COLLAPSED_KEY, collapsed ? "1" : "0");
+}
 function mountThemeSwitcher() {
   const themeRaw = localStorage.getItem(THEME_STORAGE_KEY);
   const savedTheme = themeRaw === "forest" || themeRaw === "purple" || themeRaw === "walnut" || themeRaw === "refined" ? themeRaw : "forest";
+  const collapsedRaw = localStorage.getItem(THEME_PANEL_COLLAPSED_KEY);
+  const defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
+  const initialCollapsed = collapsedRaw === null ? defaultCollapsed : collapsedRaw === "1";
   setTheme(savedTheme);
   const widget = document.createElement("div");
   widget.className = "theme-switcher";
   widget.setAttribute("role", "group");
   widget.setAttribute("aria-label", "Choose theme");
   widget.innerHTML = `
-    <span class="theme-switcher-label">Theme</span>
-    <button class="theme-btn" data-theme="forest" title="Classic Forest" aria-label="Classic Forest theme"></button>
-    <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
-    <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
-    <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
+    <button class="theme-toggle-btn" type="button" aria-label="Toggle theme selector" aria-expanded="true">\u25B6</button>
+    <div class="theme-switcher-options">
+      <span class="theme-switcher-label">Theme</span>
+      <button class="theme-btn" data-theme="forest" title="Classic Forest" aria-label="Classic Forest theme"></button>
+      <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
+      <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
+      <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
+    </div>
   `;
   document.body.appendChild(widget);
+  const toggleButton = widget.querySelector(".theme-toggle-btn");
+  if (!toggleButton) {
+    return;
+  }
+  setPanelCollapsed(widget, toggleButton, initialCollapsed);
   widget.addEventListener("click", (e) => {
+    const toggle = e.target.closest(".theme-toggle-btn");
+    if (toggle) {
+      const collapsed = !widget.classList.contains("is-collapsed");
+      setPanelCollapsed(widget, toggleButton, collapsed);
+      return;
+    }
     const btn = e.target.closest(".theme-btn");
     if (btn?.dataset.theme) setTheme(btn.dataset.theme);
   });
 }
-var THEME_STORAGE_KEY;
+var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
     THEME_STORAGE_KEY = "chess-theme";
+    THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
   }
 });
 
@@ -7185,13 +7210,118 @@ var require_main = __commonJS({
       pendingPromotion: null,
       premove: null,
       autoJoinCode: initialRoomCode,
-      suppressClickOnce: false
+      focusMode: false,
+      liveAnalysisSummary: "Live analysis disabled.",
+      lastAnalyzedMoveKey: null,
+      liveMoveGrades: {}
     };
     var lastAnimatedMoveKey = null;
     var suppressAnimationForMove = null;
     var activeGhostAnimation = null;
     var activeGhostNode = null;
     var activeGhostDestinationPiece = null;
+    var activeGhostDestinationSquare = null;
+    var focusTimerStartMs = null;
+    var liveAnalyzer = null;
+    var liveAnalysisToken = 0;
+    var LIVE_MATE_CP = 1e5;
+    var StockfishBridge = class {
+      worker;
+      ready = false;
+      initResolve;
+      initReject;
+      initPromise;
+      activeEval = null;
+      queue = Promise.resolve();
+      constructor(workerPath = "/stockfish/stockfish-18-lite-single.js") {
+        this.worker = new Worker(workerPath);
+        this.initPromise = new Promise((resolve, reject) => {
+          this.initResolve = resolve;
+          this.initReject = reject;
+        });
+        this.worker.onmessage = (event) => this.onMessage(String(event.data ?? ""));
+        this.worker.onerror = () => {
+          if (!this.ready) {
+            this.initReject(new Error("Could not initialize Stockfish."));
+          }
+          this.activeEval?.reject(new Error("Stockfish worker error."));
+          this.activeEval = null;
+        };
+        this.send("uci");
+        this.send("isready");
+      }
+      async evaluateFen(fen, depth) {
+        await this.initPromise;
+        const evalPromise = this.queue.then(() => {
+          return new Promise((resolve, reject) => {
+            this.activeEval = {
+              resolve,
+              reject,
+              lastCp: 0,
+              mate: null,
+              pv: "",
+              bestMove: ""
+            };
+            this.send(`position fen ${fen}`);
+            this.send(`go depth ${depth}`);
+          });
+        });
+        this.queue = evalPromise.then(() => void 0).catch(() => void 0);
+        return evalPromise;
+      }
+      terminate() {
+        this.worker.terminate();
+      }
+      onMessage(line) {
+        if (!line) return;
+        if (line === "readyok" && !this.ready) {
+          this.ready = true;
+          this.initResolve();
+          return;
+        }
+        if (!this.activeEval) {
+          return;
+        }
+        if (line.startsWith("info ")) {
+          const parsed = parseInfoLine(line);
+          if (parsed) {
+            this.activeEval.lastCp = parsed.cp;
+            this.activeEval.mate = parsed.mate;
+            this.activeEval.pv = parsed.pv;
+          }
+          return;
+        }
+        if (line.startsWith("bestmove ")) {
+          const bestMove = line.split(" ")[1] ?? "";
+          this.activeEval.bestMove = bestMove;
+          this.activeEval.resolve({
+            cp: this.activeEval.lastCp,
+            mate: this.activeEval.mate,
+            bestMove: this.activeEval.bestMove,
+            pv: this.activeEval.pv
+          });
+          this.activeEval = null;
+        }
+      }
+      send(command) {
+        this.worker.postMessage(command);
+      }
+    };
+    function parseInfoLine(line) {
+      const scoreMatch = line.match(/score (cp|mate) (-?\d+)/);
+      if (!scoreMatch) {
+        return null;
+      }
+      const kind = scoreMatch[1];
+      const value2 = Number(scoreMatch[2]);
+      const pvMatch = line.match(/\spv\s(.+)$/);
+      const pv = pvMatch?.[1]?.trim() ?? "";
+      if (kind === "mate") {
+        const cp = value2 > 0 ? LIVE_MATE_CP - Math.min(Math.abs(value2), 99) * 100 : -LIVE_MATE_CP + Math.min(Math.abs(value2), 99) * 100;
+        return { cp, mate: value2, pv };
+      }
+      return { cp: value2, mate: null, pv };
+    }
     var _audioCache = {};
     function playSound(name) {
       let audio = _audioCache[name];
@@ -7249,8 +7379,13 @@ var require_main = __commonJS({
       <section class="panel board-panel">
         <div class="board-toolbar">
           <button class="action" id="createRoomButton" type="button">Create room</button>
-          <button class="ghost" id="rematchButton" type="button">Request rematch</button>
-          <button class="ghost" id="flipBoardButton" type="button">Flip board</button>
+          <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
+          <button class="ghost" id="flipBoardButton" type="button" hidden>Flip board</button>
+          <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
+        </div>
+        <div class="pregame-placeholder" id="pregamePlaceholder">
+          <h2>Waiting for match start</h2>
+          <p>Create or join a room. The board appears automatically once both players are connected.</p>
         </div>
         <div class="board-wrap">
           <div class="board" id="board"></div>
@@ -7259,14 +7394,18 @@ var require_main = __commonJS({
         <div class="board-caption" id="boardCaption">
           Tap or click one of your pieces, then choose a legal destination.
         </div>
+        <div class="focus-hud" id="focusHud" hidden>
+          <span class="focus-chip" id="focusTimer">00:00</span>
+        </div>
+        <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
       </section>
 
       <aside class="panel side-panel">
         <section class="control-card">
           <h2 class="card-title">Invite or join</h2>
           <div class="control-row">
-            <button class="chip" id="copyLinkButton" type="button">Copy invite link</button>
-            <button class="chip" id="leaveRoomButton" type="button">Leave room</button>
+            <button class="chip" id="copyLinkButton" type="button" hidden>Copy invite link</button>
+            <button class="chip" id="leaveRoomButton" type="button" hidden>Leave room</button>
           </div>
           <div class="join-grid">
             <input class="join-input" id="roomInput" maxlength="6" placeholder="Room code" />
@@ -7309,6 +7448,7 @@ var require_main = __commonJS({
         <section class="summary-card">
           <h2 class="card-title">Game summary</h2>
           <p class="muted" id="summaryText">The server will keep this board authoritative for every device in the room.</p>
+          <p class="muted" id="liveAnalysisText">Live analysis disabled.</p>
         </section>
 
         <section class="moves-card">
@@ -7337,6 +7477,7 @@ var require_main = __commonJS({
   <div class="toast" id="toast"></div>
 `;
     var board = must("#board");
+    var pregamePlaceholder = must("#pregamePlaceholder");
     var roomInput = must("#roomInput");
     var roomBadge = must("#roomBadge");
     var roleBadge = must("#roleBadge");
@@ -7349,16 +7490,21 @@ var require_main = __commonJS({
     var movesMeta = must("#movesMeta");
     var spectatorMeta = must("#spectatorMeta");
     var summaryText = must("#summaryText");
+    var liveAnalysisText = must("#liveAnalysisText");
     var moveList = must("#moveList");
     var toast = must("#toast");
     var promotionDialog = must("#promotionDialog");
     var createRoomButton = must("#createRoomButton");
+    var focusHud = must("#focusHud");
+    var focusTimer = must("#focusTimer");
+    var focusModeButton = must("#focusModeBtn");
     mountThemeSwitcher();
     var joinRoomButton = must("#joinRoomButton");
     var copyLinkButton = must("#copyLinkButton");
     var leaveRoomButton = must("#leaveRoomButton");
     var flipBoardButton = must("#flipBoardButton");
     var rematchButton = must("#rematchButton");
+    var liveAnalysisButton = must("#liveAnalysisButton");
     var arrowLayer = must("#arrowLayer");
     var arrowAnnotations = /* @__PURE__ */ new Set();
     createRoomButton.addEventListener("click", () => {
@@ -7405,14 +7551,29 @@ var require_main = __commonJS({
       }
       socket.emit("game:rematch");
     });
-    board.addEventListener("click", (event) => {
-      if (state.suppressClickOnce) {
-        state.suppressClickOnce = false;
+    liveAnalysisButton.addEventListener("click", () => {
+      socket.emit("analysis:toggle");
+    });
+    focusModeButton.addEventListener("click", () => {
+      void toggleFocusMode();
+    });
+    window.addEventListener("keydown", (event) => {
+      if (event.key.toLowerCase() !== "z" || isTypingTarget(event.target)) {
         return;
       }
+      event.preventDefault();
+      void toggleFocusMode();
+    });
+    board.addEventListener("click", (event) => {
       const squareButton = event.target.closest(".square");
       const square = squareButton?.dataset.square;
       if (!square) {
+        return;
+      }
+      if (lastPointerTapSquare === square && performance.now() - lastPointerTapAtMs < 250) {
+        return;
+      }
+      if (lastDragCommitSquare === square && performance.now() - lastDragCommitAtMs < 250) {
         return;
       }
       clearArrows();
@@ -7426,6 +7587,10 @@ var require_main = __commonJS({
     var ptrDragMoved = false;
     var ptrStartX = 0;
     var ptrStartY = 0;
+    var lastDragCommitSquare = null;
+    var lastDragCommitAtMs = 0;
+    var lastPointerTapSquare = null;
+    var lastPointerTapAtMs = 0;
     var arrowDragFrom = null;
     var arrowDragTo = null;
     var arrowDragPointer = null;
@@ -7510,13 +7675,22 @@ var require_main = __commonJS({
       ptrDragNode?.remove();
       ptrDragNode = null;
       board.querySelector(".square.dragging")?.classList.remove("dragging");
-      if (!wasDrag) return;
-      state.suppressClickOnce = true;
+      if (!wasDrag) {
+        if (commit) {
+          lastPointerTapSquare = fromSquare;
+          lastPointerTapAtMs = performance.now();
+          clearArrows();
+          onSquarePressed(fromSquare);
+        }
+        return;
+      }
       if (commit) {
         const el = document.elementFromPoint(event.clientX, event.clientY);
         const squareButton = el?.closest(".square");
         const targetSquare = squareButton?.dataset.square;
         if (targetSquare && targetSquare !== fromSquare) {
+          lastDragCommitSquare = targetSquare;
+          lastDragCommitAtMs = performance.now();
           suppressAnimationForMove = { from: fromSquare, to: targetSquare };
           tryMoveFromTo(fromSquare, targetSquare);
         }
@@ -7567,6 +7741,16 @@ var require_main = __commonJS({
         return;
       }
       socket.emit("game:move", { ...state.pendingPromotion, promotion });
+      if (state.snapshot?.analysis.enabled) {
+        state.liveAnalysisSummary = "Analyzing your move...";
+        renderSession();
+        const tempChess = new Chess(state.snapshot.fen);
+        const moveResult = tempChess.move({ from: state.pendingPromotion.from, to: state.pendingPromotion.to, promotion });
+        if (moveResult) {
+          const moveKey = `${state.snapshot.moveCount + 1}:${state.pendingPromotion.from}:${state.pendingPromotion.to}:${moveResult.san}`;
+          void maybeRunLiveAnalysisForMove(state.snapshot.moves, moveResult, state.snapshot.moveCount + 1, moveKey);
+        }
+      }
       state.pendingPromotion = null;
       promotionDialog.hidden = true;
     });
@@ -7601,6 +7785,9 @@ var require_main = __commonJS({
     socket.on("room:state", (snapshot) => {
       const previousMoveCount = state.snapshot?.moveCount ?? 0;
       state.snapshot = snapshot;
+      if (!focusTimerStartMs || snapshot.moveCount < previousMoveCount) {
+        focusTimerStartMs = Date.now();
+      }
       chess.load(snapshot.fen);
       const isNewMove = _lastPlayedMoveCount !== -1 && snapshot.moveCount > _lastPlayedMoveCount;
       _lastPlayedMoveCount = snapshot.moveCount;
@@ -7616,6 +7803,11 @@ var require_main = __commonJS({
           state.legalTargets = snapshot.turn === state.role ? legalTargetsFor(state.selectedSquare) : legalTargetsForRole(state.selectedSquare, state.role);
         }
       }
+      if (!snapshot.analysis.enabled) {
+        state.lastAnalyzedMoveKey = null;
+        state.liveMoveGrades = {};
+        liveAnalysisToken += 1;
+      }
       if (state.role && state.role !== "spectator" && snapshot.turn === state.role && state.premove) {
         const queued = state.premove;
         state.premove = null;
@@ -7628,9 +7820,15 @@ var require_main = __commonJS({
         }
       }
       render();
+      void maybeRunLiveAnalysis(snapshot);
     });
     socket.on("room:error", (payload) => {
       suppressAnimationForMove = null;
+      if (state.autoJoinCode) {
+        state.autoJoinCode = null;
+        syncUrl(null);
+        return;
+      }
       showToast(payload.message);
     });
     function must(selector) {
@@ -7646,6 +7844,7 @@ var require_main = __commonJS({
       renderSession();
       renderMoves();
       updateCaption();
+      updateFocusHud();
       requestAnimationFrame(() => {
         if (window.scrollY !== savedScroll) {
           window.scrollTo({ top: savedScroll, behavior: "instant" });
@@ -7657,7 +7856,13 @@ var require_main = __commonJS({
       roomBadge.textContent = state.roomId ? `Room ${state.roomId}` : "No active room";
       roleBadge.textContent = humanRole(state.role);
       shareLink.textContent = state.shareUrl || "Create or join a room to get a live invite link.";
+      leaveRoomButton.hidden = !state.roomId;
+      copyLinkButton.hidden = !state.shareUrl;
+      flipBoardButton.hidden = !snapshot;
+      liveAnalysisButton.hidden = !snapshot;
+      rematchButton.hidden = !snapshot;
       if (!snapshot) {
+        pregamePlaceholder.hidden = false;
         matchStatus.textContent = "Create a room to start.";
         whiteSeat.textContent = "Waiting for player";
         blackSeat.textContent = "Waiting for player";
@@ -7665,8 +7870,11 @@ var require_main = __commonJS({
         movesMeta.textContent = "0";
         spectatorMeta.textContent = "0";
         summaryText.textContent = "Ready to play.";
+        liveAnalysisText.textContent = "Live analysis disabled.";
         return;
       }
+      const isMatchReady = snapshot.players.whiteConnected && snapshot.players.blackConnected;
+      pregamePlaceholder.hidden = isMatchReady;
       matchStatus.textContent = snapshot.status;
       whiteSeat.textContent = snapshot.players.whiteConnected ? seatLabel("w") : "Waiting for player";
       blackSeat.textContent = snapshot.players.blackConnected ? seatLabel("b") : "Waiting for player";
@@ -7677,6 +7885,20 @@ var require_main = __commonJS({
       const lastMoveDescription = snapshot.lastMove ? ` Last move: ${snapshot.lastMove.san} (${snapshot.lastMove.from} to ${snapshot.lastMove.to}).` : "";
       const rematchDescription = snapshot.rematchVotes > 0 ? ` Rematch votes: ${snapshot.rematchVotes}/2.` : "";
       summaryText.textContent = `${roleDescription} ${snapshot.status}${lastMoveDescription}${rematchDescription}`.trim();
+      const seatedPlayers = Number(snapshot.players.whiteConnected) + Number(snapshot.players.blackConnected);
+      const canVote = state.role === "w" || state.role === "b";
+      liveAnalysisButton.disabled = seatedPlayers < 2 || !canVote;
+      liveAnalysisButton.textContent = snapshot.analysis.enabled ? "Disable analysis" : `Enable analysis (${snapshot.analysis.votes}/2)`;
+      const gameEnded = snapshot.checkmate || snapshot.draw || snapshot.winner !== null;
+      rematchButton.disabled = !gameEnded;
+      if (snapshot.analysis.enabled) {
+        liveAnalysisText.textContent = state.liveAnalysisSummary;
+      } else if (snapshot.analysis.votes > 0) {
+        liveAnalysisText.textContent = `Waiting for both players: ${snapshot.analysis.votes}/2 ready.`;
+      } else {
+        liveAnalysisText.textContent = "Live analysis disabled.";
+      }
+      updateFocusHud();
     }
     function renderBoard() {
       const fragment = document.createDocumentFragment();
@@ -7685,6 +7907,8 @@ var require_main = __commonJS({
       const checkedKingSquare = getCheckedKingSquare();
       const lastMove = state.snapshot?.lastMove ?? null;
       const premove = state.premove;
+      const liveGrade = state.snapshot?.analysis.enabled && state.snapshot.lastMove ? state.liveMoveGrades[state.snapshot.moveCount] : void 0;
+      const liveMarkerSquare = liveGrade && state.snapshot?.lastMove ? state.snapshot.lastMove.to : null;
       if (lastMove) {
         lastMoveSquares.add(lastMove.from);
         lastMoveSquares.add(lastMove.to);
@@ -7720,8 +7944,18 @@ var require_main = __commonJS({
           const glyph = PIECES[`${piece.color}${piece.type}`];
           const pieceElement = document.createElement("span");
           pieceElement.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
+          if (activeGhostDestinationSquare === square) {
+            pieceElement.classList.add("ghost-hidden");
+          }
           pieceElement.textContent = glyph;
           button.append(pieceElement);
+          if (liveGrade && liveMarkerSquare === squareName) {
+            const marker = document.createElement("span");
+            marker.className = `piece-quality-marker ${liveGrade.category}`;
+            marker.textContent = symbolForLiveCategory(liveGrade.category);
+            marker.title = `${liveGrade.label} (${liveGrade.cpl} CPL)`;
+            button.append(marker);
+          }
         }
         fragment.append(button);
       }
@@ -7855,12 +8089,18 @@ var require_main = __commonJS({
       for (let index = 0; index < snapshot.moves.length; index += 2) {
         const whiteMove = snapshot.moves[index];
         const blackMove = snapshot.moves[index + 1];
+        const whitePly = index + 1;
+        const blackPly = index + 2;
+        const whiteGrade = state.liveMoveGrades[whitePly];
+        const blackGrade = state.liveMoveGrades[blackPly];
+        const whiteBadge = whiteMove && whiteGrade ? ` <span class="move-quality-tag ${whiteGrade.category}">${whiteGrade.label}</span>` : "";
+        const blackBadge = blackMove && blackGrade ? ` <span class="move-quality-tag ${blackGrade.category}">${blackGrade.label}</span>` : "";
         const moveNumber = Math.floor(index / 2) + 1;
         rows.push(`
       <div class="move-row">
         <strong>${moveNumber}.</strong>
-        <span>${whiteMove ? whiteMove.san : ""}</span>
-        <span>${blackMove ? blackMove.san : ""}</span>
+        <span>${whiteMove ? whiteMove.san : ""}${whiteBadge}</span>
+        <span>${blackMove ? blackMove.san : ""}${blackBadge}</span>
       </div>
     `);
       }
@@ -7885,6 +8125,122 @@ var require_main = __commonJS({
       }
       boardCaption.textContent = state.selectedSquare ? `Selected ${state.selectedSquare}. Choose one of the highlighted targets.` : `Your move as ${state.role === "w" ? "White" : "Black"}.`;
     }
+    function classifyLiveMove(cpl) {
+      if (cpl <= 20) return "Excellent";
+      if (cpl <= 60) return "Good";
+      if (cpl <= 120) return "Inaccuracy";
+      if (cpl <= 250) return "Mistake";
+      return "Blunder";
+    }
+    function classifyLiveMoveCategory(cpl) {
+      if (cpl <= 20) return "excellent";
+      if (cpl <= 60) return "good";
+      if (cpl <= 120) return "inaccuracy";
+      if (cpl <= 250) return "mistake";
+      return "blunder";
+    }
+    function symbolForLiveCategory(category) {
+      if (category === "excellent") return "\u2605";
+      if (category === "good") return "\u2713";
+      if (category === "inaccuracy") return "?!";
+      if (category === "mistake") return "x";
+      return "??";
+    }
+    function summarizeLiveMove(cpl, san) {
+      const label = classifyLiveMove(cpl);
+      return `${label}: ${san} (${cpl} CPL)`;
+    }
+    function buildBeforeAfterFenFromMoves(moves) {
+      if (moves.length === 0) {
+        return null;
+      }
+      const replay = new Chess();
+      for (let index = 0; index < moves.length - 1; index += 1) {
+        replay.move(moves[index].san);
+      }
+      const beforeFen = replay.fen();
+      replay.move(moves[moves.length - 1].san);
+      const afterFen = replay.fen();
+      return { beforeFen, afterFen };
+    }
+    async function maybeRunLiveAnalysis(snapshot) {
+      if (!snapshot.analysis.enabled || !snapshot.lastMove || snapshot.moves.length === 0) {
+        return;
+      }
+      const moveKey = `${snapshot.moveCount}:${snapshot.lastMove.from}:${snapshot.lastMove.to}:${snapshot.lastMove.san}`;
+      if (state.lastAnalyzedMoveKey === moveKey) {
+        return;
+      }
+      const fenPair = buildBeforeAfterFenFromMoves(snapshot.moves);
+      if (!fenPair) {
+        return;
+      }
+      const token = ++liveAnalysisToken;
+      state.liveAnalysisSummary = "Analyzing last move...";
+      renderSession();
+      try {
+        if (!liveAnalyzer) {
+          liveAnalyzer = new StockfishBridge();
+        }
+        const [before, after] = await Promise.all([
+          liveAnalyzer.evaluateFen(fenPair.beforeFen, 10),
+          liveAnalyzer.evaluateFen(fenPair.afterFen, 10)
+        ]);
+        if (token !== liveAnalysisToken || !state.snapshot?.analysis.enabled) {
+          return;
+        }
+        const moverBefore = before.cp;
+        const moverAfter = -after.cp;
+        const cpl = Math.max(0, Math.round(moverBefore - moverAfter));
+        const label = classifyLiveMove(cpl);
+        const category = classifyLiveMoveCategory(cpl);
+        state.liveAnalysisSummary = summarizeLiveMove(cpl, snapshot.lastMove.san);
+        state.liveMoveGrades[snapshot.moveCount] = { label, cpl, category };
+        state.lastAnalyzedMoveKey = moveKey;
+      } catch {
+        if (token !== liveAnalysisToken) {
+          return;
+        }
+        state.liveAnalysisSummary = "Live analysis temporarily unavailable.";
+      }
+      render();
+    }
+    async function maybeRunLiveAnalysisForMove(previousMoves, move, expectedMoveCount, expectedMoveKey) {
+      if (!liveAnalyzer) {
+        try {
+          liveAnalyzer = new StockfishBridge();
+        } catch {
+          return;
+        }
+      }
+      try {
+        const recreatedChess = new Chess();
+        for (const m of previousMoves) {
+          recreatedChess.move(m.san);
+        }
+        const beforeFen = recreatedChess.fen();
+        const moveResult = recreatedChess.move(move);
+        if (!moveResult) {
+          return;
+        }
+        const afterFen = recreatedChess.fen();
+        const [before, after] = await Promise.all([
+          liveAnalyzer.evaluateFen(beforeFen, 15),
+          liveAnalyzer.evaluateFen(afterFen, 15)
+        ]);
+        const moverBefore = before.cp;
+        const moverAfter = -after.cp;
+        const cpl = Math.max(0, Math.round(moverBefore - moverAfter));
+        const label = classifyLiveMove(cpl);
+        const category = classifyLiveMoveCategory(cpl);
+        state.liveAnalysisSummary = `You played: ${summarizeLiveMove(cpl, moveResult.san)}`;
+        state.liveMoveGrades[expectedMoveCount] = { label, cpl, category };
+        state.lastAnalyzedMoveKey = expectedMoveKey;
+        render();
+      } catch (e) {
+        console.error("Live analysis error:", e);
+      }
+    }
     function getCheckedKingSquare() {
       if (!chess.isCheck()) {
         return null;
@@ -7902,6 +8258,7 @@ var require_main = __commonJS({
     function animateLastMove(lastMove) {
       if (!state.snapshot || !lastMove) {
         lastAnimatedMoveKey = null;
+        activeGhostDestinationSquare = null;
         return;
       }
       const moveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
@@ -7933,20 +8290,19 @@ var require_main = __commonJS({
         activeGhostDestinationPiece.style.visibility = "";
         activeGhostDestinationPiece = null;
       }
+      activeGhostDestinationSquare = null;
       const fromRect = fromSquareButton.getBoundingClientRect();
       const toRect = toSquareButton.getBoundingClientRect();
-      const startX = fromRect.left + fromRect.width / 2;
-      const startY = fromRect.top + fromRect.height / 2;
-      const endX = toRect.left + toRect.width / 2;
-      const endY = toRect.top + toRect.height / 2;
-      const pageX = window.scrollX;
-      const pageY = window.scrollY;
+      const startX = fromRect.left + fromRect.width / 2 + window.scrollX;
+      const startY = fromRect.top + fromRect.height / 2 + window.scrollY;
+      const endX = toRect.left + toRect.width / 2 + window.scrollX;
+      const endY = toRect.top + toRect.height / 2 + window.scrollY;
       const deltaX = startX - endX;
       const deltaY = startY - endY;
       const computed = window.getComputedStyle(destinationPiece);
       const ghostPiece = destinationPiece.cloneNode(true);
       Object.assign(ghostPiece.style, {
-        position: "fixed",
+        position: "absolute",
         left: `${endX}px`,
         top: `${endY}px`,
         transform: "translate3d(-50%, -50%, 0)",
@@ -7966,6 +8322,7 @@ var require_main = __commonJS({
       destinationPiece.style.visibility = "hidden";
       activeGhostNode = ghostPiece;
       activeGhostDestinationPiece = destinationPiece;
+      activeGhostDestinationSquare = lastMove.to;
       document.body.append(ghostPiece);
       const animation = ghostPiece.animate(
         [
@@ -7991,6 +8348,8 @@ var require_main = __commonJS({
           activeGhostAnimation = null;
           activeGhostNode = null;
           activeGhostDestinationPiece = null;
+          activeGhostDestinationSquare = null;
+          renderBoard();
         }
       });
       animation.addEventListener("cancel", () => {
@@ -8000,6 +8359,8 @@ var require_main = __commonJS({
           activeGhostAnimation = null;
           activeGhostNode = null;
           activeGhostDestinationPiece = null;
+          activeGhostDestinationSquare = null;
+          renderBoard();
         }
       });
     }
@@ -8086,6 +8447,16 @@ var require_main = __commonJS({
         return;
       }
       socket.emit("game:move", { from, to });
+      if (state.snapshot?.analysis.enabled) {
+        state.liveAnalysisSummary = "Analyzing your move...";
+        renderSession();
+        const tempChess = new Chess(state.snapshot.fen);
+        const moveResult = tempChess.move({ from, to });
+        if (moveResult) {
+          const moveKey = `${state.snapshot.moveCount + 1}:${from}:${to}:${moveResult.san}`;
+          void maybeRunLiveAnalysisForMove(state.snapshot.moves, moveResult, state.snapshot.moveCount + 1, moveKey);
+        }
+      }
     }
     function queuePremove(from, to) {
       if (!state.role || state.role === "spectator") {
@@ -8189,10 +8560,48 @@ var require_main = __commonJS({
       state.snapshot = null;
       state.pendingPromotion = null;
       state.premove = null;
+      focusTimerStartMs = null;
+      state.liveAnalysisSummary = "Live analysis disabled.";
+      state.lastAnalyzedMoveKey = null;
+      state.liveMoveGrades = {};
+      liveAnalysisToken += 1;
       clearArrows();
       clearSelection();
       chess.reset();
       syncUrl(null);
+    }
+    function isTypingTarget(target) {
+      const element = target;
+      return Boolean(element?.closest("input, textarea, [contenteditable='true']"));
+    }
+    function formatElapsed(secondsTotal) {
+      const minutes = Math.floor(secondsTotal / 60);
+      const seconds = secondsTotal % 60;
+      return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    }
+    function updateFocusHud() {
+      if (!state.focusMode) {
+        focusHud.hidden = true;
+        return;
+      }
+      const elapsedSeconds = focusTimerStartMs ? Math.max(0, Math.floor((Date.now() - focusTimerStartMs) / 1e3)) : 0;
+      focusTimer.textContent = formatElapsed(elapsedSeconds);
+      focusHud.hidden = false;
+    }
+    function applyFocusMode() {
+      document.body.classList.toggle("focus-mode", state.focusMode);
+      document.body.classList.toggle("focus-multiplayer", state.focusMode);
+      focusModeButton.setAttribute("aria-pressed", String(state.focusMode));
+      focusModeButton.textContent = state.focusMode ? "Exit" : "Focus";
+      updateFocusHud();
+    }
+    async function toggleFocusMode(force) {
+      const nextMode = force ?? !state.focusMode;
+      if (nextMode === state.focusMode) {
+        return;
+      }
+      state.focusMode = nextMode;
+      applyFocusMode();
     }
     var toastTimer = 0;
     function showToast(message) {
@@ -8205,6 +8614,10 @@ var require_main = __commonJS({
       }, 2200);
     }
     render();
+    window.setInterval(updateFocusHud, 1e3);
+    window.addEventListener("beforeunload", () => {
+      liveAnalyzer?.terminate();
+    });
   }
 });
 export default require_main();

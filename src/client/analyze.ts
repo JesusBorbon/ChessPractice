@@ -217,6 +217,7 @@ let analysisByPly: Array<MoveAnalysis | undefined> = [];
 let analysisRunId = 0;
 let analysisInProgress = false;
 let fullAnalysisInProgress = false;
+let focusMode = false;
 
 // ── Mount ──────────────────────────────────────────────────────────────────────
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -253,10 +254,11 @@ app.innerHTML = `
       </div>
 
       <div class="analyze-status" id="statusBar">White to move.</div>
+      <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
     </section>
 
     <aside class="analyze-side">
-      <div class="info-card">
+      <div class="info-card turn-card">
         <h2>Turn</h2>
         <div class="turn-indicator">
           <div class="turn-dot" id="turnDot"></div>
@@ -264,17 +266,17 @@ app.innerHTML = `
         </div>
       </div>
 
-      <div class="info-card">
+      <div class="info-card fen-card">
         <h2>FEN</h2>
         <textarea class="fen-input" id="fenDisplay" rows="3" readonly></textarea>
       </div>
 
-      <div class="info-card">
+      <div class="info-card moves-card">
         <h2>Moves</h2>
         <div class="analyze-move-list" id="moveList"></div>
       </div>
 
-      <div class="info-card">
+      <div class="info-card feedback-card">
         <h2>Engine feedback</h2>
         <div class="engine-feedback" id="engineFeedback">Run analysis to get move quality feedback.</div>
       </div>
@@ -317,6 +319,7 @@ const navNext    = q<HTMLButtonElement>("#navNext");
 const navLast    = q<HTMLButtonElement>("#navLast");
 const analyzeBtn = q<HTMLButtonElement>("#analyzeBtn");
 const stopAnalyzeBtn = q<HTMLButtonElement>("#stopAnalyzeBtn");
+const focusModeButton = q<HTMLButtonElement>("#focusModeBtn");
 
 // ── Button wiring ──────────────────────────────────────────────────────────────
 q<HTMLButtonElement>("#resetBtn").addEventListener("click", () => {
@@ -388,6 +391,19 @@ stopAnalyzeBtn.addEventListener("click", () => {
   cancelAnalysis();
   showToast("Analysis stopped.");
   renderSide();
+});
+
+focusModeButton.addEventListener("click", () => {
+  void toggleFocusMode();
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.key.toLowerCase() !== "z" || isTypingTarget(event.target)) {
+    return;
+  }
+
+  event.preventDefault();
+  void toggleFocusMode();
 });
 
 // Navigation
@@ -733,6 +749,28 @@ function render(): void {
   renderNav();
 }
 
+function isTypingTarget(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null;
+  return Boolean(element?.closest("input, textarea, [contenteditable='true']"));
+}
+
+function applyFocusMode(): void {
+  document.body.classList.toggle("focus-mode", focusMode);
+  document.body.classList.toggle("focus-analyze", focusMode);
+  focusModeButton.setAttribute("aria-pressed", String(focusMode));
+  focusModeButton.textContent = focusMode ? "Exit" : "Focus";
+}
+
+async function toggleFocusMode(force?: boolean): Promise<void> {
+  const nextMode = force ?? !focusMode;
+  if (nextMode === focusMode) {
+    return;
+  }
+
+  focusMode = nextMode;
+  applyFocusMode();
+}
+
 function renderBoard(): void {
   const squares = buildSquareList(orientation);
   const lastMove = getLastMove();
@@ -945,19 +983,17 @@ function animateLastMove(lastMove: Move | undefined): void {
 
   const fromRect = fromSquareButton.getBoundingClientRect();
   const toRect = toSquareButton.getBoundingClientRect();
-  const startX = fromRect.left + fromRect.width / 2;
-  const startY = fromRect.top + fromRect.height / 2;
-  const endX = toRect.left + toRect.width / 2;
-  const endY = toRect.top + toRect.height / 2;
-  const pageX = window.scrollX;
-  const pageY = window.scrollY;
+  const startX = fromRect.left + fromRect.width / 2 + window.scrollX;
+  const startY = fromRect.top + fromRect.height / 2 + window.scrollY;
+  const endX = toRect.left + toRect.width / 2 + window.scrollX;
+  const endY = toRect.top + toRect.height / 2 + window.scrollY;
   const deltaX = startX - endX;
   const deltaY = startY - endY;
 
   const computed = window.getComputedStyle(destinationPiece);
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
   Object.assign(ghostPiece.style, {
-    position: "fixed",
+    position: "absolute",
     left: `${endX}px`,
     top: `${endY}px`,
     transform: "translate3d(-50%, -50%, 0)",

@@ -3511,32 +3511,57 @@ function setTheme(theme) {
     btn.classList.toggle("active", btn.dataset.theme === theme);
   });
 }
+function setPanelCollapsed(widget, toggleButton, collapsed) {
+  widget.classList.toggle("is-collapsed", collapsed);
+  toggleButton.setAttribute("aria-expanded", String(!collapsed));
+  toggleButton.textContent = collapsed ? "\u25C0" : "\u25B6";
+  toggleButton.title = collapsed ? "Show themes" : "Hide themes";
+  localStorage.setItem(THEME_PANEL_COLLAPSED_KEY, collapsed ? "1" : "0");
+}
 function mountThemeSwitcher() {
   const themeRaw = localStorage.getItem(THEME_STORAGE_KEY);
   const savedTheme = themeRaw === "forest" || themeRaw === "purple" || themeRaw === "walnut" || themeRaw === "refined" ? themeRaw : "forest";
+  const collapsedRaw = localStorage.getItem(THEME_PANEL_COLLAPSED_KEY);
+  const defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
+  const initialCollapsed = collapsedRaw === null ? defaultCollapsed : collapsedRaw === "1";
   setTheme(savedTheme);
   const widget = document.createElement("div");
   widget.className = "theme-switcher";
   widget.setAttribute("role", "group");
   widget.setAttribute("aria-label", "Choose theme");
   widget.innerHTML = `
-    <span class="theme-switcher-label">Theme</span>
-    <button class="theme-btn" data-theme="forest" title="Classic Forest" aria-label="Classic Forest theme"></button>
-    <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
-    <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
-    <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
+    <button class="theme-toggle-btn" type="button" aria-label="Toggle theme selector" aria-expanded="true">\u25B6</button>
+    <div class="theme-switcher-options">
+      <span class="theme-switcher-label">Theme</span>
+      <button class="theme-btn" data-theme="forest" title="Classic Forest" aria-label="Classic Forest theme"></button>
+      <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
+      <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
+      <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
+    </div>
   `;
   document.body.appendChild(widget);
+  const toggleButton = widget.querySelector(".theme-toggle-btn");
+  if (!toggleButton) {
+    return;
+  }
+  setPanelCollapsed(widget, toggleButton, initialCollapsed);
   widget.addEventListener("click", (e) => {
+    const toggle = e.target.closest(".theme-toggle-btn");
+    if (toggle) {
+      const collapsed = !widget.classList.contains("is-collapsed");
+      setPanelCollapsed(widget, toggleButton, collapsed);
+      return;
+    }
     const btn = e.target.closest(".theme-btn");
     if (btn?.dataset.theme) setTheme(btn.dataset.theme);
   });
 }
-var THEME_STORAGE_KEY;
+var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
     THEME_STORAGE_KEY = "chess-theme";
+    THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
   }
 });
 
@@ -3719,6 +3744,7 @@ var require_analyze = __commonJS({
     var analysisRunId = 0;
     var analysisInProgress = false;
     var fullAnalysisInProgress = false;
+    var focusMode = false;
     var app = document.querySelector("#app");
     app.innerHTML = `
 <div class="analyze-shell">
@@ -3752,10 +3778,11 @@ var require_analyze = __commonJS({
       </div>
 
       <div class="analyze-status" id="statusBar">White to move.</div>
+      <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
     </section>
 
     <aside class="analyze-side">
-      <div class="info-card">
+      <div class="info-card turn-card">
         <h2>Turn</h2>
         <div class="turn-indicator">
           <div class="turn-dot" id="turnDot"></div>
@@ -3763,17 +3790,17 @@ var require_analyze = __commonJS({
         </div>
       </div>
 
-      <div class="info-card">
+      <div class="info-card fen-card">
         <h2>FEN</h2>
         <textarea class="fen-input" id="fenDisplay" rows="3" readonly></textarea>
       </div>
 
-      <div class="info-card">
+      <div class="info-card moves-card">
         <h2>Moves</h2>
         <div class="analyze-move-list" id="moveList"></div>
       </div>
 
-      <div class="info-card">
+      <div class="info-card feedback-card">
         <h2>Engine feedback</h2>
         <div class="engine-feedback" id="engineFeedback">Run analysis to get move quality feedback.</div>
       </div>
@@ -3812,6 +3839,7 @@ var require_analyze = __commonJS({
     var navLast = q("#navLast");
     var analyzeBtn = q("#analyzeBtn");
     var stopAnalyzeBtn = q("#stopAnalyzeBtn");
+    var focusModeButton = q("#focusModeBtn");
     q("#resetBtn").addEventListener("click", () => {
       cancelAnalysis();
       chess.reset();
@@ -3874,6 +3902,16 @@ var require_analyze = __commonJS({
       cancelAnalysis();
       showToast("Analysis stopped.");
       renderSide();
+    });
+    focusModeButton.addEventListener("click", () => {
+      void toggleFocusMode();
+    });
+    window.addEventListener("keydown", (event) => {
+      if (event.key.toLowerCase() !== "z" || isTypingTarget(event.target)) {
+        return;
+      }
+      event.preventDefault();
+      void toggleFocusMode();
     });
     navFirst.addEventListener("click", () => goTo(0));
     navPrev.addEventListener("click", () => goTo(cursor - 1));
@@ -4148,6 +4186,24 @@ var require_analyze = __commonJS({
       renderSide();
       renderNav();
     }
+    function isTypingTarget(target) {
+      const element = target;
+      return Boolean(element?.closest("input, textarea, [contenteditable='true']"));
+    }
+    function applyFocusMode() {
+      document.body.classList.toggle("focus-mode", focusMode);
+      document.body.classList.toggle("focus-analyze", focusMode);
+      focusModeButton.setAttribute("aria-pressed", String(focusMode));
+      focusModeButton.textContent = focusMode ? "Exit" : "Focus";
+    }
+    async function toggleFocusMode(force) {
+      const nextMode = force ?? !focusMode;
+      if (nextMode === focusMode) {
+        return;
+      }
+      focusMode = nextMode;
+      applyFocusMode();
+    }
     function renderBoard() {
       const squares = buildSquareList(orientation);
       const lastMove = getLastMove();
@@ -4322,18 +4378,16 @@ var require_analyze = __commonJS({
       }
       const fromRect = fromSquareButton.getBoundingClientRect();
       const toRect = toSquareButton.getBoundingClientRect();
-      const startX = fromRect.left + fromRect.width / 2;
-      const startY = fromRect.top + fromRect.height / 2;
-      const endX = toRect.left + toRect.width / 2;
-      const endY = toRect.top + toRect.height / 2;
-      const pageX = window.scrollX;
-      const pageY = window.scrollY;
+      const startX = fromRect.left + fromRect.width / 2 + window.scrollX;
+      const startY = fromRect.top + fromRect.height / 2 + window.scrollY;
+      const endX = toRect.left + toRect.width / 2 + window.scrollX;
+      const endY = toRect.top + toRect.height / 2 + window.scrollY;
       const deltaX = startX - endX;
       const deltaY = startY - endY;
       const computed = window.getComputedStyle(destinationPiece);
       const ghostPiece = destinationPiece.cloneNode(true);
       Object.assign(ghostPiece.style, {
-        position: "fixed",
+        position: "absolute",
         left: `${endX}px`,
         top: `${endY}px`,
         transform: "translate3d(-50%, -50%, 0)",

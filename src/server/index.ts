@@ -39,6 +39,10 @@ type RoomSnapshot = {
     spectatorCount: number;
   };
   rematchVotes: number;
+  analysis: {
+    enabled: boolean;
+    votes: number;
+  };
 };
 
 type GameRoom = {
@@ -47,6 +51,8 @@ type GameRoom = {
   white?: string;
   black?: string;
   rematchVotes: Set<string>;
+  analysisVotes: Set<string>;
+  analysisEnabled: boolean;
   updatedAt: number;
 };
 
@@ -175,6 +181,10 @@ function buildSnapshot(room: GameRoom): RoomSnapshot {
       spectatorCount: getSpectatorCount(room.id, room),
     },
     rematchVotes: room.rematchVotes.size,
+    analysis: {
+      enabled: room.analysisEnabled,
+      votes: room.analysisVotes.size,
+    },
   };
 }
 
@@ -211,6 +221,16 @@ function removeFromRoom(socketId: string): void {
     }
 
     if (room.rematchVotes.delete(socketId)) {
+      changed = true;
+    }
+
+    if (room.analysisVotes.delete(socketId)) {
+      changed = true;
+    }
+
+    if (room.analysisEnabled && (!room.white || !room.black)) {
+      room.analysisEnabled = false;
+      room.analysisVotes.clear();
       changed = true;
     }
 
@@ -260,6 +280,10 @@ function getActivePlayerSockets(room: GameRoom): string[] {
   return [room.white, room.black].filter((value): value is string => Boolean(value));
 }
 
+function isSquare(value: unknown): value is Square {
+  return typeof value === "string" && /^[a-h][1-8]$/.test(value);
+}
+
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
 
@@ -290,6 +314,8 @@ io.on("connection", (socket) => {
       chess: new Chess(),
       white: socket.id,
       rematchVotes: new Set(),
+      analysisVotes: new Set(),
+      analysisEnabled: false,
       updatedAt: Date.now(),
     };
 
@@ -309,8 +335,8 @@ io.on("connection", (socket) => {
     emitRoomState(room);
   });
 
-  socket.on("room:join", (payload: { roomId?: string }) => {
-    const roomId = payload.roomId?.trim().toUpperCase();
+  socket.on("room:join", (payload?: { roomId?: string }) => {
+    const roomId = payload?.roomId?.trim().toUpperCase();
     if (!roomId) {
       socket.emit("room:error", { message: "Enter a room code first." });
       return;
@@ -352,7 +378,7 @@ io.on("connection", (socket) => {
 
   socket.on(
     "game:move",
-    (payload: { from?: Square; to?: Square; promotion?: "q" | "r" | "b" | "n" }) => {
+    (payload?: { from?: Square; to?: Square; promotion?: "q" | "r" | "b" | "n" }) => {
       const clientState = socket.data as ClientState;
       const roomId = clientState.roomId;
       const role = clientState.role;
@@ -378,16 +404,24 @@ io.on("connection", (socket) => {
         return;
       }
 
-      if (!payload.from || !payload.to) {
+      const from = payload?.from;
+      const to = payload?.to;
+      if (!isSquare(from) || !isSquare(to)) {
         socket.emit("room:error", { message: "Invalid move payload." });
         return;
       }
 
-      const move = room.chess.move({
-        from: payload.from,
-        to: payload.to,
-        promotion: payload.promotion ?? "q",
-      });
+      let move: Move | null = null;
+      try {
+        move = room.chess.move({
+          from,
+          to,
+          promotion: payload?.promotion ?? "q",
+        });
+      } catch {
+        socket.emit("room:error", { message: "That move is not legal." });
+        return;
+      }
 
       if (!move) {
         socket.emit("room:error", { message: "That move is not legal." });
@@ -395,9 +429,53 @@ io.on("connection", (socket) => {
       }
 
       room.rematchVotes.clear();
+      room.analysisVotes.clear();
       emitRoomState(room);
     },
   );
+
+  socket.on("analysis:toggle", () => {
+    const clientState = socket.data as ClientState;
+    const roomId = clientState.roomId;
+    const role = clientState.role;
+
+    if (!roomId || !role || role === "spectator") {
+      socket.emit("room:error", { message: "Only seated players can toggle live analysis." });
+      return;
+    }
+
+    const room = rooms.get(roomId);
+    if (!room) {
+      socket.emit("room:error", { message: "The room is no longer available." });
+      return;
+    }
+
+    const players = getActivePlayerSockets(room);
+    if (players.length < 2) {
+      socket.emit("room:error", { message: "Live analysis requires both players connected." });
+      return;
+    }
+
+    if (room.analysisEnabled) {
+      room.analysisEnabled = false;
+      room.analysisVotes.clear();
+      emitRoomState(room);
+      return;
+    }
+
+    if (room.analysisVotes.has(socket.id)) {
+      room.analysisVotes.delete(socket.id);
+    } else {
+      room.analysisVotes.add(socket.id);
+    }
+
+    if (players.every((playerId) => room.analysisVotes.has(playerId))) {
+      room.analysisEnabled = true;
+      room.analysisVotes.clear();
+    }
+
+    emitRoomState(room);
+  });
 
   socket.on("game:rematch", () => {
     const clientState = socket.data as ClientState;
