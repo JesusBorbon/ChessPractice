@@ -75,6 +75,7 @@ type AppState = {
   lastAnalyzedMoveKey: string | null;
   liveMoveGrades: Record<number, { label: string; cpl: number; category: "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder" }>;
   animationStyle: "smooth" | "epic";
+  bloodFxEnabled: boolean;
 };
 
 type EngineEval = {
@@ -131,6 +132,7 @@ const state: AppState = {
   lastAnalyzedMoveKey: null,
   liveMoveGrades: {},
     animationStyle: (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth",
+  bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on",
 };
 
 let lastAnimatedMoveKey: string | null = null;
@@ -467,6 +469,16 @@ const focusModeButton = must<HTMLButtonElement>("#focusModeBtn");
 
 mountThemeSwitcher();
 
+window.addEventListener("animationchange", (event: Event) => {
+  const customEvent = event as CustomEvent<{ style: "smooth" | "epic" }>;
+  state.animationStyle = customEvent.detail.style;
+});
+
+window.addEventListener("bloodfxchange", (event: Event) => {
+  const customEvent = event as CustomEvent<{ enabled: boolean }>;
+  state.bloodFxEnabled = customEvent.detail.enabled;
+});
+
 const joinRoomButton = must<HTMLButtonElement>("#joinRoomButton");
 const copyLinkButton = must<HTMLButtonElement>("#copyLinkButton");
 const leaveRoomButton = must<HTMLButtonElement>("#leaveRoomButton");
@@ -487,10 +499,6 @@ joinRoomButton.addEventListener("click", () => {
     showToast("Enter a room code first.");
     return;
   }
-  window.addEventListener("animationchange", (event: Event) => {
-    const customEvent = event as CustomEvent<{ style: "smooth" | "epic" }>;
-    state.animationStyle = customEvent.detail.style;
-  });
 
   if (!ROOM_ID_PATTERN.test(code)) {
     showToast("Room code must be exactly 4 digits.");
@@ -840,6 +848,7 @@ socket.on("session:left", () => {
 
 socket.on("room:state", (snapshot: RoomSnapshot) => {
   const previousMoveCount = state.snapshot?.moveCount ?? 0;
+  const previousFen = chess.fen();
   state.snapshot = snapshot;
   if (!focusTimerStartMs || snapshot.moveCount < previousMoveCount) {
     focusTimerStartMs = Date.now();
@@ -849,6 +858,16 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
   const isNewMove = _lastPlayedMoveCount !== -1 && snapshot.moveCount > _lastPlayedMoveCount;
   _lastPlayedMoveCount = snapshot.moveCount;
   if (isNewMove) playSoundForSnapshot(snapshot);
+
+  if (snapshot.check && isNewMove) {
+    triggerCheckFlash();
+  }
+
+  const capturedByCount = countFenPieces(snapshot.fen) < countFenPieces(previousFen);
+  if (state.bloodFxEnabled && isNewMove && capturedByCount && snapshot.lastMove) {
+    const capturedPiece = detectCapturedPiece(previousFen, snapshot.lastMove);
+    spawnBloodSplatter(snapshot.lastMove.to, capturedPiece ?? "p");
+  }
 
   if (snapshot.moveCount > previousMoveCount) {
     clearArrows();
@@ -1173,6 +1192,88 @@ function squareCenter(square: Square): { x: number; y: number } {
     x: col * 100 + 50,
     y: row * 100 + 50,
   };
+}
+
+function countFenPieces(fen: string): number {
+  const boardFen = fen.split(" ")[0] ?? "";
+  let count = 0;
+  for (const ch of boardFen) {
+    if (/[prnbqkPRNBQK]/.test(ch)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function detectCapturedPiece(previousFen: string, lastMove: MoveSummary): PieceSymbol | null {
+  const replay = new Chess(previousFen);
+  const promotionMatch = lastMove.san.match(/=([QRBN])/);
+  const promotion = promotionMatch?.[1]?.toLowerCase() as PieceSymbol | undefined;
+
+  let move: Move | null = null;
+  try {
+    move = replay.move({
+      from: lastMove.from,
+      to: lastMove.to,
+      promotion: promotion as "q" | "r" | "b" | "n" | undefined,
+    });
+  } catch {
+    return null;
+  }
+
+  return move?.captured ?? null;
+}
+
+function triggerCheckFlash(): void {
+  const flash = document.createElement("div");
+  flash.className = "check-flash-overlay";
+  document.body.append(flash);
+  flash.addEventListener("animationend", () => flash.remove(), { once: true });
+}
+
+function spawnBloodSplatter(square: Square, capturedPiece: PieceSymbol): void {
+  const boardWrap = board.parentElement as HTMLElement | null;
+  if (!boardWrap) {
+    return;
+  }
+
+  const intensityByPiece: Record<PieceSymbol, number> = {
+    p: 1,
+    n: 1.28,
+    b: 1.32,
+    r: 1.5,
+    q: 2.05,
+    k: 1.75,
+  };
+  const intensity = intensityByPiece[capturedPiece] ?? 1;
+
+  const center = squareCenter(square);
+  const splatter = document.createElement("div");
+  splatter.className = "capture-splatter";
+  splatter.style.left = `${(center.x / 800) * 100}%`;
+  splatter.style.top = `${(center.y / 800) * 100}%`;
+  splatter.style.setProperty("--intensity", String(intensity));
+
+  const dropCount = Math.max(14, Math.floor((16 + Math.random() * 12) * intensity));
+  for (let index = 0; index < dropCount; index += 1) {
+    const drop = document.createElement("span");
+    drop.className = "capture-drop";
+    const angle = Math.random() * Math.PI * 2;
+    const distance = (24 + Math.random() * 58) * (0.88 + intensity * 0.28);
+    const size = (5.8 + Math.random() * 10.8) * (0.84 + intensity * 0.18);
+    const smear = 0.68 + Math.random() * (0.95 + intensity * 0.28);
+    const stretch = 0.68 + Math.random() * 1.4;
+    drop.style.setProperty("--dx", `${Math.cos(angle) * distance}px`);
+    drop.style.setProperty("--dy", `${Math.sin(angle) * distance}px`);
+    drop.style.setProperty("--size", `${size}px`);
+    drop.style.setProperty("--delay", `${Math.random() * 120}ms`);
+    drop.style.setProperty("--smear", `${smear}`);
+    drop.style.setProperty("--stretch", `${stretch}`);
+    splatter.append(drop);
+  }
+
+  boardWrap.append(splatter);
+  splatter.addEventListener("animationend", () => splatter.remove(), { once: true });
 }
 
 function toggleArrow(from: Square, to: Square): void {

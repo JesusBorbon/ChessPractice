@@ -3514,48 +3514,73 @@ function setTheme(theme) {
 function setAnimationStyle(style) {
   localStorage.setItem(ANIMATION_STORAGE_KEY, style);
   document.querySelectorAll(".animation-btn").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.animation === style);
+    const isActive = btn.dataset.animation === style;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
   });
   const event = new CustomEvent("animationchange", { detail: { style } });
+  window.dispatchEvent(event);
+}
+function setBloodFxEnabled(enabled) {
+  localStorage.setItem(BLOOD_FX_STORAGE_KEY, enabled ? "on" : "off");
+  document.querySelectorAll(".fx-btn").forEach((btn) => {
+    const isActive = btn.dataset.bloodfx === "on" === enabled;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  const event = new CustomEvent("bloodfxchange", { detail: { enabled } });
   window.dispatchEvent(event);
 }
 function setPanelCollapsed(widget, toggleButton, collapsed) {
   widget.classList.toggle("is-collapsed", collapsed);
   toggleButton.setAttribute("aria-expanded", String(!collapsed));
   toggleButton.textContent = collapsed ? "\u25C0" : "\u25B6";
-  toggleButton.title = collapsed ? "Show themes" : "Hide themes";
+  toggleButton.title = collapsed ? "Show customization" : "Hide customization";
   localStorage.setItem(THEME_PANEL_COLLAPSED_KEY, collapsed ? "1" : "0");
 }
 function mountThemeSwitcher() {
   const themeRaw = localStorage.getItem(THEME_STORAGE_KEY);
   const savedTheme = themeRaw === "forest" || themeRaw === "purple" || themeRaw === "walnut" || themeRaw === "refined" ? themeRaw : "forest";
   const collapsedRaw = localStorage.getItem(THEME_PANEL_COLLAPSED_KEY);
+  const animationRaw = localStorage.getItem(ANIMATION_STORAGE_KEY);
+  const savedAnimationStyle = animationRaw === "epic" ? "epic" : "smooth";
+  const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
+  const bloodFxEnabled = bloodFxRaw === "on";
   const defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
   const initialCollapsed = collapsedRaw === null ? defaultCollapsed : collapsedRaw === "1";
   setTheme(savedTheme);
   const widget = document.createElement("div");
   widget.className = "theme-switcher";
   widget.setAttribute("role", "group");
-  widget.setAttribute("aria-label", "Choose theme");
+  widget.setAttribute("aria-label", "Theme and animation options");
   widget.innerHTML = `
     <button class="theme-toggle-btn" type="button" aria-label="Toggle theme selector" aria-expanded="true">\u25B6</button>
-    <div class="theme-switcher-options">
-      <span class="theme-switcher-label">Theme</span>
-      <button class="theme-btn" data-theme="forest" title="Classic Forest" aria-label="Classic Forest theme"></button>
-      <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
-      <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
-      <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
+    <div class="theme-switcher-content">
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Theme</span>
+        <div class="theme-switcher-options">
+          <button class="theme-btn" data-theme="forest" title="Classic Forest" aria-label="Classic Forest theme"></button>
+          <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
+          <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
+          <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
+        </div>
+      </div>
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Animations</span>
+        <div class="animation-segment" role="radiogroup" aria-label="Animation style">
+          <button class="animation-btn" type="button" data-animation="smooth" role="radio" aria-label="Smooth animations">Smooth</button>
+          <button class="animation-btn" type="button" data-animation="epic" role="radio" aria-label="Epic animations">Epic</button>
+        </div>
+      </div>
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Blood FX</span>
+        <div class="fx-segment" role="radiogroup" aria-label="Blood effect toggle">
+          <button class="fx-btn" type="button" data-bloodfx="off" role="radio" aria-label="Disable blood effect">Off</button>
+          <button class="fx-btn" type="button" data-bloodfx="on" role="radio" aria-label="Enable blood effect">On</button>
+        </div>
+      </div>
     </div>
   `;
-  const savedAnimationStyle = localStorage.getItem(ANIMATION_STORAGE_KEY) ?? "smooth";
-  const animationsHtml = `
-      <div class="animation-switcher-options" id="animationOptions">
-        <span class="theme-switcher-label">Animations</span>
-        <button class="animation-btn" data-animation="smooth" title="Smooth" aria-label="Smooth animations"></button>
-        <button class="animation-btn" data-animation="epic" title="Epic" aria-label="Epic animations"></button>
-      </div>
-    `;
-  widget.innerHTML += animationsHtml;
   document.body.appendChild(widget);
   const toggleButton = widget.querySelector(".theme-toggle-btn");
   if (!toggleButton) {
@@ -3571,24 +3596,33 @@ function mountThemeSwitcher() {
     }
     const btn = e.target.closest(".theme-btn");
     if (btn?.dataset.theme) setTheme(btn.dataset.theme);
-  });
-  document.querySelectorAll(".animation-btn").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
-  });
-  document.addEventListener("click", (e) => {
     const animBtn = e.target.closest(".animation-btn");
     if (animBtn?.dataset.animation) {
       setAnimationStyle(animBtn.dataset.animation);
     }
+    const fxBtn = e.target.closest(".fx-btn");
+    if (fxBtn?.dataset.bloodfx) {
+      setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
+    }
+  });
+  document.querySelectorAll(".animation-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
+    btn.setAttribute("aria-checked", String(btn.dataset.animation === savedAnimationStyle));
+  });
+  document.querySelectorAll(".fx-btn").forEach((btn) => {
+    const isActive = btn.dataset.bloodfx === "on" === bloodFxEnabled;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
   });
 }
-var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, ANIMATION_STORAGE_KEY;
+var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
     THEME_STORAGE_KEY = "chess-theme";
     THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
     ANIMATION_STORAGE_KEY = "chess-animation-style";
+    BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
   }
 });
 
@@ -3773,6 +3807,8 @@ var require_analyze = __commonJS({
     var fullAnalysisInProgress = false;
     var focusMode = false;
     var animationStyle = localStorage.getItem("chess-animation-style") || "smooth";
+    var bloodFxEnabled = localStorage.getItem("chess-blood-fx") === "on";
+    var lastCheckFlashKey = null;
     var app = document.querySelector("#app");
     app.innerHTML = `
 <div class="analyze-shell">
@@ -3854,6 +3890,10 @@ var require_analyze = __commonJS({
     window.addEventListener("animationchange", (event) => {
       const customEvent = event;
       animationStyle = customEvent.detail.style;
+    });
+    window.addEventListener("bloodfxchange", (event) => {
+      const customEvent = event;
+      bloodFxEnabled = customEvent.detail.enabled;
     });
     var arrowLayer = q("#arrowLayer");
     var boardEl = q("#board");
@@ -4176,12 +4216,17 @@ var require_analyze = __commonJS({
         playSound("gameEndOrCheckmate");
       } else if (chess.isCheck()) {
         playSound("checkMove");
+        lastCheckFlashKey = `${cursor}:${chess.fen()}`;
+        triggerCheckFlash();
       } else if (move.flags.includes("k") || move.flags.includes("q")) {
         playSound("castle");
       } else if (move.captured) {
         playSound("capture");
       } else {
         playSound("move-self");
+      }
+      if (bloodFxEnabled && move.captured) {
+        spawnBloodSplatter(to, move.captured);
       }
       render();
       void analyzeLatestMove();
@@ -4313,8 +4358,14 @@ var require_analyze = __commonJS({
       } else if (chess.isCheck()) {
         text = `${chess.turn() === "w" ? "White" : "Black"} is in check!`;
         statusBar.classList.add("check");
+        const checkKey = `${cursor}:${chess.fen()}`;
+        if (lastCheckFlashKey !== checkKey) {
+          lastCheckFlashKey = checkKey;
+          triggerCheckFlash();
+        }
       } else {
         text = `${chess.turn() === "w" ? "White" : "Black"} to move.`;
+        lastCheckFlashKey = null;
       }
       statusBar.textContent = cursor < fenHistory.length - 1 ? `[Move ${cursor} of ${fenHistory.length - 1}] ${text}` : text;
     }
@@ -4677,6 +4728,80 @@ var require_analyze = __commonJS({
         x: col * 100 + 50,
         y: row * 100 + 50
       };
+    }
+    function triggerCheckFlash() {
+      const flash = document.createElement("div");
+      flash.className = "check-flash-overlay";
+      document.body.append(flash);
+      flash.addEventListener("animationend", () => flash.remove(), { once: true });
+    }
+    function spawnBloodSplatter(square, capturedPiece) {
+      const boardWrap = boardEl.parentElement;
+      if (!boardWrap) {
+        return;
+      }
+      const intensityByPiece = {
+        p: 1,
+        n: 1.28,
+        b: 1.32,
+        r: 1.5,
+        q: 2.05,
+        k: 1.75
+      };
+      const intensity = intensityByPiece[capturedPiece] ?? 1;
+      const center = squareCenter(square);
+      const splatter = document.createElement("div");
+      splatter.className = "capture-splatter";
+      splatter.style.left = `${center.x / 800 * 100}%`;
+      splatter.style.top = `${center.y / 800 * 100}%`;
+      splatter.style.setProperty("--intensity", String(intensity));
+      const dropCount = Math.max(8, Math.floor((10 + Math.random() * 8) * Math.min(intensity, 1.5)));
+      for (let index = 0; index < dropCount; index += 1) {
+        const drop = document.createElement("span");
+        drop.className = "capture-drop";
+        const red = 110 + Math.floor(Math.random() * 145);
+        const green = 0 + Math.floor(Math.random() * 32);
+        const blue = 0 + Math.floor(Math.random() * 18);
+        const opacity = 0.82 + Math.random() * 0.18;
+        const angle = Math.random() * Math.PI * 2;
+        const distance = (24 + Math.random() * 48) * (0.92 + intensity * 0.22);
+        const size = (6.8 + Math.random() * 12.8) * (0.92 + intensity * 0.18);
+        const smear = 0.88 + Math.random() * (0.85 + intensity * 0.18);
+        const stretch = 0.88 + Math.random() * 1.2;
+        const trail = 0.92 + Math.random() * 1.2;
+        drop.style.setProperty("--dx", `${Math.cos(angle) * distance}px`);
+        drop.style.setProperty("--dy", `${Math.sin(angle) * distance}px`);
+        drop.style.setProperty("--size", `${size}px`);
+        drop.style.setProperty("--delay", `${Math.random() * 120}ms`);
+        drop.style.setProperty("--smear", `${smear}`);
+        drop.style.setProperty("--stretch", `${stretch}`);
+        drop.style.setProperty("--trail", `${trail}`);
+        drop.style.setProperty("--blood-color", `rgba(${red},${green},${blue},${opacity})`);
+        splatter.append(drop);
+      }
+      boardWrap.append(splatter);
+      if (Math.random() > 0.52 && document.querySelectorAll(".capture-blood-pool").length < 3) {
+        const pool = document.createElement("div");
+        pool.className = "capture-blood-pool";
+        pool.style.left = splatter.style.left;
+        pool.style.top = splatter.style.top;
+        const poolSize = (32 + Math.random() * 32) * (1.1 + intensity * 0.18);
+        pool.style.width = `${poolSize}px`;
+        pool.style.height = `${poolSize * (0.82 + Math.random() * 0.18)}px`;
+        pool.style.setProperty("--pool-color", `rgba(${110 + Math.floor(Math.random() * 145)},0,0,${0.22 + Math.random() * 0.18})`);
+        pool.style.setProperty("--pool-blur", `${1.8 + Math.random() * 1.8}px`);
+        pool.style.setProperty("--pool-rotate", `${Math.random() * 360}deg`);
+        pool.style.transform = `translate(-50%, -50%) rotate(${Math.random() * 360}deg)`;
+        boardWrap.append(pool);
+        setTimeout(() => {
+          pool.classList.add("capture-blood-pool-fade");
+          setTimeout(() => pool.remove(), 2200 + Math.random() * 1200);
+        }, 2200 + Math.random() * 1200);
+      }
+      setTimeout(() => {
+        splatter.classList.add("capture-splatter-fade");
+        setTimeout(() => splatter.remove(), 3200 + Math.random() * 1800);
+      }, 3200 + Math.random() * 1800);
     }
     function buildArrowPath(start, end, shaftWidth = 10, headLength = 46, headWidth = 34) {
       const dx = end.x - start.x;

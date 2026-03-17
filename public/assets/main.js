@@ -7117,48 +7117,73 @@ function setTheme(theme) {
 function setAnimationStyle(style) {
   localStorage.setItem(ANIMATION_STORAGE_KEY, style);
   document.querySelectorAll(".animation-btn").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.animation === style);
+    const isActive = btn.dataset.animation === style;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
   });
   const event = new CustomEvent("animationchange", { detail: { style } });
+  window.dispatchEvent(event);
+}
+function setBloodFxEnabled(enabled) {
+  localStorage.setItem(BLOOD_FX_STORAGE_KEY, enabled ? "on" : "off");
+  document.querySelectorAll(".fx-btn").forEach((btn) => {
+    const isActive = btn.dataset.bloodfx === "on" === enabled;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  const event = new CustomEvent("bloodfxchange", { detail: { enabled } });
   window.dispatchEvent(event);
 }
 function setPanelCollapsed(widget, toggleButton, collapsed) {
   widget.classList.toggle("is-collapsed", collapsed);
   toggleButton.setAttribute("aria-expanded", String(!collapsed));
   toggleButton.textContent = collapsed ? "\u25C0" : "\u25B6";
-  toggleButton.title = collapsed ? "Show themes" : "Hide themes";
+  toggleButton.title = collapsed ? "Show customization" : "Hide customization";
   localStorage.setItem(THEME_PANEL_COLLAPSED_KEY, collapsed ? "1" : "0");
 }
 function mountThemeSwitcher() {
   const themeRaw = localStorage.getItem(THEME_STORAGE_KEY);
   const savedTheme = themeRaw === "forest" || themeRaw === "purple" || themeRaw === "walnut" || themeRaw === "refined" ? themeRaw : "forest";
   const collapsedRaw = localStorage.getItem(THEME_PANEL_COLLAPSED_KEY);
+  const animationRaw = localStorage.getItem(ANIMATION_STORAGE_KEY);
+  const savedAnimationStyle = animationRaw === "epic" ? "epic" : "smooth";
+  const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
+  const bloodFxEnabled = bloodFxRaw === "on";
   const defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
   const initialCollapsed = collapsedRaw === null ? defaultCollapsed : collapsedRaw === "1";
   setTheme(savedTheme);
   const widget = document.createElement("div");
   widget.className = "theme-switcher";
   widget.setAttribute("role", "group");
-  widget.setAttribute("aria-label", "Choose theme");
+  widget.setAttribute("aria-label", "Theme and animation options");
   widget.innerHTML = `
     <button class="theme-toggle-btn" type="button" aria-label="Toggle theme selector" aria-expanded="true">\u25B6</button>
-    <div class="theme-switcher-options">
-      <span class="theme-switcher-label">Theme</span>
-      <button class="theme-btn" data-theme="forest" title="Classic Forest" aria-label="Classic Forest theme"></button>
-      <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
-      <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
-      <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
+    <div class="theme-switcher-content">
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Theme</span>
+        <div class="theme-switcher-options">
+          <button class="theme-btn" data-theme="forest" title="Classic Forest" aria-label="Classic Forest theme"></button>
+          <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
+          <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
+          <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
+        </div>
+      </div>
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Animations</span>
+        <div class="animation-segment" role="radiogroup" aria-label="Animation style">
+          <button class="animation-btn" type="button" data-animation="smooth" role="radio" aria-label="Smooth animations">Smooth</button>
+          <button class="animation-btn" type="button" data-animation="epic" role="radio" aria-label="Epic animations">Epic</button>
+        </div>
+      </div>
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Blood FX</span>
+        <div class="fx-segment" role="radiogroup" aria-label="Blood effect toggle">
+          <button class="fx-btn" type="button" data-bloodfx="off" role="radio" aria-label="Disable blood effect">Off</button>
+          <button class="fx-btn" type="button" data-bloodfx="on" role="radio" aria-label="Enable blood effect">On</button>
+        </div>
+      </div>
     </div>
   `;
-  const savedAnimationStyle = localStorage.getItem(ANIMATION_STORAGE_KEY) ?? "smooth";
-  const animationsHtml = `
-      <div class="animation-switcher-options" id="animationOptions">
-        <span class="theme-switcher-label">Animations</span>
-        <button class="animation-btn" data-animation="smooth" title="Smooth" aria-label="Smooth animations"></button>
-        <button class="animation-btn" data-animation="epic" title="Epic" aria-label="Epic animations"></button>
-      </div>
-    `;
-  widget.innerHTML += animationsHtml;
   document.body.appendChild(widget);
   const toggleButton = widget.querySelector(".theme-toggle-btn");
   if (!toggleButton) {
@@ -7174,24 +7199,33 @@ function mountThemeSwitcher() {
     }
     const btn = e.target.closest(".theme-btn");
     if (btn?.dataset.theme) setTheme(btn.dataset.theme);
-  });
-  document.querySelectorAll(".animation-btn").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
-  });
-  document.addEventListener("click", (e) => {
     const animBtn = e.target.closest(".animation-btn");
     if (animBtn?.dataset.animation) {
       setAnimationStyle(animBtn.dataset.animation);
     }
+    const fxBtn = e.target.closest(".fx-btn");
+    if (fxBtn?.dataset.bloodfx) {
+      setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
+    }
+  });
+  document.querySelectorAll(".animation-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
+    btn.setAttribute("aria-checked", String(btn.dataset.animation === savedAnimationStyle));
+  });
+  document.querySelectorAll(".fx-btn").forEach((btn) => {
+    const isActive = btn.dataset.bloodfx === "on" === bloodFxEnabled;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
   });
 }
-var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, ANIMATION_STORAGE_KEY;
+var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
     THEME_STORAGE_KEY = "chess-theme";
     THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
     ANIMATION_STORAGE_KEY = "chess-animation-style";
+    BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
   }
 });
 
@@ -7243,7 +7277,8 @@ var require_main = __commonJS({
       liveAnalysisSummary: "Live analysis disabled.",
       lastAnalyzedMoveKey: null,
       liveMoveGrades: {},
-      animationStyle: localStorage.getItem("chess-animation-style") || "smooth"
+      animationStyle: localStorage.getItem("chess-animation-style") || "smooth",
+      bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on"
     };
     var lastAnimatedMoveKey = null;
     var suppressAnimationForMove = null;
@@ -7552,6 +7587,14 @@ var require_main = __commonJS({
     var focusTimer = must("#focusTimer");
     var focusModeButton = must("#focusModeBtn");
     mountThemeSwitcher();
+    window.addEventListener("animationchange", (event) => {
+      const customEvent = event;
+      state.animationStyle = customEvent.detail.style;
+    });
+    window.addEventListener("bloodfxchange", (event) => {
+      const customEvent = event;
+      state.bloodFxEnabled = customEvent.detail.enabled;
+    });
     var joinRoomButton = must("#joinRoomButton");
     var copyLinkButton = must("#copyLinkButton");
     var leaveRoomButton = must("#leaveRoomButton");
@@ -7570,10 +7613,6 @@ var require_main = __commonJS({
         showToast("Enter a room code first.");
         return;
       }
-      window.addEventListener("animationchange", (event) => {
-        const customEvent = event;
-        state.animationStyle = customEvent.detail.style;
-      });
       if (!ROOM_ID_PATTERN.test(code)) {
         showToast("Room code must be exactly 4 digits.");
         return;
@@ -7854,6 +7893,7 @@ var require_main = __commonJS({
     });
     socket.on("room:state", (snapshot) => {
       const previousMoveCount = state.snapshot?.moveCount ?? 0;
+      const previousFen = chess.fen();
       state.snapshot = snapshot;
       if (!focusTimerStartMs || snapshot.moveCount < previousMoveCount) {
         focusTimerStartMs = Date.now();
@@ -7862,6 +7902,14 @@ var require_main = __commonJS({
       const isNewMove = _lastPlayedMoveCount !== -1 && snapshot.moveCount > _lastPlayedMoveCount;
       _lastPlayedMoveCount = snapshot.moveCount;
       if (isNewMove) playSoundForSnapshot(snapshot);
+      if (snapshot.check && isNewMove) {
+        triggerCheckFlash();
+      }
+      const capturedByCount = countFenPieces(snapshot.fen) < countFenPieces(previousFen);
+      if (state.bloodFxEnabled && isNewMove && capturedByCount && snapshot.lastMove) {
+        const capturedPiece = detectCapturedPiece(previousFen, snapshot.lastMove);
+        spawnBloodSplatter(snapshot.lastMove.to, capturedPiece ?? "p");
+      }
       if (snapshot.moveCount > previousMoveCount) {
         clearArrows();
       }
@@ -8116,6 +8164,78 @@ var require_main = __commonJS({
         x: col * 100 + 50,
         y: row * 100 + 50
       };
+    }
+    function countFenPieces(fen) {
+      const boardFen = fen.split(" ")[0] ?? "";
+      let count = 0;
+      for (const ch of boardFen) {
+        if (/[prnbqkPRNBQK]/.test(ch)) {
+          count += 1;
+        }
+      }
+      return count;
+    }
+    function detectCapturedPiece(previousFen, lastMove) {
+      const replay = new Chess(previousFen);
+      const promotionMatch = lastMove.san.match(/=([QRBN])/);
+      const promotion = promotionMatch?.[1]?.toLowerCase();
+      let move = null;
+      try {
+        move = replay.move({
+          from: lastMove.from,
+          to: lastMove.to,
+          promotion
+        });
+      } catch {
+        return null;
+      }
+      return move?.captured ?? null;
+    }
+    function triggerCheckFlash() {
+      const flash = document.createElement("div");
+      flash.className = "check-flash-overlay";
+      document.body.append(flash);
+      flash.addEventListener("animationend", () => flash.remove(), { once: true });
+    }
+    function spawnBloodSplatter(square, capturedPiece) {
+      const boardWrap = board.parentElement;
+      if (!boardWrap) {
+        return;
+      }
+      const intensityByPiece = {
+        p: 1,
+        n: 1.28,
+        b: 1.32,
+        r: 1.5,
+        q: 2.05,
+        k: 1.75
+      };
+      const intensity = intensityByPiece[capturedPiece] ?? 1;
+      const center = squareCenter(square);
+      const splatter = document.createElement("div");
+      splatter.className = "capture-splatter";
+      splatter.style.left = `${center.x / 800 * 100}%`;
+      splatter.style.top = `${center.y / 800 * 100}%`;
+      splatter.style.setProperty("--intensity", String(intensity));
+      const dropCount = Math.max(14, Math.floor((16 + Math.random() * 12) * intensity));
+      for (let index = 0; index < dropCount; index += 1) {
+        const drop = document.createElement("span");
+        drop.className = "capture-drop";
+        const angle = Math.random() * Math.PI * 2;
+        const distance = (24 + Math.random() * 58) * (0.88 + intensity * 0.28);
+        const size = (5.8 + Math.random() * 10.8) * (0.84 + intensity * 0.18);
+        const smear = 0.68 + Math.random() * (0.95 + intensity * 0.28);
+        const stretch = 0.68 + Math.random() * 1.4;
+        drop.style.setProperty("--dx", `${Math.cos(angle) * distance}px`);
+        drop.style.setProperty("--dy", `${Math.sin(angle) * distance}px`);
+        drop.style.setProperty("--size", `${size}px`);
+        drop.style.setProperty("--delay", `${Math.random() * 120}ms`);
+        drop.style.setProperty("--smear", `${smear}`);
+        drop.style.setProperty("--stretch", `${stretch}`);
+        splatter.append(drop);
+      }
+      boardWrap.append(splatter);
+      splatter.addEventListener("animationend", () => splatter.remove(), { once: true });
     }
     function toggleArrow(from, to) {
       const key = `${from}-${to}`;

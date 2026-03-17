@@ -1,4 +1,4 @@
-import { Chess, Square, Move } from "chess.js";
+import { Chess, Square, Move, PieceSymbol } from "chess.js";
 import { buildSquareList, isLightSquare, SquareName, BoardOrientation } from "../../engine";
 import "./analyze.css";
 import { mountThemeSwitcher } from "./theme";
@@ -223,6 +223,8 @@ let analysisInProgress = false;
 let fullAnalysisInProgress = false;
 let focusMode = false;
 let animationStyle: "smooth" | "epic" = (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth";
+let bloodFxEnabled = localStorage.getItem("chess-blood-fx") === "on";
+let lastCheckFlashKey: string | null = null;
 
 // ── Mount ──────────────────────────────────────────────────────────────────────
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -310,6 +312,11 @@ mountThemeSwitcher();
 window.addEventListener("animationchange", (event: Event) => {
   const customEvent = event as CustomEvent<{ style: "smooth" | "epic" }>;
   animationStyle = customEvent.detail.style;
+});
+
+window.addEventListener("bloodfxchange", (event: Event) => {
+  const customEvent = event as CustomEvent<{ enabled: boolean }>;
+  bloodFxEnabled = customEvent.detail.enabled;
 });
 
 // ── Element refs ───────────────────────────────────────────────────────────────
@@ -706,12 +713,17 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
     playSound("gameEndOrCheckmate");
   } else if (chess.isCheck()) {
     playSound("checkMove");
+    lastCheckFlashKey = `${cursor}:${chess.fen()}`;
+    triggerCheckFlash();
   } else if (move.flags.includes("k") || move.flags.includes("q")) {
     playSound("castle");
   } else if (move.captured) {
     playSound("capture");
   } else {
     playSound("move-self");
+  }
+  if (bloodFxEnabled && move.captured) {
+    spawnBloodSplatter(to, move.captured as PieceSymbol);
   }
   render();
   void analyzeLatestMove();
@@ -869,8 +881,14 @@ function renderStatus(): void {
   } else if (chess.isCheck()) {
     text = `${chess.turn() === "w" ? "White" : "Black"} is in check!`;
     statusBar.classList.add("check");
+    const checkKey = `${cursor}:${chess.fen()}`;
+    if (lastCheckFlashKey !== checkKey) {
+      lastCheckFlashKey = checkKey;
+      triggerCheckFlash();
+    }
   } else {
     text = `${chess.turn() === "w" ? "White" : "Black"} to move.`;
+    lastCheckFlashKey = null;
   }
 
   statusBar.textContent = cursor < fenHistory.length - 1
@@ -1311,6 +1329,91 @@ function squareCenter(square: Square): { x: number; y: number } {
     x: col * 100 + 50,
     y: row * 100 + 50,
   };
+}
+
+function triggerCheckFlash(): void {
+  const flash = document.createElement("div");
+  flash.className = "check-flash-overlay";
+  document.body.append(flash);
+  flash.addEventListener("animationend", () => flash.remove(), { once: true });
+}
+
+function spawnBloodSplatter(square: Square, capturedPiece: PieceSymbol): void {
+  const boardWrap = boardEl.parentElement as HTMLElement | null;
+  if (!boardWrap) {
+    return;
+  }
+
+  const intensityByPiece: Record<PieceSymbol, number> = {
+    p: 1,
+    n: 1.28,
+    b: 1.32,
+    r: 1.5,
+    q: 2.05,
+    k: 1.75,
+  };
+  const intensity = intensityByPiece[capturedPiece] ?? 1;
+
+  const center = squareCenter(square);
+  const splatter = document.createElement("div");
+  splatter.className = "capture-splatter";
+  splatter.style.left = `${(center.x / 800) * 100}%`;
+  splatter.style.top = `${(center.y / 800) * 100}%`;
+  splatter.style.setProperty("--intensity", String(intensity));
+
+  // Reduce drop count for performance, scale with intensity but cap
+  const dropCount = Math.max(8, Math.floor((10 + Math.random() * 8) * Math.min(intensity, 1.5)));
+  for (let index = 0; index < dropCount; index += 1) {
+    const drop = document.createElement("span");
+    drop.className = "capture-drop";
+    // Randomize color for terror effect
+    const red = 110 + Math.floor(Math.random() * 145);
+    const green = 0 + Math.floor(Math.random() * 32);
+    const blue = 0 + Math.floor(Math.random() * 18);
+    const opacity = 0.82 + Math.random() * 0.18;
+    const angle = Math.random() * Math.PI * 2;
+    const distance = (24 + Math.random() * 48) * (0.92 + intensity * 0.22);
+    const size = (6.8 + Math.random() * 12.8) * (0.92 + intensity * 0.18);
+    const smear = 0.88 + Math.random() * (0.85 + intensity * 0.18);
+    const stretch = 0.88 + Math.random() * 1.2;
+    const trail = 0.92 + Math.random() * 1.2;
+    drop.style.setProperty("--dx", `${Math.cos(angle) * distance}px`);
+    drop.style.setProperty("--dy", `${Math.sin(angle) * distance}px`);
+    drop.style.setProperty("--size", `${size}px`);
+    drop.style.setProperty("--delay", `${Math.random() * 120}ms`);
+    drop.style.setProperty("--smear", `${smear}`);
+    drop.style.setProperty("--stretch", `${stretch}`);
+    drop.style.setProperty("--trail", `${trail}`);
+    drop.style.setProperty("--blood-color", `rgba(${red},${green},${blue},${opacity})`);
+    splatter.append(drop);
+  }
+
+  boardWrap.append(splatter);
+  // Add a blood pool effect at the capture location
+  // Limit simultaneous pools for performance
+  if (Math.random() > 0.52 && document.querySelectorAll('.capture-blood-pool').length < 3) {
+    const pool = document.createElement("div");
+    pool.className = "capture-blood-pool";
+    pool.style.left = splatter.style.left;
+    pool.style.top = splatter.style.top;
+    const poolSize = (32 + Math.random() * 32) * (1.1 + intensity * 0.18);
+    pool.style.width = `${poolSize}px`;
+    pool.style.height = `${poolSize * (0.82 + Math.random() * 0.18)}px`;
+    pool.style.setProperty("--pool-color", `rgba(${110 + Math.floor(Math.random() * 145)},0,0,${0.22 + Math.random() * 0.18})`);
+    pool.style.setProperty("--pool-blur", `${1.8 + Math.random() * 1.8}px`);
+    pool.style.setProperty("--pool-rotate", `${Math.random() * 360}deg`);
+    pool.style.transform = `translate(-50%, -50%) rotate(${Math.random() * 360}deg)`;
+    boardWrap.append(pool);
+    setTimeout(() => {
+      pool.classList.add("capture-blood-pool-fade");
+      setTimeout(() => pool.remove(), 2200 + Math.random() * 1200);
+    }, 2200 + Math.random() * 1200);
+  }
+  // Make splatter last longer
+  setTimeout(() => {
+    splatter.classList.add("capture-splatter-fade");
+    setTimeout(() => splatter.remove(), 3200 + Math.random() * 1800);
+  }, 3200 + Math.random() * 1800);
 }
 
 function buildArrowPath(
