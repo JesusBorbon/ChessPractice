@@ -469,6 +469,7 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
   moveHistory.push(move);
   fenHistory.push(chess.fen());
   cursor = fenHistory.length - 1;
+  clearArrows();
   clearSelection();
   // Play sound based on outcome
   if (chess.isCheckmate() || chess.isStalemate() || chess.isDraw()) {
@@ -816,6 +817,60 @@ function squareCenter(square: Square): { x: number; y: number } {
   };
 }
 
+function buildArrowPath(
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  shaftWidth = 10,
+  headLength = 46,
+  headWidth = 34,
+): string {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 1) {
+    return "";
+  }
+
+  const ux = dx / length;
+  const uy = dy / length;
+  const px = -uy;
+  const py = ux;
+
+  const safeHeadLength = Math.min(headLength, Math.max(18, length * 0.45));
+  const shaftHalf = shaftWidth / 2;
+  const headHalf = headWidth / 2;
+
+  const baseX = end.x - ux * safeHeadLength;
+  const baseY = end.y - uy * safeHeadLength;
+
+  const tailLeftX = start.x + px * shaftHalf;
+  const tailLeftY = start.y + py * shaftHalf;
+  const tailRightX = start.x - px * shaftHalf;
+  const tailRightY = start.y - py * shaftHalf;
+
+  const baseLeftX = baseX + px * shaftHalf;
+  const baseLeftY = baseY + py * shaftHalf;
+  const baseRightX = baseX - px * shaftHalf;
+  const baseRightY = baseY - py * shaftHalf;
+
+  const wingLeftX = baseX + px * headHalf;
+  const wingLeftY = baseY + py * headHalf;
+  const wingRightX = baseX - px * headHalf;
+  const wingRightY = baseY - py * headHalf;
+
+  return [
+    `M ${tailLeftX.toFixed(2)} ${tailLeftY.toFixed(2)}`,
+    `L ${baseLeftX.toFixed(2)} ${baseLeftY.toFixed(2)}`,
+    `L ${wingLeftX.toFixed(2)} ${wingLeftY.toFixed(2)}`,
+    `L ${end.x.toFixed(2)} ${end.y.toFixed(2)}`,
+    `L ${wingRightX.toFixed(2)} ${wingRightY.toFixed(2)}`,
+    `L ${baseRightX.toFixed(2)} ${baseRightY.toFixed(2)}`,
+    `L ${tailRightX.toFixed(2)} ${tailRightY.toFixed(2)}`,
+    `A ${shaftHalf.toFixed(2)} ${shaftHalf.toFixed(2)} 0 0 0 ${tailLeftX.toFixed(2)} ${tailLeftY.toFixed(2)}`,
+    "Z",
+  ].join(" ");
+}
+
 function boardPointFromClient(clientX: number, clientY: number): { x: number; y: number } {
   const rect = boardEl.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) {
@@ -834,20 +889,16 @@ function boardPointFromClient(clientX: number, clientY: number): { x: number; y:
 }
 
 function renderArrows(): void {
-  const defs = `
-    <defs>
-      <marker id="arrow-head-red" viewBox="0 0 10 10" refX="8.2" refY="5" markerWidth="6.35" markerHeight="6.35" orient="auto-start-reverse">
-        <path d="M 0 0 L 10 5 L 0 10 L 2.4 5 Z" fill="#db3434"></path>
-      </marker>
-    </defs>
-  `;
-
   const arrows = [...arrowAnnotations]
     .map((entry) => {
       const [from, to] = entry.split("-") as [Square, Square];
       const start = squareCenter(from);
       const end = squareCenter(to);
-      return `<line class="analyze-arrow" x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="#db3434" stroke-width="12" stroke-linecap="round" marker-end="url(#arrow-head-red)"/>`;
+      const pathData = buildArrowPath(start, end, 10, 46, 38);
+      if (!pathData) {
+        return "";
+      }
+      return `<path class="analyze-arrow" d="${pathData}" fill="rgba(219, 52, 52, 0.72)"/>`;
     })
     .join("");
 
@@ -855,11 +906,15 @@ function renderArrows(): void {
     ? (() => {
         const start = squareCenter(arrowDragFrom);
         const end = arrowDragPointer;
-        return `<line class="analyze-arrow analyze-arrow-preview" x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="#eb4c4c" stroke-width="12" stroke-linecap="round" marker-end="url(#arrow-head-red)"/>`;
+        const pathData = buildArrowPath(start, end, 10, 46, 38);
+        if (!pathData) {
+          return "";
+        }
+        return `<path class="analyze-arrow analyze-arrow-preview" d="${pathData}" fill="rgba(219, 52, 52, 0.72)"/>`;
       })()
     : "";
 
-  arrowLayer.innerHTML = `${defs}${arrows}${previewArrow}`;
+  arrowLayer.innerHTML = `${arrows}${previewArrow}`;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
