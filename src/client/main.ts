@@ -57,12 +57,12 @@ type AppState = {
 };
 
 const PIECES: Record<`${PlayerRole}${PieceSymbol}`, string> = {
-  wp: "♙",
-  wn: "♘",
-  wb: "♗",
-  wr: "♖",
-  wq: "♕",
-  wk: "♔",
+  wp: "♟",
+  wn: "♞",
+  wb: "♝",
+  wr: "♜",
+  wq: "♛",
+  wk: "♚",
   bp: "♟",
   bn: "♞",
   bb: "♝",

@@ -5,7 +5,7 @@ import "./analyze.css";
 type PromotionPiece = "q" | "r" | "b" | "n";
 
 const PIECES: Record<string, string> = {
-  wp: "♙", wn: "♘", wb: "♗", wr: "♖", wq: "♕", wk: "♔",
+  wp: "♟", wn: "♞", wb: "♝", wr: "♜", wq: "♛", wk: "♚",
   bp: "♟", bn: "♞", bb: "♝", br: "♜", bq: "♛", bk: "♚",
 };
 
@@ -16,9 +16,11 @@ let orientation: BoardOrientation = "w";
 let selectedSquare: Square | null = null;
 let legalTargets: Square[] = [];
 let pendingPromotion: { from: Square; to: Square } | null = null;
-let suppressClickOnce = false;
+let suppressClickSquare: Square | null = null;
+let suppressClickUntil = 0;
 // navigation: history[0] = starting FEN, history[i] = FEN after move i
 let fenHistory: string[] = [chess.fen()];
+let moveHistory: Move[] = [];
 let cursor = 0; // which FEN we're currently viewing
 
 // ── Mount ──────────────────────────────────────────────────────────────────────
@@ -114,6 +116,7 @@ const navLast    = q<HTMLButtonElement>("#navLast");
 q<HTMLButtonElement>("#resetBtn").addEventListener("click", () => {
   chess.reset();
   fenHistory = [chess.fen()];
+  moveHistory = [];
   cursor = 0;
   clearSelection();
   render();
@@ -132,6 +135,7 @@ q<HTMLButtonElement>("#undoBtn").addEventListener("click", () => {
   }
   if (fenHistory.length <= 1) return;
   fenHistory.pop();
+  moveHistory.pop();
   cursor = fenHistory.length - 1;
   chess.load(fenHistory[cursor]!);
   clearSelection();
@@ -153,6 +157,7 @@ q<HTMLButtonElement>("#loadFenBtn").addEventListener("click", () => {
   try {
     chess.load(raw.trim());
     fenHistory = [chess.fen()];
+    moveHistory = [];
     cursor = 0;
     clearSelection();
     render();
@@ -179,13 +184,20 @@ function goTo(index: number): void {
 
 // Board clicks
 boardEl.addEventListener("click", (e) => {
-  if (suppressClickOnce) {
-    suppressClickOnce = false;
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(".square");
+  const sq  = btn?.dataset.square as Square | undefined;
+  if (
+    sq &&
+    suppressClickSquare === sq &&
+    performance.now() <= suppressClickUntil
+  ) {
+    suppressClickSquare = null;
+    suppressClickUntil = 0;
     return;
   }
 
-  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(".square");
-  const sq  = btn?.dataset.square as Square | undefined;
+  suppressClickSquare = null;
+  suppressClickUntil = 0;
   if (sq) onSquareClick(sq);
 });
 
@@ -252,7 +264,6 @@ boardEl.addEventListener("pointermove", (event) => {
 
 function endPointerDrag(event: PointerEvent, commit: boolean): void {
   if (!ptrDragFrom) return;
-  const fromSquare = ptrDragFrom;
   const wasDrag = ptrDragMoved;
   ptrDragFrom = null;
   ptrDragMoved = false;
@@ -260,17 +271,25 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
   ptrDragNode = null;
   boardEl.querySelector<HTMLElement>(".square.dragging")?.classList.remove("dragging");
 
-  if (!wasDrag) return;
+  if (!commit) return;
 
-  suppressClickOnce = true;
+  const el = document.elementFromPoint(event.clientX, event.clientY);
+  const squareButton = el?.closest<HTMLButtonElement>(".square");
+  const targetSquare = squareButton?.dataset.square as Square | undefined;
 
-  if (commit) {
-    const el = document.elementFromPoint(event.clientX, event.clientY);
-    const squareButton = el?.closest<HTMLButtonElement>(".square");
-    const targetSquare = squareButton?.dataset.square as Square | undefined;
-    if (targetSquare && targetSquare !== fromSquare) {
-      tryMoveFromTo(fromSquare, targetSquare);
-    }
+  if (!wasDrag) {
+    if (!targetSquare) return;
+    // Handle tap/click here because pointer capture can swallow the native click target.
+    suppressClickSquare = targetSquare;
+    suppressClickUntil = performance.now() + 250;
+    onSquareClick(targetSquare);
+    return;
+  }
+
+  if (targetSquare) {
+    suppressClickSquare = targetSquare;
+    suppressClickUntil = performance.now() + 250;
+    onSquareClick(targetSquare);
   }
 
   clearSelection();
@@ -348,6 +367,8 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
   if (!move) return;
   // Truncate any "future" history if we somehow branched (guard, normally not needed)
   fenHistory = fenHistory.slice(0, cursor + 1);
+  moveHistory = moveHistory.slice(0, cursor);
+  moveHistory.push(move);
   fenHistory.push(chess.fen());
   cursor = fenHistory.length - 1;
   render();
@@ -478,19 +499,7 @@ function renderSide(): void {
 }
 
 function renderMoveList(): void {
-  // Build a temporary chess to replay all moves and collect SANs
-  const temp = new Chess();
-  const sans: string[] = [];
-  for (let i = 1; i < fenHistory.length; i++) {
-    const prev = new Chess(fenHistory[i - 1]!);
-    const cur  = new Chess(fenHistory[i]!);
-    // Get the SAN of the move that led to fenHistory[i]
-    // We do it by finding the move in verbose history of cur
-    const history = cur.history({ verbose: true });
-    const san = history.at(-1)?.san ?? "—";
-    sans.push(san);
-    void temp; void prev;
-  }
+  const sans = moveHistory.map((move) => move.san ?? "—");
 
   if (sans.length === 0) {
     moveList.innerHTML = '<div class="empty-state">No moves yet.</div>';
@@ -527,10 +536,8 @@ function renderNav(): void {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function getLastMove(): Move | undefined {
-  // Reconstruct last move from previous FEN
   if (cursor === 0) return undefined;
-  const cur = new Chess(fenHistory[cursor]!);
-  return cur.history({ verbose: true }).at(-1);
+  return moveHistory[cursor - 1];
 }
 
 function q<T extends Element>(sel: string): T {

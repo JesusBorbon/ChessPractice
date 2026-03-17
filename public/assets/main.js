@@ -7110,12 +7110,12 @@ var require_main = __commonJS({
     init_engine();
     init_styles();
     var PIECES = {
-      wp: "\u2659",
-      wn: "\u2658",
-      wb: "\u2657",
-      wr: "\u2656",
-      wq: "\u2655",
-      wk: "\u2654",
+      wp: "\u265F",
+      wn: "\u265E",
+      wb: "\u265D",
+      wr: "\u265C",
+      wq: "\u265B",
+      wk: "\u265A",
       bp: "\u265F",
       bn: "\u265E",
       bb: "\u265D",

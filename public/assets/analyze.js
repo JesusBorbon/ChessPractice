@@ -3506,12 +3506,12 @@ var require_analyze = __commonJS({
     init_engine();
     init_analyze();
     var PIECES = {
-      wp: "\u2659",
-      wn: "\u2658",
-      wb: "\u2657",
-      wr: "\u2656",
-      wq: "\u2655",
-      wk: "\u2654",
+      wp: "\u265F",
+      wn: "\u265E",
+      wb: "\u265D",
+      wr: "\u265C",
+      wq: "\u265B",
+      wk: "\u265A",
       bp: "\u265F",
       bn: "\u265E",
       bb: "\u265D",
@@ -3524,8 +3524,10 @@ var require_analyze = __commonJS({
     var selectedSquare = null;
     var legalTargets = [];
     var pendingPromotion = null;
-    var suppressClickOnce = false;
+    var suppressClickSquare = null;
+    var suppressClickUntil = 0;
     var fenHistory = [chess.fen()];
+    var moveHistory = [];
     var cursor = 0;
     var app = document.querySelector("#app");
     app.innerHTML = `
@@ -3614,6 +3616,7 @@ var require_analyze = __commonJS({
     q("#resetBtn").addEventListener("click", () => {
       chess.reset();
       fenHistory = [chess.fen()];
+      moveHistory = [];
       cursor = 0;
       clearSelection();
       render();
@@ -3629,6 +3632,7 @@ var require_analyze = __commonJS({
       }
       if (fenHistory.length <= 1) return;
       fenHistory.pop();
+      moveHistory.pop();
       cursor = fenHistory.length - 1;
       chess.load(fenHistory[cursor]);
       clearSelection();
@@ -3648,6 +3652,7 @@ var require_analyze = __commonJS({
       try {
         chess.load(raw.trim());
         fenHistory = [chess.fen()];
+        moveHistory = [];
         cursor = 0;
         clearSelection();
         render();
@@ -3669,12 +3674,15 @@ var require_analyze = __commonJS({
       render();
     }
     boardEl.addEventListener("click", (e) => {
-      if (suppressClickOnce) {
-        suppressClickOnce = false;
-        return;
-      }
       const btn = e.target.closest(".square");
       const sq = btn?.dataset.square;
+      if (sq && suppressClickSquare === sq && performance.now() <= suppressClickUntil) {
+        suppressClickSquare = null;
+        suppressClickUntil = 0;
+        return;
+      }
+      suppressClickSquare = null;
+      suppressClickUntil = 0;
       if (sq) onSquareClick(sq);
     });
     var ptrDragFrom = null;
@@ -3732,22 +3740,27 @@ var require_analyze = __commonJS({
     });
     function endPointerDrag(event, commit) {
       if (!ptrDragFrom) return;
-      const fromSquare = ptrDragFrom;
       const wasDrag = ptrDragMoved;
       ptrDragFrom = null;
       ptrDragMoved = false;
       ptrDragNode?.remove();
       ptrDragNode = null;
       boardEl.querySelector(".square.dragging")?.classList.remove("dragging");
-      if (!wasDrag) return;
-      suppressClickOnce = true;
-      if (commit) {
-        const el = document.elementFromPoint(event.clientX, event.clientY);
-        const squareButton = el?.closest(".square");
-        const targetSquare = squareButton?.dataset.square;
-        if (targetSquare && targetSquare !== fromSquare) {
-          tryMoveFromTo(fromSquare, targetSquare);
-        }
+      if (!commit) return;
+      const el = document.elementFromPoint(event.clientX, event.clientY);
+      const squareButton = el?.closest(".square");
+      const targetSquare = squareButton?.dataset.square;
+      if (!wasDrag) {
+        if (!targetSquare) return;
+        suppressClickSquare = targetSquare;
+        suppressClickUntil = performance.now() + 250;
+        onSquareClick(targetSquare);
+        return;
+      }
+      if (targetSquare) {
+        suppressClickSquare = targetSquare;
+        suppressClickUntil = performance.now() + 250;
+        onSquareClick(targetSquare);
       }
       clearSelection();
       renderBoard();
@@ -3802,6 +3815,8 @@ var require_analyze = __commonJS({
       const move = chess.move({ from, to, promotion });
       if (!move) return;
       fenHistory = fenHistory.slice(0, cursor + 1);
+      moveHistory = moveHistory.slice(0, cursor);
+      moveHistory.push(move);
       fenHistory.push(chess.fen());
       cursor = fenHistory.length - 1;
       render();
@@ -3906,17 +3921,7 @@ var require_analyze = __commonJS({
       renderMoveList();
     }
     function renderMoveList() {
-      const temp = new Chess();
-      const sans = [];
-      for (let i = 1; i < fenHistory.length; i++) {
-        const prev = new Chess(fenHistory[i - 1]);
-        const cur = new Chess(fenHistory[i]);
-        const history = cur.history({ verbose: true });
-        const san = history.at(-1)?.san ?? "\u2014";
-        sans.push(san);
-        void temp;
-        void prev;
-      }
+      const sans = moveHistory.map((move) => move.san ?? "\u2014");
       if (sans.length === 0) {
         moveList.innerHTML = '<div class="empty-state">No moves yet.</div>';
         return;
@@ -3947,8 +3952,7 @@ var require_analyze = __commonJS({
     }
     function getLastMove() {
       if (cursor === 0) return void 0;
-      const cur = new Chess(fenHistory[cursor]);
-      return cur.history({ verbose: true }).at(-1);
+      return moveHistory[cursor - 1];
     }
     function q(sel) {
       const el = document.querySelector(sel);
