@@ -836,8 +836,8 @@ function boardPointFromClient(clientX: number, clientY: number): { x: number; y:
 function renderArrows(): void {
   const defs = `
     <defs>
-      <marker id="arrow-head-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
-        <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(219, 52, 52, 0.95)"></path>
+      <marker id="arrow-head-red" viewBox="0 0 10 10" refX="8.2" refY="5" markerWidth="6.35" markerHeight="6.35" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 L 2.4 5 Z" fill="#db3434"></path>
       </marker>
     </defs>
   `;
@@ -847,7 +847,7 @@ function renderArrows(): void {
       const [from, to] = entry.split("-") as [Square, Square];
       const start = squareCenter(from);
       const end = squareCenter(to);
-      return `<line class="analyze-arrow" x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="rgba(219, 52, 52, 0.88)" stroke-width="12" stroke-linecap="round" marker-end="url(#arrow-head-red)"/>`;
+      return `<line class="analyze-arrow" x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="#db3434" stroke-width="12" stroke-linecap="round" marker-end="url(#arrow-head-red)"/>`;
     })
     .join("");
 
@@ -855,7 +855,7 @@ function renderArrows(): void {
     ? (() => {
         const start = squareCenter(arrowDragFrom);
         const end = arrowDragPointer;
-        return `<line class="analyze-arrow analyze-arrow-preview" x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="rgba(235, 76, 76, 0.92)" stroke-width="12" stroke-linecap="round" marker-end="url(#arrow-head-red)"/>`;
+        return `<line class="analyze-arrow analyze-arrow-preview" x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="#eb4c4c" stroke-width="12" stroke-linecap="round" marker-end="url(#arrow-head-red)"/>`;
       })()
     : "";
 
