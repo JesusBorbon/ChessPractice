@@ -3708,18 +3708,18 @@ var require_analyze = __commonJS({
       });
     }
     var PIECES = {
-      wp: "\u265F",
-      wn: "\u265E",
-      wb: "\u265D",
-      wr: "\u265C",
-      wq: "\u265B",
-      wk: "\u265A",
-      bp: "\u265F",
-      bn: "\u265E",
-      bb: "\u265D",
-      br: "\u265C",
-      bq: "\u265B",
-      bk: "\u265A"
+      wp: "/pieces/wP.svg",
+      wn: "/pieces/wN.svg",
+      wb: "/pieces/wB.svg",
+      wr: "/pieces/wR.svg",
+      wq: "/pieces/wQ.svg",
+      wk: "/pieces/wK.svg",
+      bp: "/pieces/bP.svg",
+      bn: "/pieces/bN.svg",
+      bb: "/pieces/bB.svg",
+      br: "/pieces/bR.svg",
+      bq: "/pieces/bQ.svg",
+      bk: "/pieces/bK.svg"
     };
     var chess = new Chess();
     var orientation = "w";
@@ -3997,11 +3997,14 @@ var require_analyze = __commonJS({
         const piece = btn?.querySelector(".piece");
         if (piece && btn) {
           const cs = window.getComputedStyle(piece);
+          const pieceRect = piece.getBoundingClientRect();
           ptrDragNode = piece.cloneNode(true);
           Object.assign(ptrDragNode.style, {
             position: "fixed",
             pointerEvents: "none",
             zIndex: "9999",
+            width: `${pieceRect.width}px`,
+            height: `${pieceRect.height}px`,
             margin: "0",
             lineHeight: "1",
             fontSize: cs.fontSize,
@@ -4009,7 +4012,6 @@ var require_analyze = __commonJS({
             color: cs.color,
             textShadow: cs.textShadow,
             filter: cs.filter,
-            transform: "scale(1.5)",
             transformOrigin: "center center",
             transition: "none"
           });
@@ -4228,7 +4230,12 @@ var require_analyze = __commonJS({
         if (piece) {
           const span = document.createElement("span");
           span.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
-          span.textContent = PIECES[`${piece.color}${piece.type}`] ?? "";
+          const pieceImage = document.createElement("img");
+          pieceImage.className = "piece-image";
+          pieceImage.src = PIECES[`${piece.color}${piece.type}`] ?? "";
+          pieceImage.alt = `${piece.color === "w" ? "White" : "Black"} ${piece.type}`;
+          pieceImage.draggable = false;
+          span.append(pieceImage);
           btn.append(span);
           if (selectedMoveEval && selectedMoveTo === sq) {
             const marker = document.createElement("span");
@@ -4385,11 +4392,14 @@ var require_analyze = __commonJS({
       const deltaX = startX - endX;
       const deltaY = startY - endY;
       const computed = window.getComputedStyle(destinationPiece);
+      const pieceRect = destinationPiece.getBoundingClientRect();
       const ghostPiece = destinationPiece.cloneNode(true);
       Object.assign(ghostPiece.style, {
         position: "absolute",
         left: `${endX}px`,
         top: `${endY}px`,
+        width: `${pieceRect.width}px`,
+        height: `${pieceRect.height}px`,
         transform: "translate3d(-50%, -50%, 0)",
         margin: "0",
         zIndex: "9999",
@@ -4660,30 +4670,26 @@ var require_analyze = __commonJS({
       const beforeMoverCp = before.cp;
       const afterMoverCp = -after.cp;
       const cpl = Math.max(0, Math.round(beforeMoverCp - afterMoverCp));
-      const matchesBest = before.bestMove === playedMove;
-      const materialDrop = materialFromPerspective(afterFen, move.color) - materialFromPerspective(beforeFen, move.color);
-      const sacrificed = materialDrop <= -200;
-      let category;
-      if (matchesBest && sacrificed && cpl <= 30) {
-        category = "brilliant";
-      } else if (matchesBest && cpl <= 20 && (move.captured || move.san.includes("+") || move.promotion)) {
-        category = "great";
-      } else if (cpl <= 20) {
-        category = "excellent";
-      } else if (cpl <= 70) {
-        category = "good";
-      } else if (cpl <= 140) {
-        category = "inaccuracy";
-      } else if (cpl <= 260) {
-        category = "mistake";
-      } else {
-        category = "blunder";
-      }
-      const note = buildMoveNote(category, cpl, before, playedMove, move);
+      const matchesBest = before.bestMove.startsWith(playedMove);
+      const moverColor = beforeFen.split(" ")[1] || "w";
+      const materialBefore = materialFromPerspective(beforeFen, moverColor);
+      const materialAfter = materialFromPerspective(afterFen, moverColor);
+      const materialDelta = materialAfter - materialBefore;
+      const evalGain = Math.round(afterMoverCp - beforeMoverCp);
+      const previousOpponentCategory = ply > 1 ? analysisByPly[ply - 1]?.category : void 0;
+      const quality = classifyMoveQuality({
+        cpl,
+        matchesBest,
+        materialDelta,
+        evalGain,
+        isCapture: Boolean(move.captured),
+        previousOpponentCategory
+      });
+      const note = buildMoveNote(quality.category, cpl, before, playedMove, move, materialDelta, evalGain);
       return {
         ply,
-        label: CATEGORY_LABELS[category],
-        category,
+        label: quality.label,
+        category: quality.category,
         cpl,
         playedMove,
         bestMove: before.bestMove,
@@ -4691,6 +4697,39 @@ var require_analyze = __commonJS({
         beforeCp: Math.round(beforeMoverCp),
         afterCp: Math.round(afterMoverCp)
       };
+    }
+    function classifyMoveQuality(input) {
+      const {
+        cpl,
+        matchesBest,
+        materialDelta,
+        evalGain,
+        isCapture,
+        previousOpponentCategory
+      } = input;
+      const opponentBlundered = previousOpponentCategory === "mistake" || previousOpponentCategory === "blunder";
+      const isSacrifice = materialDelta <= -100;
+      const brilliantSacrifice = isSacrifice && evalGain >= 80 && cpl <= 35;
+      const greatPunish = matchesBest && cpl <= 22 && opponentBlundered && (isCapture || materialDelta >= 100 || evalGain >= 110);
+      if (brilliantSacrifice) {
+        return { category: "brilliant", label: CATEGORY_LABELS.brilliant };
+      }
+      if (greatPunish) {
+        return { category: "great", label: CATEGORY_LABELS.great };
+      }
+      if (cpl <= 45) {
+        return { category: "excellent", label: CATEGORY_LABELS.excellent };
+      }
+      if (cpl <= 90) {
+        return { category: "good", label: CATEGORY_LABELS.good };
+      }
+      if (cpl <= 160) {
+        return { category: "inaccuracy", label: CATEGORY_LABELS.inaccuracy };
+      }
+      if (cpl <= 280) {
+        return { category: "mistake", label: CATEGORY_LABELS.mistake };
+      }
+      return { category: "blunder", label: CATEGORY_LABELS.blunder };
     }
     function toUci(move) {
       const promotion = move.promotion ?? "";
@@ -4724,12 +4763,12 @@ var require_analyze = __commonJS({
       const signed = pawns >= 0 ? `+${pawns.toFixed(2)}` : pawns.toFixed(2);
       return signed;
     }
-    function buildMoveNote(category, cpl, before, playedMove, move) {
+    function buildMoveNote(category, cpl, before, playedMove, move, materialDelta, evalGain) {
       if (category === "brilliant") {
-        return `Sacrifice-based top engine move (${playedMove}).`;
+        return `Intentional sacrifice (${materialDelta}) with strong compensation (+${Math.max(0, evalGain)} cp).`;
       }
       if (category === "great") {
-        return `Strong tactical best move by engine (${playedMove}).`;
+        return `Best practical punishment after opponent error (${cpl} CPL).`;
       }
       if (category === "blunder") {
         return `Large drop (${cpl} CPL). Engine preferred ${before.bestMove || "another move"}.`;

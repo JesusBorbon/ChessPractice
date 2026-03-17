@@ -7177,18 +7177,18 @@ var require_main = __commonJS({
     init_styles();
     init_theme();
     var PIECES = {
-      wp: "\u265F",
-      wn: "\u265E",
-      wb: "\u265D",
-      wr: "\u265C",
-      wq: "\u265B",
-      wk: "\u265A",
-      bp: "\u265F",
-      bn: "\u265E",
-      bb: "\u265D",
-      br: "\u265C",
-      bq: "\u265B",
-      bk: "\u265A"
+      wp: "/pieces/wP.svg",
+      wn: "/pieces/wN.svg",
+      wb: "/pieces/wB.svg",
+      wr: "/pieces/wR.svg",
+      wq: "/pieces/wQ.svg",
+      wk: "/pieces/wK.svg",
+      bp: "/pieces/bP.svg",
+      bn: "/pieces/bN.svg",
+      bb: "/pieces/bB.svg",
+      br: "/pieces/bR.svg",
+      bq: "/pieces/bQ.svg",
+      bk: "/pieces/bK.svg"
     };
     var chess = new Chess();
     var socket = lookup2();
@@ -7220,11 +7220,28 @@ var require_main = __commonJS({
     var activeGhostAnimation = null;
     var activeGhostNode = null;
     var activeGhostDestinationPiece = null;
-    var activeGhostDestinationSquare = null;
+    var pendingBoardRefresh = false;
     var focusTimerStartMs = null;
     var liveAnalyzer = null;
     var liveAnalysisToken = 0;
     var LIVE_MATE_CP = 1e5;
+    var PIECE_VALUES = {
+      p: 100,
+      n: 320,
+      b: 330,
+      r: 500,
+      q: 900,
+      k: 0
+    };
+    var LIVE_CATEGORY_LABELS = {
+      brilliant: "Brilliant",
+      great: "Great",
+      excellent: "Excellent",
+      good: "Good",
+      inaccuracy: "Inaccuracy",
+      mistake: "Mistake",
+      blunder: "Blunder"
+    };
     var StockfishBridge = class {
       worker;
       ready = false;
@@ -7541,7 +7558,7 @@ var require_main = __commonJS({
     });
     flipBoardButton.addEventListener("click", () => {
       state.orientation = state.orientation === "w" ? "b" : "w";
-      renderBoard();
+      requestBoardRefresh();
       updateCaption();
     });
     rematchButton.addEventListener("click", () => {
@@ -7641,11 +7658,14 @@ var require_main = __commonJS({
         const piece = btn?.querySelector(".piece");
         if (piece && btn) {
           const cs = window.getComputedStyle(piece);
+          const pieceRect = piece.getBoundingClientRect();
           ptrDragNode = piece.cloneNode(true);
           Object.assign(ptrDragNode.style, {
             position: "fixed",
             pointerEvents: "none",
             zIndex: "9999",
+            width: `${pieceRect.width}px`,
+            height: `${pieceRect.height}px`,
             margin: "0",
             lineHeight: "1",
             fontSize: cs.fontSize,
@@ -7653,7 +7673,6 @@ var require_main = __commonJS({
             color: cs.color,
             textShadow: cs.textShadow,
             filter: cs.filter,
-            transform: "scale(1.5)",
             transformOrigin: "center center",
             transition: "none"
           });
@@ -7696,7 +7715,7 @@ var require_main = __commonJS({
         }
       }
       clearSelection();
-      renderBoard();
+      requestBoardRefresh();
       updateCaption();
     }
     function endArrowDrag(event, commit) {
@@ -7840,7 +7859,7 @@ var require_main = __commonJS({
     }
     function render() {
       const savedScroll = window.scrollY;
-      renderBoard();
+      requestBoardRefresh();
       renderSession();
       renderMoves();
       updateCaption();
@@ -7941,13 +7960,15 @@ var require_main = __commonJS({
           button.classList.add("premove-to");
         }
         if (piece) {
-          const glyph = PIECES[`${piece.color}${piece.type}`];
+          const spritePath = PIECES[`${piece.color}${piece.type}`];
           const pieceElement = document.createElement("span");
           pieceElement.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
-          if (activeGhostDestinationSquare === square) {
-            pieceElement.classList.add("ghost-hidden");
-          }
-          pieceElement.textContent = glyph;
+          const pieceImage = document.createElement("img");
+          pieceImage.className = "piece-image";
+          pieceImage.src = spritePath;
+          pieceImage.alt = `${piece.color === "w" ? "White" : "Black"} ${piece.type}`;
+          pieceImage.draggable = false;
+          pieceElement.append(pieceImage);
           button.append(pieceElement);
           if (liveGrade && liveMarkerSquare === squareName) {
             const marker = document.createElement("span");
@@ -8125,29 +8146,66 @@ var require_main = __commonJS({
       }
       boardCaption.textContent = state.selectedSquare ? `Selected ${state.selectedSquare}. Choose one of the highlighted targets.` : `Your move as ${state.role === "w" ? "White" : "Black"}.`;
     }
-    function classifyLiveMove(cpl) {
-      if (cpl <= 20) return "Excellent";
-      if (cpl <= 60) return "Good";
-      if (cpl <= 120) return "Inaccuracy";
-      if (cpl <= 250) return "Mistake";
-      return "Blunder";
+    function materialFromPerspective(fen, color) {
+      const board2 = fen.split(" ")[0] ?? "";
+      let white = 0;
+      let black = 0;
+      for (const ch of board2) {
+        if (ch === "/" || /\d/.test(ch)) {
+          continue;
+        }
+        const value2 = PIECE_VALUES[ch.toLowerCase()] ?? 0;
+        if (ch === ch.toUpperCase()) {
+          white += value2;
+        } else {
+          black += value2;
+        }
+      }
+      return color === "w" ? white - black : black - white;
     }
-    function classifyLiveMoveCategory(cpl) {
-      if (cpl <= 20) return "excellent";
-      if (cpl <= 60) return "good";
-      if (cpl <= 120) return "inaccuracy";
-      if (cpl <= 250) return "mistake";
-      return "blunder";
+    function classifyLiveMoveQuality(input) {
+      const {
+        cpl,
+        matchesBestMove,
+        materialDelta,
+        evalGain,
+        isCapture,
+        previousOpponentCategory
+      } = input;
+      const opponentBlundered = previousOpponentCategory === "mistake" || previousOpponentCategory === "blunder";
+      const isSacrifice = materialDelta <= -100;
+      const brilliantSacrifice = isSacrifice && evalGain >= 80 && cpl <= 35;
+      const greatPunish = matchesBestMove && cpl <= 22 && opponentBlundered && (isCapture || materialDelta >= 100 || evalGain >= 110);
+      if (brilliantSacrifice) {
+        return { category: "brilliant", label: LIVE_CATEGORY_LABELS.brilliant };
+      }
+      if (greatPunish) {
+        return { category: "great", label: LIVE_CATEGORY_LABELS.great };
+      }
+      if (cpl <= 45) {
+        return { category: "excellent", label: LIVE_CATEGORY_LABELS.excellent };
+      }
+      if (cpl <= 90) {
+        return { category: "good", label: LIVE_CATEGORY_LABELS.good };
+      }
+      if (cpl <= 160) {
+        return { category: "inaccuracy", label: LIVE_CATEGORY_LABELS.inaccuracy };
+      }
+      if (cpl <= 280) {
+        return { category: "mistake", label: LIVE_CATEGORY_LABELS.mistake };
+      }
+      return { category: "blunder", label: LIVE_CATEGORY_LABELS.blunder };
     }
     function symbolForLiveCategory(category) {
+      if (category === "brilliant") return "!!";
+      if (category === "great") return "!";
       if (category === "excellent") return "\u2605";
       if (category === "good") return "\u2713";
       if (category === "inaccuracy") return "?!";
       if (category === "mistake") return "x";
       return "??";
     }
-    function summarizeLiveMove(cpl, san) {
-      const label = classifyLiveMove(cpl);
+    function summarizeLiveMove(label, cpl, san) {
       return `${label}: ${san} (${cpl} CPL)`;
     }
     function buildBeforeAfterFenFromMoves(moves) {
@@ -8192,9 +8250,25 @@ var require_main = __commonJS({
         const moverBefore = before.cp;
         const moverAfter = -after.cp;
         const cpl = Math.max(0, Math.round(moverBefore - moverAfter));
-        const label = classifyLiveMove(cpl);
-        const category = classifyLiveMoveCategory(cpl);
-        state.liveAnalysisSummary = summarizeLiveMove(cpl, snapshot.lastMove.san);
+        const playedUci = `${snapshot.lastMove.from}${snapshot.lastMove.to}`;
+        const matchesBestMove = before.bestMove.startsWith(playedUci);
+        const moverColor = fenPair.beforeFen.split(" ")[1] || "w";
+        const materialBefore = materialFromPerspective(fenPair.beforeFen, moverColor);
+        const materialAfter = materialFromPerspective(fenPair.afterFen, moverColor);
+        const materialDelta = materialAfter - materialBefore;
+        const evalGain = Math.round(moverAfter - moverBefore);
+        const previousOpponentCategory = state.liveMoveGrades[snapshot.moveCount - 1]?.category;
+        const quality = classifyLiveMoveQuality({
+          cpl,
+          matchesBestMove,
+          materialDelta,
+          evalGain,
+          isCapture: snapshot.lastMove.san.includes("x"),
+          previousOpponentCategory
+        });
+        const label = quality.label;
+        const category = quality.category;
+        state.liveAnalysisSummary = summarizeLiveMove(label, cpl, snapshot.lastMove.san);
         state.liveMoveGrades[snapshot.moveCount] = { label, cpl, category };
         state.lastAnalyzedMoveKey = moveKey;
       } catch {
@@ -8205,7 +8279,7 @@ var require_main = __commonJS({
       }
       render();
     }
-    async function maybeRunLiveAnalysisForMove(previousMoves, move, expectedMoveCount, expectedMoveKey) {
+    async function maybeRunLiveAnalysisForMove(previousMoves, move, _expectedMoveCount, _expectedMoveKey) {
       if (!liveAnalyzer) {
         try {
           liveAnalyzer = new StockfishBridge();
@@ -8225,17 +8299,30 @@ var require_main = __commonJS({
         }
         const afterFen = recreatedChess.fen();
         const [before, after] = await Promise.all([
-          liveAnalyzer.evaluateFen(beforeFen, 15),
-          liveAnalyzer.evaluateFen(afterFen, 15)
+          liveAnalyzer.evaluateFen(beforeFen, 10),
+          liveAnalyzer.evaluateFen(afterFen, 10)
         ]);
         const moverBefore = before.cp;
         const moverAfter = -after.cp;
         const cpl = Math.max(0, Math.round(moverBefore - moverAfter));
-        const label = classifyLiveMove(cpl);
-        const category = classifyLiveMoveCategory(cpl);
-        state.liveAnalysisSummary = `You played: ${summarizeLiveMove(cpl, moveResult.san)}`;
-        state.liveMoveGrades[expectedMoveCount] = { label, cpl, category };
-        state.lastAnalyzedMoveKey = expectedMoveKey;
+        const playedUci = `${moveResult.from}${moveResult.to}`;
+        const matchesBestMove = before.bestMove.startsWith(playedUci);
+        const moverColor = beforeFen.split(" ")[1] || "w";
+        const materialBefore = materialFromPerspective(beforeFen, moverColor);
+        const materialAfter = materialFromPerspective(afterFen, moverColor);
+        const materialDelta = materialAfter - materialBefore;
+        const evalGain = Math.round(moverAfter - moverBefore);
+        const previousOpponentCategory = state.liveMoveGrades[(state.snapshot?.moveCount ?? 0) - 1]?.category;
+        const quality = classifyLiveMoveQuality({
+          cpl,
+          matchesBestMove,
+          materialDelta,
+          evalGain,
+          isCapture: Boolean(moveResult.captured),
+          previousOpponentCategory
+        });
+        const label = quality.label;
+        state.liveAnalysisSummary = `You played: ${summarizeLiveMove(label, cpl, moveResult.san)}`;
         render();
       } catch (e) {
         console.error("Live analysis error:", e);
@@ -8258,7 +8345,6 @@ var require_main = __commonJS({
     function animateLastMove(lastMove) {
       if (!state.snapshot || !lastMove) {
         lastAnimatedMoveKey = null;
-        activeGhostDestinationSquare = null;
         return;
       }
       const moveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
@@ -8273,12 +8359,6 @@ var require_main = __commonJS({
           return;
         }
       }
-      const fromSquareButton = board.querySelector(`[data-square="${lastMove.from}"]`);
-      const toSquareButton = board.querySelector(`[data-square="${lastMove.to}"]`);
-      const destinationPiece = toSquareButton?.querySelector(".piece");
-      if (!fromSquareButton || !toSquareButton || !destinationPiece) {
-        return;
-      }
       if (activeGhostAnimation) {
         activeGhostAnimation.cancel();
       }
@@ -8290,7 +8370,12 @@ var require_main = __commonJS({
         activeGhostDestinationPiece.style.visibility = "";
         activeGhostDestinationPiece = null;
       }
-      activeGhostDestinationSquare = null;
+      const fromSquareButton = board.querySelector(`[data-square="${lastMove.from}"]`);
+      const toSquareButton = board.querySelector(`[data-square="${lastMove.to}"]`);
+      const destinationPiece = toSquareButton?.querySelector(".piece");
+      if (!fromSquareButton || !toSquareButton || !destinationPiece) {
+        return;
+      }
       const fromRect = fromSquareButton.getBoundingClientRect();
       const toRect = toSquareButton.getBoundingClientRect();
       const startX = fromRect.left + fromRect.width / 2 + window.scrollX;
@@ -8300,11 +8385,14 @@ var require_main = __commonJS({
       const deltaX = startX - endX;
       const deltaY = startY - endY;
       const computed = window.getComputedStyle(destinationPiece);
+      const pieceRect = destinationPiece.getBoundingClientRect();
       const ghostPiece = destinationPiece.cloneNode(true);
       Object.assign(ghostPiece.style, {
         position: "absolute",
         left: `${endX}px`,
         top: `${endY}px`,
+        width: `${pieceRect.width}px`,
+        height: `${pieceRect.height}px`,
         transform: "translate3d(-50%, -50%, 0)",
         margin: "0",
         zIndex: "9999",
@@ -8322,7 +8410,6 @@ var require_main = __commonJS({
       destinationPiece.style.visibility = "hidden";
       activeGhostNode = ghostPiece;
       activeGhostDestinationPiece = destinationPiece;
-      activeGhostDestinationSquare = lastMove.to;
       document.body.append(ghostPiece);
       const animation = ghostPiece.animate(
         [
@@ -8336,7 +8423,7 @@ var require_main = __commonJS({
           }
         ],
         {
-          duration: 900,
+          duration: 700,
           easing: "cubic-bezier(0.22, 0.61, 0.36, 1)"
         }
       );
@@ -8348,8 +8435,10 @@ var require_main = __commonJS({
           activeGhostAnimation = null;
           activeGhostNode = null;
           activeGhostDestinationPiece = null;
-          activeGhostDestinationSquare = null;
-          renderBoard();
+          if (pendingBoardRefresh) {
+            pendingBoardRefresh = false;
+            renderBoard();
+          }
         }
       });
       animation.addEventListener("cancel", () => {
@@ -8359,10 +8448,19 @@ var require_main = __commonJS({
           activeGhostAnimation = null;
           activeGhostNode = null;
           activeGhostDestinationPiece = null;
-          activeGhostDestinationSquare = null;
-          renderBoard();
+          if (pendingBoardRefresh) {
+            pendingBoardRefresh = false;
+            renderBoard();
+          }
         }
       });
+    }
+    function requestBoardRefresh() {
+      if (activeGhostAnimation) {
+        pendingBoardRefresh = true;
+        return;
+      }
+      renderBoard();
     }
     function onSquarePressed(square) {
       if (!state.snapshot || !state.role || state.role === "spectator") {
@@ -8381,14 +8479,14 @@ var require_main = __commonJS({
       }
       if (square === state.selectedSquare) {
         clearSelection();
-        renderBoard();
+        requestBoardRefresh();
         updateCaption();
         return;
       }
       if (state.legalTargets.includes(square)) {
         tryMoveFromTo(state.selectedSquare, square);
         clearSelection();
-        renderBoard();
+        requestBoardRefresh();
         updateCaption();
         return;
       }
@@ -8397,13 +8495,13 @@ var require_main = __commonJS({
         return;
       }
       clearSelection();
-      renderBoard();
+      requestBoardRefresh();
       updateCaption();
     }
     function selectSquare(square) {
       state.selectedSquare = square;
       state.legalTargets = legalTargetsFor(square);
-      renderBoard();
+      requestBoardRefresh();
       updateCaption();
     }
     function clearSelection() {
@@ -8482,7 +8580,7 @@ var require_main = __commonJS({
         showToast(`Premove set: ${from} -> ${to}`);
       }
       clearSelection();
-      renderBoard();
+      requestBoardRefresh();
       updateCaption();
     }
     function onPremoveSquarePressed(square) {
@@ -8494,14 +8592,14 @@ var require_main = __commonJS({
         if (clickedPiece && clickedPiece.color === state.role) {
           state.selectedSquare = square;
           state.legalTargets = legalTargetsForRole(square, state.role);
-          renderBoard();
+          requestBoardRefresh();
           updateCaption();
         }
         return;
       }
       if (square === state.selectedSquare) {
         clearSelection();
-        renderBoard();
+        requestBoardRefresh();
         updateCaption();
         return;
       }
@@ -8512,12 +8610,12 @@ var require_main = __commonJS({
       if (clickedPiece && clickedPiece.color === state.role) {
         state.selectedSquare = square;
         state.legalTargets = legalTargetsForRole(square, state.role);
-        renderBoard();
+        requestBoardRefresh();
         updateCaption();
         return;
       }
       clearSelection();
-      renderBoard();
+      requestBoardRefresh();
       updateCaption();
     }
     function isOwnPiece(color) {

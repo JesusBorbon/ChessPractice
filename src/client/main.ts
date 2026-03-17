@@ -8,6 +8,11 @@ import { mountThemeSwitcher } from "./theme";
 type PlayerRole = "w" | "b";
 type RoomRole = PlayerRole | "spectator";
 type PromotionPiece = "q" | "r" | "b" | "n";
+type MoveCategory = "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder";
+type QualityResult = {
+  category: MoveCategory;
+  label: string;
+};
 
 type MoveSummary = {
   color: PlayerRole;
@@ -68,7 +73,7 @@ type AppState = {
   focusMode: boolean;
   liveAnalysisSummary: string;
   lastAnalyzedMoveKey: string | null;
-  liveMoveGrades: Record<number, { label: string; cpl: number; category: "excellent" | "good" | "inaccuracy" | "mistake" | "blunder" }>;
+  liveMoveGrades: Record<number, { label: string; cpl: number; category: "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder" }>;
 };
 
 type EngineEval = {
@@ -79,18 +84,18 @@ type EngineEval = {
 };
 
 const PIECES: Record<`${PlayerRole}${PieceSymbol}`, string> = {
-  wp: "♟",
-  wn: "♞",
-  wb: "♝",
-  wr: "♜",
-  wq: "♛",
-  wk: "♚",
-  bp: "♟",
-  bn: "♞",
-  bb: "♝",
-  br: "♜",
-  bq: "♛",
-  bk: "♚",
+  wp: "/pieces/wP.svg",
+  wn: "/pieces/wN.svg",
+  wb: "/pieces/wB.svg",
+  wr: "/pieces/wR.svg",
+  wq: "/pieces/wQ.svg",
+  wk: "/pieces/wK.svg",
+  bp: "/pieces/bP.svg",
+  bn: "/pieces/bN.svg",
+  bb: "/pieces/bB.svg",
+  br: "/pieces/bR.svg",
+  bq: "/pieces/bQ.svg",
+  bk: "/pieces/bK.svg",
 };
 
 const chess = new Chess();
@@ -127,12 +132,29 @@ let suppressAnimationForMove: { from: Square; to: Square } | null = null;
 let activeGhostAnimation: Animation | null = null;
 let activeGhostNode: HTMLElement | null = null;
 let activeGhostDestinationPiece: HTMLElement | null = null;
-let activeGhostDestinationSquare: Square | null = null;
+let pendingBoardRefresh = false;
 let focusTimerStartMs: number | null = null;
 let liveAnalyzer: StockfishBridge | null = null;
 let liveAnalysisToken = 0;
 
 const LIVE_MATE_CP = 100000;
+const PIECE_VALUES: Record<string, number> = {
+  p: 100,
+  n: 320,
+  b: 330,
+  r: 500,
+  q: 900,
+  k: 0,
+};
+const LIVE_CATEGORY_LABELS: Record<MoveCategory, string> = {
+  brilliant: "Brilliant",
+  great: "Great",
+  excellent: "Excellent",
+  good: "Good",
+  inaccuracy: "Inaccuracy",
+  mistake: "Mistake",
+  blunder: "Blunder",
+};
 
 class StockfishBridge {
   private readonly worker: Worker;
@@ -483,7 +505,7 @@ leaveRoomButton.addEventListener("click", () => {
 
 flipBoardButton.addEventListener("click", () => {
   state.orientation = state.orientation === "w" ? "b" : "w";
-  renderBoard();
+  requestBoardRefresh();
   updateCaption();
 });
 
@@ -613,11 +635,14 @@ board.addEventListener("pointermove", (event) => {
     const piece = btn?.querySelector<HTMLElement>(".piece");
     if (piece && btn) {
       const cs = window.getComputedStyle(piece);
+      const pieceRect = piece.getBoundingClientRect();
       ptrDragNode = piece.cloneNode(true) as HTMLElement;
       Object.assign(ptrDragNode.style, {
         position: "fixed",
         pointerEvents: "none",
         zIndex: "9999",
+        width: `${pieceRect.width}px`,
+        height: `${pieceRect.height}px`,
         margin: "0",
         lineHeight: "1",
         fontSize: cs.fontSize,
@@ -625,7 +650,6 @@ board.addEventListener("pointermove", (event) => {
         color: cs.color,
         textShadow: cs.textShadow,
         filter: cs.filter,
-        transform: "scale(1.5)",
         transformOrigin: "center center",
         transition: "none",
       });
@@ -673,7 +697,7 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
   }
 
   clearSelection();
-  renderBoard();
+  requestBoardRefresh();
   updateCaption();
 }
 
@@ -855,7 +879,7 @@ function must<TElement extends Element>(selector: string): TElement {
 
 function render(): void {
   const savedScroll = window.scrollY;
-  renderBoard();
+  requestBoardRefresh();
   renderSession();
   renderMoves();
   updateCaption();
@@ -988,13 +1012,15 @@ function renderBoard(): void {
     }
 
     if (piece) {
-      const glyph = PIECES[`${piece.color}${piece.type}`];
+      const spritePath = PIECES[`${piece.color}${piece.type}`];
       const pieceElement = document.createElement("span");
       pieceElement.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
-      if (activeGhostDestinationSquare === square) {
-        pieceElement.classList.add("ghost-hidden");
-      }
-      pieceElement.textContent = glyph;
+      const pieceImage = document.createElement("img");
+      pieceImage.className = "piece-image";
+      pieceImage.src = spritePath;
+      pieceImage.alt = `${piece.color === "w" ? "White" : "Black"} ${piece.type}`;
+      pieceImage.draggable = false;
+      pieceElement.append(pieceImage);
 
       button.append(pieceElement);
 
@@ -1227,23 +1253,82 @@ function updateCaption(): void {
     : `Your move as ${state.role === "w" ? "White" : "Black"}.`;
 }
 
-function classifyLiveMove(cpl: number): string {
-  if (cpl <= 20) return "Excellent";
-  if (cpl <= 60) return "Good";
-  if (cpl <= 120) return "Inaccuracy";
-  if (cpl <= 250) return "Mistake";
-  return "Blunder";
+function materialFromPerspective(fen: string, color: "w" | "b"): number {
+  const board = fen.split(" ")[0] ?? "";
+  let white = 0;
+  let black = 0;
+
+  for (const ch of board) {
+    if (ch === "/" || /\d/.test(ch)) {
+      continue;
+    }
+
+    const value = PIECE_VALUES[ch.toLowerCase()] ?? 0;
+    if (ch === ch.toUpperCase()) {
+      white += value;
+    } else {
+      black += value;
+    }
+  }
+
+  return color === "w" ? white - black : black - white;
 }
 
-function classifyLiveMoveCategory(cpl: number): "excellent" | "good" | "inaccuracy" | "mistake" | "blunder" {
-  if (cpl <= 20) return "excellent";
-  if (cpl <= 60) return "good";
-  if (cpl <= 120) return "inaccuracy";
-  if (cpl <= 250) return "mistake";
-  return "blunder";
+function classifyLiveMoveQuality(input: {
+  cpl: number;
+  matchesBestMove: boolean;
+  materialDelta: number;
+  evalGain: number;
+  isCapture: boolean;
+  previousOpponentCategory: MoveCategory | undefined;
+}): QualityResult {
+  const {
+    cpl,
+    matchesBestMove,
+    materialDelta,
+    evalGain,
+    isCapture,
+    previousOpponentCategory,
+  } = input;
+
+  const opponentBlundered = previousOpponentCategory === "mistake" || previousOpponentCategory === "blunder";
+  const isSacrifice = materialDelta <= -100;
+  const brilliantSacrifice = isSacrifice && evalGain >= 80 && cpl <= 35;
+  const greatPunish = matchesBestMove
+    && cpl <= 22
+    && opponentBlundered
+    && (isCapture || materialDelta >= 100 || evalGain >= 110);
+
+  if (brilliantSacrifice) {
+    return { category: "brilliant", label: LIVE_CATEGORY_LABELS.brilliant };
+  }
+
+  if (greatPunish) {
+    return { category: "great", label: LIVE_CATEGORY_LABELS.great };
+  }
+
+  if (cpl <= 45) {
+    return { category: "excellent", label: LIVE_CATEGORY_LABELS.excellent };
+  }
+
+  if (cpl <= 90) {
+    return { category: "good", label: LIVE_CATEGORY_LABELS.good };
+  }
+
+  if (cpl <= 160) {
+    return { category: "inaccuracy", label: LIVE_CATEGORY_LABELS.inaccuracy };
+  }
+
+  if (cpl <= 280) {
+    return { category: "mistake", label: LIVE_CATEGORY_LABELS.mistake };
+  }
+
+  return { category: "blunder", label: LIVE_CATEGORY_LABELS.blunder };
 }
 
-function symbolForLiveCategory(category: "excellent" | "good" | "inaccuracy" | "mistake" | "blunder"): string {
+function symbolForLiveCategory(category: "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder"): string {
+  if (category === "brilliant") return "!!";
+  if (category === "great") return "!";
   if (category === "excellent") return "★";
   if (category === "good") return "✓";
   if (category === "inaccuracy") return "?!";
@@ -1251,8 +1336,7 @@ function symbolForLiveCategory(category: "excellent" | "good" | "inaccuracy" | "
   return "??";
 }
 
-function summarizeLiveMove(cpl: number, san: string): string {
-  const label = classifyLiveMove(cpl);
+function summarizeLiveMove(label: string, cpl: number, san: string): string {
   return `${label}: ${san} (${cpl} CPL)`;
 }
 
@@ -1308,9 +1392,26 @@ async function maybeRunLiveAnalysis(snapshot: RoomSnapshot): Promise<void> {
     const moverBefore = before.cp;
     const moverAfter = -after.cp;
     const cpl = Math.max(0, Math.round(moverBefore - moverAfter));
-    const label = classifyLiveMove(cpl);
-    const category = classifyLiveMoveCategory(cpl);
-    state.liveAnalysisSummary = summarizeLiveMove(cpl, snapshot.lastMove.san);
+    const playedUci = `${snapshot.lastMove.from}${snapshot.lastMove.to}`;
+    const matchesBestMove = before.bestMove.startsWith(playedUci);
+    const moverColor = (fenPair.beforeFen.split(" ")[1] as "w" | "b") || "w";
+    const materialBefore = materialFromPerspective(fenPair.beforeFen, moverColor);
+    const materialAfter = materialFromPerspective(fenPair.afterFen, moverColor);
+    const materialDelta = materialAfter - materialBefore;
+    const evalGain = Math.round(moverAfter - moverBefore);
+    const previousOpponentCategory = state.liveMoveGrades[snapshot.moveCount - 1]?.category;
+    const quality = classifyLiveMoveQuality({
+      cpl,
+      matchesBestMove,
+      materialDelta,
+      evalGain,
+      isCapture: snapshot.lastMove.san.includes("x"),
+      previousOpponentCategory,
+    });
+
+    const label = quality.label;
+    const category = quality.category;
+    state.liveAnalysisSummary = summarizeLiveMove(label, cpl, snapshot.lastMove.san);
     state.liveMoveGrades[snapshot.moveCount] = { label, cpl, category };
     state.lastAnalyzedMoveKey = moveKey;
   } catch {
@@ -1327,8 +1428,8 @@ async function maybeRunLiveAnalysis(snapshot: RoomSnapshot): Promise<void> {
 async function maybeRunLiveAnalysisForMove(
   previousMoves: MoveSummary[],
   move: Move,
-  expectedMoveCount: number,
-  expectedMoveKey: string,
+  _expectedMoveCount: number,
+  _expectedMoveKey: string,
 ): Promise<void> {
   if (!liveAnalyzer) {
     try {
@@ -1353,19 +1454,33 @@ async function maybeRunLiveAnalysisForMove(
     const afterFen = recreatedChess.fen();
 
     const [before, after] = await Promise.all([
-      liveAnalyzer.evaluateFen(beforeFen, 15),
-      liveAnalyzer.evaluateFen(afterFen, 15),
+      liveAnalyzer.evaluateFen(beforeFen, 10),
+      liveAnalyzer.evaluateFen(afterFen, 10),
     ]);
 
     const moverBefore = before.cp;
     const moverAfter = -after.cp;
     const cpl = Math.max(0, Math.round(moverBefore - moverAfter));
-    const label = classifyLiveMove(cpl);
-    const category = classifyLiveMoveCategory(cpl);
+    const playedUci = `${moveResult.from}${moveResult.to}`;
+    const matchesBestMove = before.bestMove.startsWith(playedUci);
+    const moverColor = (beforeFen.split(" ")[1] as "w" | "b") || "w";
+    const materialBefore = materialFromPerspective(beforeFen, moverColor);
+    const materialAfter = materialFromPerspective(afterFen, moverColor);
+    const materialDelta = materialAfter - materialBefore;
+    const evalGain = Math.round(moverAfter - moverBefore);
+    const previousOpponentCategory = state.liveMoveGrades[(state.snapshot?.moveCount ?? 0) - 1]?.category;
+    const quality = classifyLiveMoveQuality({
+      cpl,
+      matchesBestMove,
+      materialDelta,
+      evalGain,
+      isCapture: Boolean(moveResult.captured),
+      previousOpponentCategory,
+    });
+    const label = quality.label;
 
-    state.liveAnalysisSummary = `You played: ${summarizeLiveMove(cpl, moveResult.san)}`;
-    state.liveMoveGrades[expectedMoveCount] = { label, cpl, category };
-    state.lastAnalyzedMoveKey = expectedMoveKey;
+    // Keep optimistic feedback textual only; canonical room-state analysis writes final badge.
+    state.liveAnalysisSummary = `You played: ${summarizeLiveMove(label, cpl, moveResult.san)}`;
     render();
   } catch (e) {
     console.error("Live analysis error:", e);
@@ -1392,7 +1507,6 @@ function getCheckedKingSquare(): Square | null {
 function animateLastMove(lastMove: MoveSummary | null): void {
   if (!state.snapshot || !lastMove) {
     lastAnimatedMoveKey = null;
-    activeGhostDestinationSquare = null;
     return;
   }
 
@@ -1414,13 +1528,7 @@ function animateLastMove(lastMove: MoveSummary | null): void {
     }
   }
 
-  const fromSquareButton = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.from}"]`);
-  const toSquareButton = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.to}"]`);
-  const destinationPiece = toSquareButton?.querySelector<HTMLElement>(".piece");
-  if (!fromSquareButton || !toSquareButton || !destinationPiece) {
-    return;
-  }
-
+  // Cancel any in-flight ghost first.
   if (activeGhostAnimation) {
     activeGhostAnimation.cancel();
   }
@@ -1432,7 +1540,13 @@ function animateLastMove(lastMove: MoveSummary | null): void {
     activeGhostDestinationPiece.style.visibility = "";
     activeGhostDestinationPiece = null;
   }
-  activeGhostDestinationSquare = null;
+
+  const fromSquareButton = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.from}"]`);
+  const toSquareButton   = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.to}"]`);
+  const destinationPiece = toSquareButton?.querySelector<HTMLElement>(".piece");
+  if (!fromSquareButton || !toSquareButton || !destinationPiece) {
+    return;
+  }
 
   const fromRect = fromSquareButton.getBoundingClientRect();
   const toRect = toSquareButton.getBoundingClientRect();
@@ -1444,11 +1558,14 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   const deltaY = startY - endY;
 
   const computed = window.getComputedStyle(destinationPiece);
+  const pieceRect = destinationPiece.getBoundingClientRect();
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
   Object.assign(ghostPiece.style, {
     position: "absolute",
     left: `${endX}px`,
     top: `${endY}px`,
+    width: `${pieceRect.width}px`,
+    height: `${pieceRect.height}px`,
     transform: "translate3d(-50%, -50%, 0)",
     margin: "0",
     zIndex: "9999",
@@ -1467,7 +1584,6 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   destinationPiece.style.visibility = "hidden";
   activeGhostNode = ghostPiece;
   activeGhostDestinationPiece = destinationPiece;
-  activeGhostDestinationSquare = lastMove.to;
   document.body.append(ghostPiece);
 
   const animation = ghostPiece.animate(
@@ -1482,7 +1598,7 @@ function animateLastMove(lastMove: MoveSummary | null): void {
       },
     ],
     {
-      duration: 900,
+      duration: 700,
       easing: "cubic-bezier(0.22, 0.61, 0.36, 1)",
     },
   );
@@ -1496,8 +1612,10 @@ function animateLastMove(lastMove: MoveSummary | null): void {
       activeGhostAnimation = null;
       activeGhostNode = null;
       activeGhostDestinationPiece = null;
-      activeGhostDestinationSquare = null;
-      renderBoard();
+      if (pendingBoardRefresh) {
+        pendingBoardRefresh = false;
+        renderBoard();
+      }
     }
   });
 
@@ -1508,10 +1626,21 @@ function animateLastMove(lastMove: MoveSummary | null): void {
       activeGhostAnimation = null;
       activeGhostNode = null;
       activeGhostDestinationPiece = null;
-      activeGhostDestinationSquare = null;
-      renderBoard();
+      if (pendingBoardRefresh) {
+        pendingBoardRefresh = false;
+        renderBoard();
+      }
     }
   });
+}
+
+function requestBoardRefresh(): void {
+  if (activeGhostAnimation) {
+    pendingBoardRefresh = true;
+    return;
+  }
+
+  renderBoard();
 }
 
 function onSquarePressed(square: Square): void {
@@ -1534,7 +1663,7 @@ function onSquarePressed(square: Square): void {
 
   if (square === state.selectedSquare) {
     clearSelection();
-    renderBoard();
+    requestBoardRefresh();
     updateCaption();
     return;
   }
@@ -1542,7 +1671,7 @@ function onSquarePressed(square: Square): void {
   if (state.legalTargets.includes(square)) {
     tryMoveFromTo(state.selectedSquare, square);
     clearSelection();
-    renderBoard();
+    requestBoardRefresh();
     updateCaption();
     return;
   }
@@ -1553,14 +1682,14 @@ function onSquarePressed(square: Square): void {
   }
 
   clearSelection();
-  renderBoard();
+  requestBoardRefresh();
   updateCaption();
 }
 
 function selectSquare(square: Square): void {
   state.selectedSquare = square;
   state.legalTargets = legalTargetsFor(square);
-  renderBoard();
+  requestBoardRefresh();
   updateCaption();
 }
 
@@ -1659,7 +1788,7 @@ function queuePremove(from: Square, to: Square): void {
   }
 
   clearSelection();
-  renderBoard();
+  requestBoardRefresh();
   updateCaption();
 }
 
@@ -1673,7 +1802,7 @@ function onPremoveSquarePressed(square: Square): void {
     if (clickedPiece && clickedPiece.color === state.role) {
       state.selectedSquare = square;
       state.legalTargets = legalTargetsForRole(square, state.role);
-      renderBoard();
+      requestBoardRefresh();
       updateCaption();
     }
     return;
@@ -1681,7 +1810,7 @@ function onPremoveSquarePressed(square: Square): void {
 
   if (square === state.selectedSquare) {
     clearSelection();
-    renderBoard();
+    requestBoardRefresh();
     updateCaption();
     return;
   }
@@ -1694,13 +1823,13 @@ function onPremoveSquarePressed(square: Square): void {
   if (clickedPiece && clickedPiece.color === state.role) {
     state.selectedSquare = square;
     state.legalTargets = legalTargetsForRole(square, state.role);
-    renderBoard();
+    requestBoardRefresh();
     updateCaption();
     return;
   }
 
   clearSelection();
-  renderBoard();
+  requestBoardRefresh();
   updateCaption();
 }
 

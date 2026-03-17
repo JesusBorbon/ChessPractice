@@ -223,6 +223,7 @@
 .move-quality-badge.blunder {
   background: #ffd7d7;
   color: #8b2020;
+  box-shadow: 0 0 10px rgba(180, 30, 30, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.3);
 }
 .piece-quality-marker {
   position: absolute;
@@ -414,11 +415,31 @@ body.focus-mode.focus-analyze .analyze-move-list {
   body.focus-mode.focus-analyze .moves-card {
     padding: 10px;
   }
+  body.focus-mode.focus-analyze .focus-toggle-btn {
+    left: 50%;
+    right: auto;
+    top: auto;
+    bottom: calc(34vh + 10px);
+    transform: translateX(-50%);
+  }
 }
 @media (max-width: 640px) {
   .analyze-shell {
     width: calc(100vw - 18px);
     padding-top: 14px;
+  }
+  .piece-quality-marker {
+    top: 3px;
+    right: 3px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    font-size: 0.62rem;
+    border-width: 1.5px;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.22);
+  }
+  .piece-quality-marker.blunder {
+    transform: none;
   }
   .analyze-board-panel {
     padding: 14px;
@@ -536,6 +557,10 @@ body.focus-mode.focus-analyze .analyze-move-list {
   transform: scale(1.15);
   box-shadow: 0 5px 16px rgba(200, 0, 0, 0.5);
 }
+[data-theme=purple] .move-quality-badge.blunder {
+  transform: none;
+  box-shadow: 0 0 14px rgba(255, 72, 72, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
 [data-theme=walnut] .move-quality-badge.brilliant,
 [data-theme=walnut] .piece-quality-marker.brilliant {
   background: #d4f0da;
@@ -573,6 +598,9 @@ body.focus-mode.focus-analyze .analyze-move-list {
   transform: scale(1.15);
   box-shadow: 0 5px 16px rgba(160, 0, 0, 0.45);
 }
+[data-theme=walnut] .move-quality-badge.blunder {
+  transform: none;
+}
 [data-theme=refined] .move-quality-badge.brilliant,
 [data-theme=refined] .piece-quality-marker.brilliant {
   background: #d8f5e0;
@@ -609,5 +637,8 @@ body.focus-mode.focus-analyze .analyze-move-list {
   color: #ffffff;
   transform: scale(1.15);
   box-shadow: 0 5px 16px rgba(150, 0, 0, 0.42);
+}
+[data-theme=refined] .move-quality-badge.blunder {
+  transform: none;
 }
 /*# sourceMappingURL=analyze.css.map */

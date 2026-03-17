@@ -5,6 +5,10 @@ import { mountThemeSwitcher } from "./theme";
 
 type PromotionPiece = "q" | "r" | "b" | "n";
 type MoveCategory = "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder";
+type QualityResult = {
+  category: MoveCategory;
+  label: string;
+};
 
 type EngineEval = {
   cp: number;
@@ -187,8 +191,8 @@ function playSound(name: string): void {
 }
 
 const PIECES: Record<string, string> = {
-  wp: "♟", wn: "♞", wb: "♝", wr: "♜", wq: "♛", wk: "♚",
-  bp: "♟", bn: "♞", bb: "♝", br: "♜", bq: "♛", bk: "♚",
+  wp: "/pieces/wP.svg", wn: "/pieces/wN.svg", wb: "/pieces/wB.svg", wr: "/pieces/wR.svg", wq: "/pieces/wQ.svg", wk: "/pieces/wK.svg",
+  bp: "/pieces/bP.svg", bn: "/pieces/bN.svg", bb: "/pieces/bB.svg", br: "/pieces/bR.svg", bq: "/pieces/bQ.svg", bk: "/pieces/bK.svg",
 };
 
 // ── State ──────────────────────────────────────────────────────────────────────
@@ -511,11 +515,14 @@ boardEl.addEventListener("pointermove", (event) => {
     const piece = btn?.querySelector<HTMLElement>(".piece");
     if (piece && btn) {
       const cs = window.getComputedStyle(piece);
+      const pieceRect = piece.getBoundingClientRect();
       ptrDragNode = piece.cloneNode(true) as HTMLElement;
       Object.assign(ptrDragNode.style, {
         position: "fixed",
         pointerEvents: "none",
         zIndex: "9999",
+        width: `${pieceRect.width}px`,
+        height: `${pieceRect.height}px`,
         margin: "0",
         lineHeight: "1",
         fontSize: cs.fontSize,
@@ -523,7 +530,6 @@ boardEl.addEventListener("pointermove", (event) => {
         color: cs.color,
         textShadow: cs.textShadow,
         filter: cs.filter,
-        transform: "scale(1.5)",
         transformOrigin: "center center",
         transition: "none",
       });
@@ -798,7 +804,12 @@ function renderBoard(): void {
     if (piece) {
       const span = document.createElement("span");
       span.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
-      span.textContent = PIECES[`${piece.color}${piece.type}`] ?? "";
+      const pieceImage = document.createElement("img");
+      pieceImage.className = "piece-image";
+      pieceImage.src = PIECES[`${piece.color}${piece.type}`] ?? "";
+      pieceImage.alt = `${piece.color === "w" ? "White" : "Black"} ${piece.type}`;
+      pieceImage.draggable = false;
+      span.append(pieceImage);
 
       btn.append(span);
 
@@ -991,11 +1002,14 @@ function animateLastMove(lastMove: Move | undefined): void {
   const deltaY = startY - endY;
 
   const computed = window.getComputedStyle(destinationPiece);
+  const pieceRect = destinationPiece.getBoundingClientRect();
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
   Object.assign(ghostPiece.style, {
     position: "absolute",
     left: `${endX}px`,
     top: `${endY}px`,
+    width: `${pieceRect.width}px`,
+    height: `${pieceRect.height}px`,
     transform: "translate3d(-50%, -50%, 0)",
     margin: "0",
     zIndex: "9999",
@@ -1333,33 +1347,29 @@ function classifyMove(
   const beforeMoverCp = before.cp;
   const afterMoverCp = -after.cp;
   const cpl = Math.max(0, Math.round(beforeMoverCp - afterMoverCp));
-  const matchesBest = before.bestMove === playedMove;
-  const materialDrop = materialFromPerspective(afterFen, move.color) - materialFromPerspective(beforeFen, move.color);
-  const sacrificed = materialDrop <= -200;
+  const matchesBest = before.bestMove.startsWith(playedMove);
+  const moverColor = (beforeFen.split(" ")[1] as "w" | "b") || "w";
+  const materialBefore = materialFromPerspective(beforeFen, moverColor);
+  const materialAfter = materialFromPerspective(afterFen, moverColor);
+  const materialDelta = materialAfter - materialBefore;
+  const evalGain = Math.round(afterMoverCp - beforeMoverCp);
+  const previousOpponentCategory = ply > 1 ? analysisByPly[ply - 1]?.category : undefined;
 
-  let category: MoveCategory;
-  if (matchesBest && sacrificed && cpl <= 30) {
-    category = "brilliant";
-  } else if (matchesBest && cpl <= 20 && (move.captured || move.san.includes("+") || move.promotion)) {
-    category = "great";
-  } else if (cpl <= 20) {
-    category = "excellent";
-  } else if (cpl <= 70) {
-    category = "good";
-  } else if (cpl <= 140) {
-    category = "inaccuracy";
-  } else if (cpl <= 260) {
-    category = "mistake";
-  } else {
-    category = "blunder";
-  }
+  const quality = classifyMoveQuality({
+    cpl,
+    matchesBest,
+    materialDelta,
+    evalGain,
+    isCapture: Boolean(move.captured),
+    previousOpponentCategory,
+  });
 
-  const note = buildMoveNote(category, cpl, before, playedMove, move);
+  const note = buildMoveNote(quality.category, cpl, before, playedMove, move, materialDelta, evalGain);
 
   return {
     ply,
-    label: CATEGORY_LABELS[category],
-    category,
+    label: quality.label,
+    category: quality.category,
     cpl,
     playedMove,
     bestMove: before.bestMove,
@@ -1367,6 +1377,58 @@ function classifyMove(
     beforeCp: Math.round(beforeMoverCp),
     afterCp: Math.round(afterMoverCp),
   };
+}
+
+function classifyMoveQuality(input: {
+  cpl: number;
+  matchesBest: boolean;
+  materialDelta: number;
+  evalGain: number;
+  isCapture: boolean;
+  previousOpponentCategory: MoveCategory | undefined;
+}): QualityResult {
+  const {
+    cpl,
+    matchesBest,
+    materialDelta,
+    evalGain,
+    isCapture,
+    previousOpponentCategory,
+  } = input;
+
+  const opponentBlundered = previousOpponentCategory === "mistake" || previousOpponentCategory === "blunder";
+  const isSacrifice = materialDelta <= -100;
+  const brilliantSacrifice = isSacrifice && evalGain >= 80 && cpl <= 35;
+  const greatPunish = matchesBest
+    && cpl <= 22
+    && opponentBlundered
+    && (isCapture || materialDelta >= 100 || evalGain >= 110);
+
+  if (brilliantSacrifice) {
+    return { category: "brilliant", label: CATEGORY_LABELS.brilliant };
+  }
+
+  if (greatPunish) {
+    return { category: "great", label: CATEGORY_LABELS.great };
+  }
+
+  if (cpl <= 45) {
+    return { category: "excellent", label: CATEGORY_LABELS.excellent };
+  }
+
+  if (cpl <= 90) {
+    return { category: "good", label: CATEGORY_LABELS.good };
+  }
+
+  if (cpl <= 160) {
+    return { category: "inaccuracy", label: CATEGORY_LABELS.inaccuracy };
+  }
+
+  if (cpl <= 280) {
+    return { category: "mistake", label: CATEGORY_LABELS.mistake };
+  }
+
+  return { category: "blunder", label: CATEGORY_LABELS.blunder };
 }
 
 function toUci(move: Move): string {
@@ -1409,13 +1471,21 @@ function formatCp(cp: number): string {
   return signed;
 }
 
-function buildMoveNote(category: MoveCategory, cpl: number, before: EngineEval, playedMove: string, move: Move): string {
+function buildMoveNote(
+  category: MoveCategory,
+  cpl: number,
+  before: EngineEval,
+  playedMove: string,
+  move: Move,
+  materialDelta: number,
+  evalGain: number,
+): string {
   if (category === "brilliant") {
-    return `Sacrifice-based top engine move (${playedMove}).`;
+    return `Intentional sacrifice (${materialDelta}) with strong compensation (+${Math.max(0, evalGain)} cp).`;
   }
 
   if (category === "great") {
-    return `Strong tactical best move by engine (${playedMove}).`;
+    return `Best practical punishment after opponent error (${cpl} CPL).`;
   }
 
   if (category === "blunder") {
