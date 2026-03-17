@@ -5,11 +5,11 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "concurrently \"npm:dev:client\" \"npm:dev:analyze\" \"npm:dev:server\"",
-    "dev:client": "esbuild src/client/main.ts --bundle --sourcemap --format=esm --outdir=public/assets --watch",
+    "dev:client": "esbuild src/client/main.ts --bundle --sourcemap --format=esm --loader:.jpg=file --outdir=public/assets --watch",
     "dev:analyze": "esbuild src/client/analyze.ts --bundle --sourcemap --format=esm --outdir=public/assets --watch",
     "dev:server": "tsx watch src/server/index.ts",
     "build": "npm run clean && npm run build:client && npm run build:server && npm run build:html",
-    "build:client": "esbuild src/client/main.ts --bundle --minify --format=esm --outdir=dist/public/assets && esbuild src/client/analyze.ts --bundle --minify --format=esm --outdir=dist/public/assets",
+    "build:client": "esbuild src/client/main.ts --bundle --minify --format=esm --loader:.jpg=file --outdir=dist/public/assets && esbuild src/client/analyze.ts --bundle --minify --format=esm --loader:.jpg=file --outdir=dist/public/assets",
     "build:server": "esbuild src/server/index.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/server.js",
     "build:html": "shx mkdir -p dist/public && shx cp public/index.html dist/public/index.html && shx cp public/analyze.html dist/public/analyze.html && shx mkdir -p dist/public/sounds && shx cp -r public/sounds/. dist/public/sounds && shx mkdir -p dist/public/pieces && shx cp -r public/pieces/. dist/public/pieces",
     "clean": "shx rm -rf dist public/assets",

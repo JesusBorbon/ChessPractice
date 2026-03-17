@@ -65,8 +65,9 @@ const io = new Server(server, {
 });
 
 const rooms = new Map<string, GameRoom>();
-const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const ROOM_CODE_LENGTH = 6;
+const ROOM_ALPHABET = "0123456789";
+const ROOM_CODE_LENGTH = 4;
+const ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
 const ROOM_TTL_MS = 1000 * 60 * 60 * 4;
 
 const projectRoot = process.cwd();
@@ -336,9 +337,14 @@ io.on("connection", (socket) => {
   });
 
   socket.on("room:join", (payload?: { roomId?: string }) => {
-    const roomId = payload?.roomId?.trim().toUpperCase();
+    const roomId = payload?.roomId?.trim();
     if (!roomId) {
       socket.emit("room:error", { message: "Enter a room code first." });
+      return;
+    }
+
+    if (!ROOM_ID_PATTERN.test(roomId)) {
+      socket.emit("room:error", { message: "Room code must be exactly 4 digits." });
       return;
     }
 

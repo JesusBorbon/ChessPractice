@@ -106,7 +106,7 @@ if (!app) {
   throw new Error("Missing #app root element.");
 }
 
-const initialRoomCode = new URLSearchParams(window.location.search).get("room")?.trim().toUpperCase() ?? null;
+const initialRoomCode = new URLSearchParams(window.location.search).get("room")?.trim() ?? null;
 
 const state: AppState = {
   connected: false,
@@ -155,6 +155,8 @@ const LIVE_CATEGORY_LABELS: Record<MoveCategory, string> = {
   mistake: "Mistake",
   blunder: "Blunder",
 };
+const ROOM_CODE_LENGTH = 4;
+const ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
 
 class StockfishBridge {
   private readonly worker: Worker;
@@ -308,7 +310,7 @@ app.innerHTML = `
       <section class="hero-card hero-copy">
         <h1>Multiplayer Chess</h1>
         <p>Create a room or join one with code.</p>
-        <a href="/analyze" style="display:inline-flex;align-items:center;gap:8px;margin-top:18px;padding:12px 22px;background:var(--accent-strong);color:#fffdf8;border-radius:999px;font-weight:700;text-decoration:none;box-shadow:0 10px 24px rgba(25,63,48,0.18);transition:transform 150ms ease;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">♟ Open Analysis Board</a>
+        <a class="analysis-board-link cta-rainbow" href="/analyze">♟ Open Analysis Board</a>
       </section>
       <aside class="hero-card status-card">
         <div class="status-grid">
@@ -331,7 +333,7 @@ app.innerHTML = `
     <main class="layout">
       <section class="panel board-panel">
         <div class="board-toolbar">
-          <button class="action" id="createRoomButton" type="button">Create room</button>
+          <button class="action cta-gold" id="createRoomButton" type="button">Create room</button>
           <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
           <button class="ghost" id="flipBoardButton" type="button" hidden>Flip board</button>
           <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
@@ -354,14 +356,14 @@ app.innerHTML = `
       </section>
 
       <aside class="panel side-panel">
-        <section class="control-card">
+        <section class="control-card" id="inviteJoinCard">
           <h2 class="card-title">Invite or join</h2>
           <div class="control-row">
             <button class="chip" id="copyLinkButton" type="button" hidden>Copy invite link</button>
             <button class="chip" id="leaveRoomButton" type="button" hidden>Leave room</button>
           </div>
           <div class="join-grid">
-            <input class="join-input" id="roomInput" maxlength="6" placeholder="Room code" />
+            <input class="join-input" id="roomInput" maxlength="4" inputmode="numeric" pattern="\\d{4}" placeholder="4-digit code" />
             <button class="action" id="joinRoomButton" type="button">Join</button>
           </div>
           <div class="link-row">
@@ -370,7 +372,7 @@ app.innerHTML = `
           </div>
         </section>
 
-        <section class="seat-card">
+        <section class="seat-card" id="seatCard" hidden>
           <h2 class="card-title">Seats</h2>
           <div class="seat-grid">
             <article class="seat">
@@ -398,13 +400,13 @@ app.innerHTML = `
           </div>
         </section>
 
-        <section class="summary-card">
+        <section class="summary-card" id="summaryCard" hidden>
           <h2 class="card-title">Game summary</h2>
           <p class="muted" id="summaryText">The server will keep this board authoritative for every device in the room.</p>
           <p class="muted" id="liveAnalysisText">Live analysis disabled.</p>
         </section>
 
-        <section class="moves-card">
+        <section class="moves-card" id="movesCard" hidden>
           <h2 class="card-title">Moves</h2>
           <div class="move-list" id="moveList">
             <div class="empty-state">No moves yet.</div>
@@ -432,12 +434,16 @@ app.innerHTML = `
 
 const board = must<HTMLDivElement>("#board");
 const pregamePlaceholder = must<HTMLDivElement>("#pregamePlaceholder");
+const inviteJoinCard = must<HTMLElement>("#inviteJoinCard");
 const roomInput = must<HTMLInputElement>("#roomInput");
 const roomBadge = must<HTMLDivElement>("#roomBadge");
 const roleBadge = must<HTMLDivElement>("#roleBadge");
 const matchStatus = must<HTMLDivElement>("#matchStatus");
 const boardCaption = must<HTMLDivElement>("#boardCaption");
 const shareLink = must<HTMLSpanElement>("#shareLink");
+const seatCard = must<HTMLElement>("#seatCard");
+const summaryCard = must<HTMLElement>("#summaryCard");
+const movesCard = must<HTMLElement>("#movesCard");
 const whiteSeat = must<HTMLSpanElement>("#whiteSeat");
 const blackSeat = must<HTMLSpanElement>("#blackSeat");
 const turnMeta = must<HTMLSpanElement>("#turnMeta");
@@ -466,12 +472,18 @@ const arrowAnnotations = new Set<string>();
 
 createRoomButton.addEventListener("click", () => {
   socket.emit("room:create");
+  scrollToInviteJoinCardOnMobile();
 });
 
 joinRoomButton.addEventListener("click", () => {
-  const code = roomInput.value.trim().toUpperCase();
+  const code = roomInput.value.trim();
   if (!code) {
     showToast("Enter a room code first.");
+    return;
+  }
+
+  if (!ROOM_ID_PATTERN.test(code)) {
+    showToast("Room code must be exactly 4 digits.");
     return;
   }
 
@@ -528,6 +540,10 @@ focusModeButton.addEventListener("click", () => {
 
 window.addEventListener("keydown", (event) => {
   if (event.key.toLowerCase() !== "z" || isTypingTarget(event.target)) {
+    return;
+  }
+
+  if (focusModeButton.hidden) {
     return;
   }
 
@@ -775,7 +791,9 @@ socket.on("connect", () => {
   state.connected = true;
 
   if (state.autoJoinCode) {
-    socket.emit("room:join", { roomId: state.autoJoinCode });
+    if (ROOM_ID_PATTERN.test(state.autoJoinCode)) {
+      socket.emit("room:join", { roomId: state.autoJoinCode });
+    }
     state.autoJoinCode = null;
   }
 });
@@ -893,17 +911,30 @@ function render(): void {
 
 function renderSession(): void {
   const snapshot = state.snapshot;
+  const hasRoom = Boolean(state.roomId);
+  const isMatchReady = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
+  const canVote = state.role === "w" || state.role === "b";
+  const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
 
   roomBadge.textContent = state.roomId ? `Room ${state.roomId}` : "No active room";
   roleBadge.textContent = humanRole(state.role);
   shareLink.textContent = state.shareUrl || "Create or join a room to get a live invite link.";
 
-  // Update button visibility based on room/game status
-  leaveRoomButton.hidden = !state.roomId;
+  // Show controls only when they are actionable for the current session stage.
+  leaveRoomButton.hidden = !hasRoom;
   copyLinkButton.hidden = !state.shareUrl;
-  flipBoardButton.hidden = !snapshot;
-  liveAnalysisButton.hidden = !snapshot;
-  rematchButton.hidden = !snapshot;
+  flipBoardButton.hidden = !isMatchReady;
+  liveAnalysisButton.hidden = !isMatchReady || !canVote;
+  rematchButton.hidden = !gameEnded || !canVote;
+  focusModeButton.hidden = !isMatchReady;
+  seatCard.hidden = !hasRoom;
+  summaryCard.hidden = !isMatchReady;
+  movesCard.hidden = !isMatchReady;
+
+  if (!isMatchReady && state.focusMode) {
+    state.focusMode = false;
+    applyFocusMode();
+  }
   
   if (!snapshot) {
     pregamePlaceholder.hidden = false;
@@ -918,7 +949,6 @@ function renderSession(): void {
     return;
   }
 
-  const isMatchReady = snapshot.players.whiteConnected && snapshot.players.blackConnected;
   pregamePlaceholder.hidden = isMatchReady;
 
   matchStatus.textContent = snapshot.status;
@@ -940,14 +970,12 @@ function renderSession(): void {
 
   summaryText.textContent = `${roleDescription} ${snapshot.status}${lastMoveDescription}${rematchDescription}`.trim();
   const seatedPlayers = Number(snapshot.players.whiteConnected) + Number(snapshot.players.blackConnected);
-  const canVote = state.role === "w" || state.role === "b";
   liveAnalysisButton.disabled = seatedPlayers < 2 || !canVote;
   liveAnalysisButton.textContent = snapshot.analysis.enabled
     ? "Disable analysis"
     : `Enable analysis (${snapshot.analysis.votes}/2)`;
 
   // Enable rematch button only if game has ended
-  const gameEnded = snapshot.checkmate || snapshot.draw || snapshot.winner !== null;
   rematchButton.disabled = !gameEnded;
 
   if (snapshot.analysis.enabled) {
@@ -1897,6 +1925,35 @@ function clearLocalRoomState(): void {
 function isTypingTarget(target: EventTarget | null): boolean {
   const element = target as HTMLElement | null;
   return Boolean(element?.closest("input, textarea, [contenteditable='true']"));
+}
+
+function shouldAutoScrollInviteJoin(): boolean {
+  const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
+  const isSmallViewport = window.matchMedia("(max-width: 1100px)").matches;
+  return isCoarsePointer || isSmallViewport;
+}
+
+function isElementMostlyVisible(element: HTMLElement, minVisibleRatio = 0.68): boolean {
+  const rect = element.getBoundingClientRect();
+  const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+
+  const visibleWidth = Math.max(0, Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0));
+  const visibleHeight = Math.max(0, Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0));
+  const visibleArea = visibleWidth * visibleHeight;
+  const totalArea = Math.max(1, rect.width * rect.height);
+  return visibleArea / totalArea >= minVisibleRatio;
+}
+
+function scrollToInviteJoinCardOnMobile(): void {
+  const needsForcedReveal = !isElementMostlyVisible(inviteJoinCard);
+  if (!shouldAutoScrollInviteJoin() && !needsForcedReveal) {
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    inviteJoinCard.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+  });
 }
 
 function formatElapsed(secondsTotal: number): string {

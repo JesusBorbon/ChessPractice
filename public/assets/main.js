@@ -7196,7 +7196,7 @@ var require_main = __commonJS({
     if (!app) {
       throw new Error("Missing #app root element.");
     }
-    var initialRoomCode = new URLSearchParams(window.location.search).get("room")?.trim().toUpperCase() ?? null;
+    var initialRoomCode = new URLSearchParams(window.location.search).get("room")?.trim() ?? null;
     var state = {
       connected: false,
       roomId: null,
@@ -7242,6 +7242,8 @@ var require_main = __commonJS({
       mistake: "Mistake",
       blunder: "Blunder"
     };
+    var ROOM_CODE_LENGTH = 4;
+    var ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
     var StockfishBridge = class {
       worker;
       ready = false;
@@ -7372,7 +7374,7 @@ var require_main = __commonJS({
       <section class="hero-card hero-copy">
         <h1>Multiplayer Chess</h1>
         <p>Create a room or join one with code.</p>
-        <a href="/analyze" style="display:inline-flex;align-items:center;gap:8px;margin-top:18px;padding:12px 22px;background:var(--accent-strong);color:#fffdf8;border-radius:999px;font-weight:700;text-decoration:none;box-shadow:0 10px 24px rgba(25,63,48,0.18);transition:transform 150ms ease;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">\u265F Open Analysis Board</a>
+        <a class="analysis-board-link cta-rainbow" href="/analyze">\u265F Open Analysis Board</a>
       </section>
       <aside class="hero-card status-card">
         <div class="status-grid">
@@ -7395,7 +7397,7 @@ var require_main = __commonJS({
     <main class="layout">
       <section class="panel board-panel">
         <div class="board-toolbar">
-          <button class="action" id="createRoomButton" type="button">Create room</button>
+          <button class="action cta-gold" id="createRoomButton" type="button">Create room</button>
           <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
           <button class="ghost" id="flipBoardButton" type="button" hidden>Flip board</button>
           <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
@@ -7418,14 +7420,14 @@ var require_main = __commonJS({
       </section>
 
       <aside class="panel side-panel">
-        <section class="control-card">
+        <section class="control-card" id="inviteJoinCard">
           <h2 class="card-title">Invite or join</h2>
           <div class="control-row">
             <button class="chip" id="copyLinkButton" type="button" hidden>Copy invite link</button>
             <button class="chip" id="leaveRoomButton" type="button" hidden>Leave room</button>
           </div>
           <div class="join-grid">
-            <input class="join-input" id="roomInput" maxlength="6" placeholder="Room code" />
+            <input class="join-input" id="roomInput" maxlength="4" inputmode="numeric" pattern="\\d{4}" placeholder="4-digit code" />
             <button class="action" id="joinRoomButton" type="button">Join</button>
           </div>
           <div class="link-row">
@@ -7434,7 +7436,7 @@ var require_main = __commonJS({
           </div>
         </section>
 
-        <section class="seat-card">
+        <section class="seat-card" id="seatCard" hidden>
           <h2 class="card-title">Seats</h2>
           <div class="seat-grid">
             <article class="seat">
@@ -7462,13 +7464,13 @@ var require_main = __commonJS({
           </div>
         </section>
 
-        <section class="summary-card">
+        <section class="summary-card" id="summaryCard" hidden>
           <h2 class="card-title">Game summary</h2>
           <p class="muted" id="summaryText">The server will keep this board authoritative for every device in the room.</p>
           <p class="muted" id="liveAnalysisText">Live analysis disabled.</p>
         </section>
 
-        <section class="moves-card">
+        <section class="moves-card" id="movesCard" hidden>
           <h2 class="card-title">Moves</h2>
           <div class="move-list" id="moveList">
             <div class="empty-state">No moves yet.</div>
@@ -7495,12 +7497,16 @@ var require_main = __commonJS({
 `;
     var board = must("#board");
     var pregamePlaceholder = must("#pregamePlaceholder");
+    var inviteJoinCard = must("#inviteJoinCard");
     var roomInput = must("#roomInput");
     var roomBadge = must("#roomBadge");
     var roleBadge = must("#roleBadge");
     var matchStatus = must("#matchStatus");
     var boardCaption = must("#boardCaption");
     var shareLink = must("#shareLink");
+    var seatCard = must("#seatCard");
+    var summaryCard = must("#summaryCard");
+    var movesCard = must("#movesCard");
     var whiteSeat = must("#whiteSeat");
     var blackSeat = must("#blackSeat");
     var turnMeta = must("#turnMeta");
@@ -7526,11 +7532,16 @@ var require_main = __commonJS({
     var arrowAnnotations = /* @__PURE__ */ new Set();
     createRoomButton.addEventListener("click", () => {
       socket.emit("room:create");
+      scrollToInviteJoinCardOnMobile();
     });
     joinRoomButton.addEventListener("click", () => {
-      const code = roomInput.value.trim().toUpperCase();
+      const code = roomInput.value.trim();
       if (!code) {
         showToast("Enter a room code first.");
+        return;
+      }
+      if (!ROOM_ID_PATTERN.test(code)) {
+        showToast("Room code must be exactly 4 digits.");
         return;
       }
       socket.emit("room:join", { roomId: code });
@@ -7576,6 +7587,9 @@ var require_main = __commonJS({
     });
     window.addEventListener("keydown", (event) => {
       if (event.key.toLowerCase() !== "z" || isTypingTarget(event.target)) {
+        return;
+      }
+      if (focusModeButton.hidden) {
         return;
       }
       event.preventDefault();
@@ -7776,7 +7790,9 @@ var require_main = __commonJS({
     socket.on("connect", () => {
       state.connected = true;
       if (state.autoJoinCode) {
-        socket.emit("room:join", { roomId: state.autoJoinCode });
+        if (ROOM_ID_PATTERN.test(state.autoJoinCode)) {
+          socket.emit("room:join", { roomId: state.autoJoinCode });
+        }
         state.autoJoinCode = null;
       }
     });
@@ -7872,14 +7888,26 @@ var require_main = __commonJS({
     }
     function renderSession() {
       const snapshot = state.snapshot;
+      const hasRoom = Boolean(state.roomId);
+      const isMatchReady = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
+      const canVote = state.role === "w" || state.role === "b";
+      const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
       roomBadge.textContent = state.roomId ? `Room ${state.roomId}` : "No active room";
       roleBadge.textContent = humanRole(state.role);
       shareLink.textContent = state.shareUrl || "Create or join a room to get a live invite link.";
-      leaveRoomButton.hidden = !state.roomId;
+      leaveRoomButton.hidden = !hasRoom;
       copyLinkButton.hidden = !state.shareUrl;
-      flipBoardButton.hidden = !snapshot;
-      liveAnalysisButton.hidden = !snapshot;
-      rematchButton.hidden = !snapshot;
+      flipBoardButton.hidden = !isMatchReady;
+      liveAnalysisButton.hidden = !isMatchReady || !canVote;
+      rematchButton.hidden = !gameEnded || !canVote;
+      focusModeButton.hidden = !isMatchReady;
+      seatCard.hidden = !hasRoom;
+      summaryCard.hidden = !isMatchReady;
+      movesCard.hidden = !isMatchReady;
+      if (!isMatchReady && state.focusMode) {
+        state.focusMode = false;
+        applyFocusMode();
+      }
       if (!snapshot) {
         pregamePlaceholder.hidden = false;
         matchStatus.textContent = "Create a room to start.";
@@ -7892,7 +7920,6 @@ var require_main = __commonJS({
         liveAnalysisText.textContent = "Live analysis disabled.";
         return;
       }
-      const isMatchReady = snapshot.players.whiteConnected && snapshot.players.blackConnected;
       pregamePlaceholder.hidden = isMatchReady;
       matchStatus.textContent = snapshot.status;
       whiteSeat.textContent = snapshot.players.whiteConnected ? seatLabel("w") : "Waiting for player";
@@ -7905,10 +7932,8 @@ var require_main = __commonJS({
       const rematchDescription = snapshot.rematchVotes > 0 ? ` Rematch votes: ${snapshot.rematchVotes}/2.` : "";
       summaryText.textContent = `${roleDescription} ${snapshot.status}${lastMoveDescription}${rematchDescription}`.trim();
       const seatedPlayers = Number(snapshot.players.whiteConnected) + Number(snapshot.players.blackConnected);
-      const canVote = state.role === "w" || state.role === "b";
       liveAnalysisButton.disabled = seatedPlayers < 2 || !canVote;
       liveAnalysisButton.textContent = snapshot.analysis.enabled ? "Disable analysis" : `Enable analysis (${snapshot.analysis.votes}/2)`;
-      const gameEnded = snapshot.checkmate || snapshot.draw || snapshot.winner !== null;
       rematchButton.disabled = !gameEnded;
       if (snapshot.analysis.enabled) {
         liveAnalysisText.textContent = state.liveAnalysisSummary;
@@ -8671,6 +8696,30 @@ var require_main = __commonJS({
     function isTypingTarget(target) {
       const element = target;
       return Boolean(element?.closest("input, textarea, [contenteditable='true']"));
+    }
+    function shouldAutoScrollInviteJoin() {
+      const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
+      const isSmallViewport = window.matchMedia("(max-width: 1100px)").matches;
+      return isCoarsePointer || isSmallViewport;
+    }
+    function isElementMostlyVisible(element, minVisibleRatio = 0.68) {
+      const rect = element.getBoundingClientRect();
+      const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+      const visibleWidth = Math.max(0, Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0));
+      const visibleHeight = Math.max(0, Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0));
+      const visibleArea = visibleWidth * visibleHeight;
+      const totalArea = Math.max(1, rect.width * rect.height);
+      return visibleArea / totalArea >= minVisibleRatio;
+    }
+    function scrollToInviteJoinCardOnMobile() {
+      const needsForcedReveal = !isElementMostlyVisible(inviteJoinCard);
+      if (!shouldAutoScrollInviteJoin() && !needsForcedReveal) {
+        return;
+      }
+      window.requestAnimationFrame(() => {
+        inviteJoinCard.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+      });
     }
     function formatElapsed(secondsTotal) {
       const minutes = Math.floor(secondsTotal / 60);

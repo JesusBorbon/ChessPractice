@@ -33,6 +33,13 @@
   --board-light: #f7ecd5;
   --board-dark: #35654f;
   --board-highlight: #efc35f;
+  --pregame-overlay-start: rgba(255, 251, 243, 0.84);
+  --pregame-overlay-end: rgba(239, 231, 212, 0.72);
+  --cta-rainbow-border: linear-gradient(120deg, #ff2d95, #ff6b00, #ffd400, #38ff6a, #00e5ff, #5b6cff, #c93bff, #ff2d95);
+  --cta-rainbow-glow: linear-gradient(130deg, rgba(255, 45, 149, 0.42), rgba(255, 214, 0, 0.33), rgba(56, 255, 106, 0.36), rgba(0, 229, 255, 0.33), rgba(201, 59, 255, 0.42));
+  --cta-gold-border: linear-gradient(120deg, #fff1b8, #ffd166, #f8b500, #ffcf40, #f6e27a, #ffd166, #fff1b8);
+  --cta-gold-glow: linear-gradient(130deg, rgba(255, 239, 176, 0.34), rgba(255, 209, 102, 0.3), rgba(248, 181, 0, 0.3), rgba(255, 207, 64, 0.28), rgba(246, 226, 122, 0.32));
+  --cta-random-hue: 360;
   --shadow: 0 24px 70px rgba(25, 35, 32, 0.12);
   --radius-xl: 28px;
   --radius-lg: 20px;
@@ -41,6 +48,10 @@
 
 * {
   box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 html,
@@ -120,6 +131,169 @@ button {
   color: var(--muted);
   font-size: 1rem;
   line-height: 1.6;
+}
+
+.analysis-board-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 12px 22px;
+  background: var(--accent-strong);
+  color: #fffdf8;
+  border-radius: 999px;
+  font-weight: 700;
+  text-decoration: none;
+  box-shadow: 0 10px 24px rgba(25, 63, 48, 0.18);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.analysis-board-link:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 32px rgba(25, 35, 32, 0.15);
+}
+
+.cta-rainbow,
+.cta-gold {
+  position: relative;
+  overflow: visible;
+  isolation: isolate;
+  border-radius: 999px;
+  z-index: 0;
+}
+
+.cta-rainbow::before,
+.cta-gold::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  padding: 2px;
+  background-size: 260% 260%;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 0;
+  animation:
+    cta-rainbow-flow 3.6s linear infinite,
+    cta-rainbow-shift 8.9s steps(19, end) infinite;
+}
+
+.cta-rainbow::after,
+.cta-gold::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border-radius: inherit;
+  background-size: 250% 250%;
+  filter: blur(8px);
+  pointer-events: none;
+  z-index: -1;
+  animation:
+    cta-rainbow-flow-reverse 5.2s linear infinite,
+    cta-rainbow-pulse 3.2s ease-in-out infinite,
+    cta-rainbow-shift 10.7s steps(23, end) infinite reverse;
+}
+
+.cta-rainbow::before {
+  background: var(--cta-rainbow-border);
+  filter: saturate(1.22);
+}
+
+.cta-rainbow::after {
+  background: var(--cta-rainbow-glow);
+  opacity: 0.58;
+}
+
+.cta-gold::before {
+  background: var(--cta-gold-border);
+  filter: saturate(1.08);
+}
+
+.cta-gold::after {
+  background: var(--cta-gold-glow);
+  opacity: 0.52;
+}
+
+.action.cta-gold {
+  background: linear-gradient(135deg, #8f2d12, #c24d16 48%, #ec8e1f 100%);
+  color: #fff7ea;
+  box-shadow: 0 12px 24px rgba(153, 61, 22, 0.28);
+}
+
+.action.cta-gold:hover {
+  background: linear-gradient(135deg, #a33916, #d85a18 52%, #f6a427 100%);
+  box-shadow: 0 16px 32px rgba(153, 61, 22, 0.34);
+}
+
+.action.cta-gold:focus {
+  box-shadow: 0 12px 24px rgba(153, 61, 22, 0.32), 0 0 0 3px rgba(245, 167, 55, 0.26);
+}
+
+@keyframes cta-rainbow-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes cta-rainbow-flow-reverse {
+  0% {
+    background-position: 100% 50%;
+  }
+  50% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes cta-rainbow-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  38% {
+    opacity: 0.72;
+  }
+  67% {
+    opacity: 0.58;
+  }
+}
+
+@keyframes cta-rainbow-shift {
+  0% {
+    filter: hue-rotate(0deg) saturate(1.12);
+  }
+  23% {
+    filter: hue-rotate(calc(var(--cta-random-hue) * 0.2deg)) saturate(1.45);
+  }
+  51% {
+    filter: hue-rotate(calc(var(--cta-random-hue) * 0.45deg)) saturate(1.25);
+  }
+  79% {
+    filter: hue-rotate(calc(var(--cta-random-hue) * 0.8deg)) saturate(1.5);
+  }
+  100% {
+    filter: hue-rotate(calc(var(--cta-random-hue) * 1deg)) saturate(1.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cta-rainbow::before,
+  .cta-rainbow::after,
+  .cta-gold::before,
+  .cta-gold::after {
+    animation: none;
+    opacity: 0.4;
+  }
 }
 
 .status-card {
@@ -247,7 +421,12 @@ button {
   padding: 26px;
   border-radius: 22px;
   border: 1px solid rgba(25, 35, 32, 0.12);
-  background: linear-gradient(160deg, rgba(255, 251, 243, 0.88), rgba(239, 231, 212, 0.86));
+  background:
+    linear-gradient(160deg, var(--pregame-overlay-start), var(--pregame-overlay-end)),
+    url("../../public/chessPic.jpg");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
   color: var(--ink);
   margin-bottom: 14px;
 }
@@ -266,7 +445,8 @@ button {
 
 [data-theme="purple"] .pregame-placeholder {
   border-color: rgba(186, 146, 255, 0.26);
-  background: linear-gradient(160deg, rgba(43, 26, 76, 0.95), rgba(27, 15, 52, 0.92));
+  --pregame-overlay-start: rgba(32, 20, 58, 0.8);
+  --pregame-overlay-end: rgba(20, 12, 41, 0.72);
   color: #efe7ff;
 }
 
@@ -276,13 +456,15 @@ button {
 
 [data-theme="walnut"] .pregame-placeholder {
   border-color: rgba(92, 58, 30, 0.2);
-  background: linear-gradient(160deg, rgba(252, 245, 232, 0.94), rgba(243, 228, 204, 0.92));
+  --pregame-overlay-start: rgba(252, 245, 232, 0.82);
+  --pregame-overlay-end: rgba(243, 228, 204, 0.68);
   color: #3a2210;
 }
 
 [data-theme="refined"] .pregame-placeholder {
   border-color: rgba(24, 71, 108, 0.18);
-  background: linear-gradient(160deg, rgba(244, 250, 255, 0.94), rgba(229, 239, 247, 0.92));
+  --pregame-overlay-start: rgba(244, 250, 255, 0.84);
+  --pregame-overlay-end: rgba(229, 239, 247, 0.7);
   color: #102437;
 }
 
@@ -946,6 +1128,11 @@ body.focus-mode.focus-multiplayer .board-panel {
     --board-light: #d9beff;
     --board-dark: #6030a8;
     --board-highlight: #f0d040;
+    --cta-rainbow-border: linear-gradient(120deg, #d77cff, #7f5cff, #4e8bff, #33d8ff, #7dffcb, #d77cff);
+    --cta-rainbow-glow: linear-gradient(130deg, rgba(215, 124, 255, 0.4), rgba(127, 92, 255, 0.36), rgba(51, 216, 255, 0.32), rgba(125, 255, 203, 0.34), rgba(215, 124, 255, 0.4));
+    --cta-gold-border: linear-gradient(120deg, #ffe6b4, #ffcb69, #f6a638, #ffde8a, #ffd071, #ffe6b4);
+    --cta-gold-glow: linear-gradient(130deg, rgba(255, 230, 180, 0.34), rgba(255, 203, 105, 0.3), rgba(246, 166, 56, 0.32), rgba(255, 222, 138, 0.28), rgba(255, 208, 113, 0.32));
+    --cta-random-hue: 320;
     --shadow: 0 24px 70px rgba(80, 20, 160, 0.36);
     --radius-xl: 28px;
     --radius-lg: 20px;
@@ -985,6 +1172,11 @@ body.focus-mode.focus-multiplayer .board-panel {
     --board-light: #f0d9b5;
     --board-dark: #b58863;
     --board-highlight: #f5c518;
+    --cta-rainbow-border: linear-gradient(120deg, #c3682d, #d69442, #8fb35a, #5aa88a, #5a7fb3, #a267b4, #c3682d);
+    --cta-rainbow-glow: linear-gradient(130deg, rgba(195, 104, 45, 0.36), rgba(214, 148, 66, 0.32), rgba(90, 168, 138, 0.28), rgba(90, 127, 179, 0.3), rgba(162, 103, 180, 0.32));
+    --cta-gold-border: linear-gradient(120deg, #f7e7c4, #ddb46e, #c78743, #e2c27f, #f0d79e, #f7e7c4);
+    --cta-gold-glow: linear-gradient(130deg, rgba(247, 231, 196, 0.3), rgba(221, 180, 110, 0.28), rgba(199, 135, 67, 0.3), rgba(226, 194, 127, 0.27), rgba(240, 215, 158, 0.3));
+    --cta-random-hue: 240;
     --shadow: 0 24px 70px rgba(60, 34, 16, 0.14);
     --radius-xl: 28px;
     --radius-lg: 20px;
@@ -1024,6 +1216,11 @@ body.focus-mode.focus-multiplayer .board-panel {
     --board-light: #eaf0f5;
     --board-dark: #6c879d;
     --board-highlight: #ffd166;
+    --cta-rainbow-border: linear-gradient(120deg, #ff8c66, #ffd166, #66d1a0, #5fb7ff, #9b8dff, #ff8fc8, #ff8c66);
+    --cta-rainbow-glow: linear-gradient(130deg, rgba(255, 140, 102, 0.34), rgba(255, 209, 102, 0.3), rgba(102, 209, 160, 0.28), rgba(95, 183, 255, 0.3), rgba(155, 141, 255, 0.32));
+    --cta-gold-border: linear-gradient(120deg, #fff2c7, #ffd774, #e6af45, #ffd98c, #ffe9b4, #fff2c7);
+    --cta-gold-glow: linear-gradient(130deg, rgba(255, 242, 199, 0.3), rgba(255, 215, 116, 0.28), rgba(230, 175, 69, 0.3), rgba(255, 217, 140, 0.27), rgba(255, 233, 180, 0.3));
+    --cta-random-hue: 280;
     --shadow: 0 24px 70px rgba(16, 36, 55, 0.16);
     --radius-xl: 28px;
     --radius-lg: 20px;
