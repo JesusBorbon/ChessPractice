@@ -3719,12 +3719,16 @@ var require_analyze = __commonJS({
     var ptrStartX = 0;
     var ptrStartY = 0;
     var arrowDragFrom = null;
+    var arrowDragTo = null;
+    var arrowDragPointer = null;
     var arrowDragMoved = false;
     boardEl.addEventListener("pointerdown", (event) => {
       if (event.button === 2) {
         const square2 = getSquareFromPoint(event.clientX, event.clientY);
         if (!square2) return;
         arrowDragFrom = square2;
+        arrowDragTo = null;
+        arrowDragPointer = squareCenter(square2);
         arrowDragMoved = false;
         ptrStartX = event.clientX;
         ptrStartY = event.clientY;
@@ -3743,6 +3747,12 @@ var require_analyze = __commonJS({
       boardEl.setPointerCapture(event.pointerId);
     });
     boardEl.addEventListener("pointermove", (event) => {
+      if (arrowDragFrom) {
+        const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
+        arrowDragTo = hoverSquare && hoverSquare !== arrowDragFrom ? hoverSquare : null;
+        arrowDragPointer = boardPointFromClient(event.clientX, event.clientY);
+        renderArrows();
+      }
       if (arrowDragFrom && !arrowDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) >= 5) {
         arrowDragMoved = true;
       }
@@ -3815,12 +3825,16 @@ var require_analyze = __commonJS({
     function endArrowDrag(event, commit) {
       if (!arrowDragFrom) return;
       const fromSquare = arrowDragFrom;
+      const previewTo = arrowDragTo;
       arrowDragFrom = null;
+      arrowDragTo = null;
+      arrowDragPointer = null;
+      renderArrows();
       if (!commit) {
         arrowDragMoved = false;
         return;
       }
-      const targetSquare = getSquareFromPoint(event.clientX, event.clientY);
+      const targetSquare = previewTo ?? getSquareFromPoint(event.clientX, event.clientY);
       if (!targetSquare || !arrowDragMoved || targetSquare === fromSquare) {
         arrowDragMoved = false;
         return;
@@ -3873,8 +3887,6 @@ var require_analyze = __commonJS({
       }
       if (legalTargets.includes(square)) {
         tryMoveFromTo(selectedSquare, square);
-        clearSelection();
-        renderBoard();
         return;
       }
       if (piece && piece.color === chess.turn()) {
@@ -3892,6 +3904,7 @@ var require_analyze = __commonJS({
       moveHistory.push(move);
       fenHistory.push(chess.fen());
       cursor = fenHistory.length - 1;
+      clearSelection();
       if (chess.isCheckmate() || chess.isStalemate() || chess.isDraw()) {
         playSound("gameEndOrCheckmate");
       } else if (chess.isCheck()) {
@@ -4092,14 +4105,16 @@ var require_analyze = __commonJS({
       const startY = fromRect.top + fromRect.height / 2;
       const endX = toRect.left + toRect.width / 2;
       const endY = toRect.top + toRect.height / 2;
+      const pageX = window.scrollX;
+      const pageY = window.scrollY;
       const deltaX = startX - endX;
       const deltaY = startY - endY;
       const computed = window.getComputedStyle(destinationPiece);
       const ghostPiece = destinationPiece.cloneNode(true);
       Object.assign(ghostPiece.style, {
-        position: "fixed",
-        left: `${endX}px`,
-        top: `${endY}px`,
+        position: "absolute",
+        left: `${endX + pageX}px`,
+        top: `${endY + pageY}px`,
         transform: "translate3d(-50%, -50%, 0)",
         margin: "0",
         zIndex: "9999",
@@ -4111,8 +4126,8 @@ var require_analyze = __commonJS({
         textShadow: computed.textShadow,
         lineHeight: "1",
         animation: "none",
-        opacity: "0.98",
-        willChange: "transform, opacity"
+        opacity: "1",
+        willChange: "transform"
       });
       destinationPiece.style.visibility = "hidden";
       activeGhostNode = ghostPiece;
@@ -4120,13 +4135,12 @@ var require_analyze = __commonJS({
       document.body.append(ghostPiece);
       const animation = ghostPiece.animate(
         [
-          { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) scale(0.88)`, opacity: 0.55, offset: 0 },
-          { transform: "translate3d(-50%, -50%, 0) scale(1.015)", opacity: 0.97, offset: 0.7 },
-          { transform: "translate3d(-50%, -50%, 0) scale(1)", opacity: 1, offset: 1 }
+          { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0)`, offset: 0 },
+          { transform: "translate3d(-50%, -50%, 0)", offset: 1 }
         ],
         {
-          duration: 950,
-          easing: "cubic-bezier(0.16, 1, 0.3, 1)"
+          duration: 900,
+          easing: "cubic-bezier(0.22, 0.61, 0.36, 1)"
         }
       );
       activeGhostAnimation = animation;
@@ -4179,10 +4193,24 @@ var require_analyze = __commonJS({
         y: row * 100 + 50
       };
     }
+    function boardPointFromClient(clientX, clientY) {
+      const rect = boardEl.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        return { x: 400, y: 400 };
+      }
+      const localX = clientX - rect.left;
+      const localY = clientY - rect.top;
+      const clampedX = Math.max(0, Math.min(rect.width, localX));
+      const clampedY = Math.max(0, Math.min(rect.height, localY));
+      return {
+        x: clampedX / rect.width * 800,
+        y: clampedY / rect.height * 800
+      };
+    }
     function renderArrows() {
       const defs = `
     <defs>
-      <marker id="arrow-head-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <marker id="arrow-head-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
         <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(219, 52, 52, 0.95)"></path>
       </marker>
     </defs>
@@ -4191,9 +4219,14 @@ var require_analyze = __commonJS({
         const [from, to] = entry.split("-");
         const start = squareCenter(from);
         const end = squareCenter(to);
-        return `<line x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="rgba(219, 52, 52, 0.88)" stroke-width="12" stroke-linecap="round" marker-end="url(#arrow-head-red)"/>`;
+        return `<line class="analyze-arrow" x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="rgba(219, 52, 52, 0.88)" stroke-width="12" stroke-linecap="round" marker-end="url(#arrow-head-red)"/>`;
       }).join("");
-      arrowLayer.innerHTML = `${defs}${arrows}`;
+      const previewArrow = arrowDragFrom && arrowDragPointer ? (() => {
+        const start = squareCenter(arrowDragFrom);
+        const end = arrowDragPointer;
+        return `<line class="analyze-arrow analyze-arrow-preview" x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="rgba(235, 76, 76, 0.92)" stroke-width="12" stroke-linecap="round" marker-end="url(#arrow-head-red)"/>`;
+      })() : "";
+      arrowLayer.innerHTML = `${defs}${arrows}${previewArrow}`;
     }
     function getLastMove() {
       if (cursor === 0) return void 0;

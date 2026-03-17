@@ -7141,6 +7141,7 @@ var require_main = __commonJS({
       legalTargets: [],
       toastMessage: "",
       pendingPromotion: null,
+      premove: null,
       autoJoinCode: initialRoomCode,
       suppressClickOnce: false
     };
@@ -7515,7 +7516,18 @@ var require_main = __commonJS({
         if (!currentPiece || !isOwnPiece(currentPiece.color)) {
           clearSelection();
         } else {
-          state.legalTargets = legalTargetsFor(state.selectedSquare);
+          state.legalTargets = snapshot.turn === state.role ? legalTargetsFor(state.selectedSquare) : legalTargetsForRole(state.selectedSquare, state.role);
+        }
+      }
+      if (state.role && state.role !== "spectator" && snapshot.turn === state.role && state.premove) {
+        const queued = state.premove;
+        state.premove = null;
+        const stillLegal = legalTargetsForRole(queued.from, state.role).includes(queued.to);
+        if (stillLegal && !snapshot.checkmate && !snapshot.draw) {
+          socket.emit("game:move", queued.promotion ? queued : { from: queued.from, to: queued.to });
+          showToast(`Premove played: ${queued.from} -> ${queued.to}`);
+        } else {
+          showToast("Premove canceled (position changed).");
         }
       }
       render();
@@ -7574,6 +7586,7 @@ var require_main = __commonJS({
       const lastMoveSquares = /* @__PURE__ */ new Set();
       const checkedKingSquare = getCheckedKingSquare();
       const lastMove = state.snapshot?.lastMove ?? null;
+      const premove = state.premove;
       if (lastMove) {
         lastMoveSquares.add(lastMove.from);
         lastMoveSquares.add(lastMove.to);
@@ -7597,6 +7610,12 @@ var require_main = __commonJS({
         }
         if (checkedKingSquare === squareName) {
           button.classList.add("in-check");
+        }
+        if (premove && premove.from === square) {
+          button.classList.add("premove-from");
+        }
+        if (premove && premove.to === square) {
+          button.classList.add("premove-to");
         }
         if (piece) {
           const glyph = PIECES[`${piece.color}${piece.type}`];
@@ -7655,7 +7674,7 @@ var require_main = __commonJS({
         return;
       }
       if (state.snapshot.turn !== state.role) {
-        boardCaption.textContent = `Waiting for ${state.snapshot.turn === "w" ? "White" : "Black"} to move.`;
+        boardCaption.textContent = state.premove ? `Premove queued: ${state.premove.from} -> ${state.premove.to}.` : `Waiting for ${state.snapshot.turn === "w" ? "White" : "Black"} to move. You can set one premove.`;
         return;
       }
       boardCaption.textContent = state.selectedSquare ? `Selected ${state.selectedSquare}. Choose one of the highlighted targets.` : `Your move as ${state.role === "w" ? "White" : "Black"}.`;
@@ -7714,14 +7733,16 @@ var require_main = __commonJS({
       const startY = fromRect.top + fromRect.height / 2;
       const endX = toRect.left + toRect.width / 2;
       const endY = toRect.top + toRect.height / 2;
+      const pageX = window.scrollX;
+      const pageY = window.scrollY;
       const deltaX = startX - endX;
       const deltaY = startY - endY;
       const computed = window.getComputedStyle(destinationPiece);
       const ghostPiece = destinationPiece.cloneNode(true);
       Object.assign(ghostPiece.style, {
-        position: "fixed",
-        left: `${endX}px`,
-        top: `${endY}px`,
+        position: "absolute",
+        left: `${endX + pageX}px`,
+        top: `${endY + pageY}px`,
         transform: "translate3d(-50%, -50%, 0)",
         margin: "0",
         zIndex: "9999",
@@ -7733,8 +7754,8 @@ var require_main = __commonJS({
         textShadow: computed.textShadow,
         lineHeight: "1",
         animation: "none",
-        opacity: "0.98",
-        willChange: "transform, opacity"
+        opacity: "1",
+        willChange: "transform"
       });
       destinationPiece.style.visibility = "hidden";
       activeGhostNode = ghostPiece;
@@ -7743,24 +7764,17 @@ var require_main = __commonJS({
       const animation = ghostPiece.animate(
         [
           {
-            transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) scale(0.88)`,
-            opacity: 0.55,
+            transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0)`,
             offset: 0
           },
           {
-            transform: "translate3d(-50%, -50%, 0) scale(1.015)",
-            opacity: 0.97,
-            offset: 0.7
-          },
-          {
-            transform: "translate3d(-50%, -50%, 0) scale(1)",
-            opacity: 1,
+            transform: "translate3d(-50%, -50%, 0)",
             offset: 1
           }
         ],
         {
-          duration: 950,
-          easing: "cubic-bezier(0.16, 1, 0.3, 1)"
+          duration: 900,
+          easing: "cubic-bezier(0.22, 0.61, 0.36, 1)"
         }
       );
       activeGhostAnimation = animation;
@@ -7788,7 +7802,7 @@ var require_main = __commonJS({
         return;
       }
       if (state.snapshot.turn !== state.role) {
-        showToast("Wait for your turn.");
+        onPremoveSquarePressed(square);
         return;
       }
       const clickedPiece = chess.get(square);
@@ -7832,18 +7846,31 @@ var require_main = __commonJS({
     function legalTargetsFor(square) {
       return chess.moves({ square, verbose: true }).map((move) => move.to);
     }
+    function legalTargetsForRole(square, role) {
+      const fenParts = chess.fen().split(" ");
+      fenParts[1] = role;
+      const roleChess = new Chess(fenParts.join(" "));
+      return roleChess.moves({ square, verbose: true }).map((move) => move.to);
+    }
     function canStartMoveFrom(square) {
       if (!state.snapshot || !state.role || state.role === "spectator") {
         return false;
       }
-      if (state.snapshot.turn !== state.role) {
+      const piece = chess.get(square);
+      if (!piece || !isOwnPiece(piece.color)) {
         return false;
       }
-      const piece = chess.get(square);
-      return Boolean(piece && isOwnPiece(piece.color));
+      if (state.snapshot.turn === state.role) {
+        return true;
+      }
+      return legalTargetsForRole(square, state.role).length > 0;
     }
     function tryMoveFromTo(from, to) {
-      if (!state.role || state.role === "spectator") {
+      if (!state.snapshot || !state.role || state.role === "spectator") {
+        return;
+      }
+      if (state.snapshot.turn !== state.role) {
+        queuePremove(from, to);
         return;
       }
       const selectedPiece = chess.get(from);
@@ -7853,6 +7880,68 @@ var require_main = __commonJS({
         return;
       }
       socket.emit("game:move", { from, to });
+    }
+    function queuePremove(from, to) {
+      if (!state.role || state.role === "spectator") {
+        return;
+      }
+      const legalTargets = legalTargetsForRole(from, state.role);
+      if (!legalTargets.includes(to)) {
+        showToast("Invalid premove.");
+        return;
+      }
+      const promotion = (() => {
+        const selectedPiece = chess.get(from);
+        if (selectedPiece?.type !== "p") {
+          return void 0;
+        }
+        return reachesPromotionRank(to, state.role) ? "q" : void 0;
+      })();
+      if (state.premove && state.premove.from === from && state.premove.to === to) {
+        state.premove = null;
+        showToast("Premove cleared.");
+      } else {
+        state.premove = promotion ? { from, to, promotion } : { from, to };
+        showToast(`Premove set: ${from} -> ${to}`);
+      }
+      clearSelection();
+      renderBoard();
+      updateCaption();
+    }
+    function onPremoveSquarePressed(square) {
+      if (!state.role || state.role === "spectator") {
+        return;
+      }
+      const clickedPiece = chess.get(square);
+      if (!state.selectedSquare) {
+        if (clickedPiece && clickedPiece.color === state.role) {
+          state.selectedSquare = square;
+          state.legalTargets = legalTargetsForRole(square, state.role);
+          renderBoard();
+          updateCaption();
+        }
+        return;
+      }
+      if (square === state.selectedSquare) {
+        clearSelection();
+        renderBoard();
+        updateCaption();
+        return;
+      }
+      if (state.legalTargets.includes(square)) {
+        queuePremove(state.selectedSquare, square);
+        return;
+      }
+      if (clickedPiece && clickedPiece.color === state.role) {
+        state.selectedSquare = square;
+        state.legalTargets = legalTargetsForRole(square, state.role);
+        renderBoard();
+        updateCaption();
+        return;
+      }
+      clearSelection();
+      renderBoard();
+      updateCaption();
     }
     function isOwnPiece(color) {
       return state.role === color;
@@ -7893,6 +7982,7 @@ var require_main = __commonJS({
       state.shareUrl = "";
       state.snapshot = null;
       state.pendingPromotion = null;
+      state.premove = null;
       clearSelection();
       chess.reset();
       syncUrl(null);

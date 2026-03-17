@@ -204,7 +204,7 @@ button {
   padding: 0;
   border: 0;
   background: transparent;
-  font-size: clamp(2.55rem, 5.8vw, 4.55rem);
+  font-size: clamp(2.9rem, 6.3vw, 4.95rem);
   user-select: none;
   -webkit-tap-highlight-color: transparent;
   transition: background-color 220ms ease, box-shadow 220ms ease;
@@ -246,6 +246,23 @@ button {
   background: rgba(56, 132, 245, 0.38);
   inset: 0;
   border-radius: 0;
+}
+.square.premove-from::before,
+.square.premove-to::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.square.premove-from::before {
+  box-shadow: inset 0 0 0 4px rgba(32, 115, 86, 0.78);
+}
+.square.premove-to::before {
+  background:
+    radial-gradient(
+      circle at center,
+      rgba(47, 109, 80, 0.34),
+      rgba(47, 109, 80, 0.08));
 }
 .square.legal::before {
   background: rgba(25, 35, 32, 0.18);

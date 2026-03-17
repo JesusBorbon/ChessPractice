@@ -238,6 +238,8 @@ let ptrDragMoved = false;
 let ptrStartX = 0;
 let ptrStartY = 0;
 let arrowDragFrom: Square | null = null;
+let arrowDragTo: Square | null = null;
+let arrowDragPointer: { x: number; y: number } | null = null;
 let arrowDragMoved = false;
 
 boardEl.addEventListener("pointerdown", (event) => {
@@ -246,6 +248,8 @@ boardEl.addEventListener("pointerdown", (event) => {
     if (!square) return;
 
     arrowDragFrom = square;
+    arrowDragTo = null;
+    arrowDragPointer = squareCenter(square);
     arrowDragMoved = false;
     ptrStartX = event.clientX;
     ptrStartY = event.clientY;
@@ -267,6 +271,13 @@ boardEl.addEventListener("pointerdown", (event) => {
 });
 
 boardEl.addEventListener("pointermove", (event) => {
+  if (arrowDragFrom) {
+    const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
+    arrowDragTo = hoverSquare && hoverSquare !== arrowDragFrom ? hoverSquare : null;
+    arrowDragPointer = boardPointFromClient(event.clientX, event.clientY);
+    renderArrows();
+  }
+
   if (arrowDragFrom && !arrowDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) >= 5) {
     arrowDragMoved = true;
   }
@@ -352,14 +363,18 @@ function endArrowDrag(event: PointerEvent, commit: boolean): void {
   if (!arrowDragFrom) return;
 
   const fromSquare = arrowDragFrom;
+  const previewTo = arrowDragTo;
   arrowDragFrom = null;
+  arrowDragTo = null;
+  arrowDragPointer = null;
+  renderArrows();
 
   if (!commit) {
     arrowDragMoved = false;
     return;
   }
 
-  const targetSquare = getSquareFromPoint(event.clientX, event.clientY);
+  const targetSquare = previewTo ?? getSquareFromPoint(event.clientX, event.clientY);
   if (!targetSquare || !arrowDragMoved || targetSquare === fromSquare) {
     arrowDragMoved = false;
     return;
@@ -432,8 +447,6 @@ function onSquareClick(square: Square): void {
   // Clicked a legal target → move
   if (legalTargets.includes(square)) {
     tryMoveFromTo(selectedSquare, square);
-    clearSelection();
-    renderBoard();
     return;
   }
 
@@ -456,6 +469,7 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
   moveHistory.push(move);
   fenHistory.push(chess.fen());
   cursor = fenHistory.length - 1;
+  clearSelection();
   // Play sound based on outcome
   if (chess.isCheckmate() || chess.isStalemate() || chess.isDraw()) {
     playSound("gameEndOrCheckmate");
@@ -700,15 +714,17 @@ function animateLastMove(lastMove: Move | undefined): void {
   const startY = fromRect.top + fromRect.height / 2;
   const endX = toRect.left + toRect.width / 2;
   const endY = toRect.top + toRect.height / 2;
+  const pageX = window.scrollX;
+  const pageY = window.scrollY;
   const deltaX = startX - endX;
   const deltaY = startY - endY;
 
   const computed = window.getComputedStyle(destinationPiece);
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
   Object.assign(ghostPiece.style, {
-    position: "fixed",
-    left: `${endX}px`,
-    top: `${endY}px`,
+    position: "absolute",
+    left: `${endX + pageX}px`,
+    top: `${endY + pageY}px`,
     transform: "translate3d(-50%, -50%, 0)",
     margin: "0",
     zIndex: "9999",
@@ -720,8 +736,8 @@ function animateLastMove(lastMove: Move | undefined): void {
     textShadow: computed.textShadow,
     lineHeight: "1",
     animation: "none",
-    opacity: "0.98",
-    willChange: "transform, opacity",
+    opacity: "1",
+    willChange: "transform",
   });
 
   destinationPiece.style.visibility = "hidden";
@@ -731,13 +747,12 @@ function animateLastMove(lastMove: Move | undefined): void {
 
   const animation = ghostPiece.animate(
     [
-      { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) scale(0.88)`, opacity: 0.55, offset: 0 },
-      { transform: "translate3d(-50%, -50%, 0) scale(1.015)", opacity: 0.97, offset: 0.7 },
-      { transform: "translate3d(-50%, -50%, 0) scale(1)", opacity: 1, offset: 1 },
+      { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0)`, offset: 0 },
+      { transform: "translate3d(-50%, -50%, 0)", offset: 1 },
     ],
     {
-      duration: 950,
-      easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+      duration: 900,
+      easing: "cubic-bezier(0.22, 0.61, 0.36, 1)",
     },
   );
 
@@ -801,10 +816,27 @@ function squareCenter(square: Square): { x: number; y: number } {
   };
 }
 
+function boardPointFromClient(clientX: number, clientY: number): { x: number; y: number } {
+  const rect = boardEl.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return { x: 400, y: 400 };
+  }
+
+  const localX = clientX - rect.left;
+  const localY = clientY - rect.top;
+  const clampedX = Math.max(0, Math.min(rect.width, localX));
+  const clampedY = Math.max(0, Math.min(rect.height, localY));
+
+  return {
+    x: (clampedX / rect.width) * 800,
+    y: (clampedY / rect.height) * 800,
+  };
+}
+
 function renderArrows(): void {
   const defs = `
     <defs>
-      <marker id="arrow-head-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <marker id="arrow-head-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
         <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(219, 52, 52, 0.95)"></path>
       </marker>
     </defs>
@@ -815,11 +847,19 @@ function renderArrows(): void {
       const [from, to] = entry.split("-") as [Square, Square];
       const start = squareCenter(from);
       const end = squareCenter(to);
-      return `<line x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="rgba(219, 52, 52, 0.88)" stroke-width="12" stroke-linecap="round" marker-end="url(#arrow-head-red)"/>`;
+      return `<line class="analyze-arrow" x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="rgba(219, 52, 52, 0.88)" stroke-width="12" stroke-linecap="round" marker-end="url(#arrow-head-red)"/>`;
     })
     .join("");
 
-  arrowLayer.innerHTML = `${defs}${arrows}`;
+  const previewArrow = arrowDragFrom && arrowDragPointer
+    ? (() => {
+        const start = squareCenter(arrowDragFrom);
+        const end = arrowDragPointer;
+        return `<line class="analyze-arrow analyze-arrow-preview" x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="rgba(235, 76, 76, 0.92)" stroke-width="12" stroke-linecap="round" marker-end="url(#arrow-head-red)"/>`;
+      })()
+    : "";
+
+  arrowLayer.innerHTML = `${defs}${arrows}${previewArrow}`;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
