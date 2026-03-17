@@ -3499,12 +3499,52 @@ var init_analyze = __esm({
   }
 });
 
+// src/client/theme.ts
+function setTheme(theme) {
+  if (theme === "forest") {
+    document.documentElement.removeAttribute("data-theme");
+  } else {
+    document.documentElement.setAttribute("data-theme", theme);
+  }
+  localStorage.setItem(STORAGE_KEY, theme);
+  document.querySelectorAll(".theme-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.theme === theme);
+  });
+}
+function mountThemeSwitcher() {
+  const saved = localStorage.getItem(STORAGE_KEY) ?? "forest";
+  setTheme(saved);
+  const widget = document.createElement("div");
+  widget.className = "theme-switcher";
+  widget.setAttribute("role", "group");
+  widget.setAttribute("aria-label", "Choose theme");
+  widget.innerHTML = `
+    <span class="theme-switcher-label">Theme</span>
+    <button class="theme-btn" data-theme="forest" title="Classic Forest" aria-label="Classic Forest theme"></button>
+    <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
+    <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
+  `;
+  document.body.appendChild(widget);
+  widget.addEventListener("click", (e) => {
+    const btn = e.target.closest(".theme-btn");
+    if (btn?.dataset.theme) setTheme(btn.dataset.theme);
+  });
+}
+var STORAGE_KEY;
+var init_theme = __esm({
+  "src/client/theme.ts"() {
+    "use strict";
+    STORAGE_KEY = "chess-theme";
+  }
+});
+
 // src/client/analyze.ts
 var require_analyze = __commonJS({
   "src/client/analyze.ts"() {
     init_chess();
     init_engine();
     init_analyze();
+    init_theme();
     var CATEGORY_LABELS = {
       brilliant: "Brillante",
       great: "Genial",
@@ -3758,8 +3798,9 @@ var require_analyze = __commonJS({
 
 <div class="toast" id="toast"></div>
 `;
-    var boardEl = q("#board");
+    mountThemeSwitcher();
     var arrowLayer = q("#arrowLayer");
+    var boardEl = q("#board");
     var statusBar = q("#statusBar");
     var fenDisplay = q("#fenDisplay");
     var pgnDisplay = q("#pgnDisplay");

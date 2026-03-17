@@ -515,3 +515,195 @@ button {
     opacity: 0.78;
   }
 }
+
+  /* ── Themes ──────────────────────────────────────────────────────────────────
+     data-theme="purple"  → Cosmic Purple (dark)
+     data-theme="walnut"  → Walnut & Cream (warm brown / chess.com palette)
+     No attribute          → Classic Forest (default)
+  ─────────────────────────────────────────────────────────────────────────── */
+
+  [data-theme="purple"] {
+    --bg: #120d1e;
+    --paper: rgba(28, 18, 52, 0.88);
+    --paper-strong: rgba(34, 22, 60, 0.96);
+    --ink: #e0d8ff;
+    --muted: #9e8ecc;
+    --accent: #a568e8;
+    --accent-strong: #d0a8ff;
+    --accent-soft: #3a1f6a;
+    --gold: #e0bc50;
+    --board-light: #d9beff;
+    --board-dark: #6030a8;
+    --board-highlight: #f0d040;
+    --shadow: 0 24px 70px rgba(80, 20, 160, 0.36);
+    --radius-xl: 28px;
+    --radius-lg: 20px;
+    --radius-md: 14px;
+  }
+
+  [data-theme="walnut"] {
+    --bg: #f2e8d4;
+    --paper: rgba(255, 250, 240, 0.88);
+    --paper-strong: rgba(255, 248, 234, 0.96);
+    --ink: #3a2210;
+    --muted: #7a5a3c;
+    --accent: #8b5e34;
+    --accent-strong: #5c3a1e;
+    --accent-soft: #eddec8;
+    --gold: #b07030;
+    --board-light: #f0d9b5;
+    --board-dark: #b58863;
+    --board-highlight: #f5c518;
+    --shadow: 0 24px 70px rgba(60, 34, 16, 0.14);
+    --radius-xl: 28px;
+    --radius-lg: 20px;
+    --radius-md: 14px;
+  }
+
+  /* Body backgrounds */
+  [data-theme="purple"] body {
+    background:
+      radial-gradient(circle at top left, rgba(160, 60, 255, 0.18), transparent 32%),
+      radial-gradient(circle at bottom right, rgba(90, 20, 200, 0.22), transparent 28%),
+      linear-gradient(135deg, #1c1030, #0e0820);
+  }
+
+  [data-theme="walnut"] body {
+    background:
+      radial-gradient(circle at top left, rgba(176, 112, 48, 0.2), transparent 32%),
+      radial-gradient(circle at bottom right, rgba(122, 79, 46, 0.14), transparent 28%),
+      linear-gradient(135deg, #f5edd8, #ece0c4);
+  }
+
+  /* Board gap-fill colour (background of the .board grid container) */
+  [data-theme="purple"] .board { background: #28105a; }
+  [data-theme="walnut"]  .board { background: #a07848; }
+
+  /* Card / panel borders on purple dark bg */
+  [data-theme="purple"] .hero-card,
+  [data-theme="purple"] .panel {
+    border-color: rgba(160, 100, 255, 0.16);
+  }
+
+  /* Ghost / chip / nav buttons — transparent dark tint is invisible on dark bg */
+  [data-theme="purple"] .ghost,
+  [data-theme="purple"] .chip,
+  [data-theme="purple"] .promotion-button {
+    background: rgba(200, 160, 255, 0.12);
+    color: var(--ink);
+  }
+  [data-theme="purple"] .ghost:hover,
+  [data-theme="purple"] .chip:hover,
+  [data-theme="purple"] .promotion-button:hover {
+    background: rgba(200, 160, 255, 0.22);
+  }
+
+  /* Text inputs on purple dark bg */
+  [data-theme="purple"] .join-input {
+    background: rgba(40, 25, 72, 0.85);
+    border-color: rgba(180, 140, 255, 0.22);
+    color: var(--ink);
+  }
+
+  /* Promotion card on purple */
+  [data-theme="purple"] .promotion-card {
+    background: #1c1232;
+  }
+
+  /* Seat & row backgrounds */
+  [data-theme="purple"] .seat {
+    background: rgba(160, 100, 255, 0.1);
+  }
+  [data-theme="purple"] .move-row {
+    background: rgba(160, 100, 255, 0.08);
+  }
+  [data-theme="purple"] .status-pill {
+    background: rgba(160, 100, 255, 0.12);
+  }
+
+  /* Board square interactions on purple */
+  [data-theme="purple"] .square.selected {
+    box-shadow: inset 0 0 0 5px rgba(220, 160, 255, 0.85);
+  }
+  [data-theme="purple"] .square.last-move::before {
+    background: rgba(140, 100, 255, 0.35);
+  }
+  [data-theme="purple"] .square.legal::before {
+    background: rgba(200, 160, 255, 0.22);
+  }
+  [data-theme="purple"] .square.premove-from::before {
+    box-shadow: inset 0 0 0 4px rgba(160, 80, 255, 0.78);
+  }
+  [data-theme="purple"] .square.premove-to::before {
+    background: radial-gradient(circle at center, rgba(160, 80, 255, 0.34), rgba(160, 80, 255, 0.08));
+  }
+
+  /* Board square interactions on walnut */
+  [data-theme="walnut"] .square.selected {
+    box-shadow: inset 0 0 0 5px rgba(240, 196, 50, 0.88);
+  }
+  [data-theme="walnut"] .square.last-move::before {
+    background: rgba(200, 140, 50, 0.36);
+  }
+
+  /* ── Theme Switcher Widget ───────────────────────────────────────── */
+  .theme-switcher {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--paper-strong);
+    border: 1px solid rgba(25, 35, 32, 0.1);
+    border-radius: 999px;
+    box-shadow: var(--shadow);
+    z-index: 200;
+    backdrop-filter: blur(14px);
+  }
+
+  [data-theme="purple"] .theme-switcher {
+    border-color: rgba(160, 100, 255, 0.2);
+  }
+
+  [data-theme="walnut"] .theme-switcher {
+    border-color: rgba(92, 58, 30, 0.14);
+  }
+
+  .theme-switcher-label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    user-select: none;
+  }
+
+  .theme-btn {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2.5px solid transparent;
+    padding: 0;
+    cursor: pointer;
+    transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+    outline: none;
+  }
+  .theme-btn:hover {
+    transform: scale(1.2);
+  }
+  .theme-btn.active {
+    border-color: var(--ink);
+    box-shadow: 0 0 0 2px var(--paper-strong);
+    transform: scale(1.18);
+  }
+  .theme-btn[data-theme="forest"] {
+    background: linear-gradient(135deg, #2f6d50 40%, #f7ecd5 100%);
+  }
+  .theme-btn[data-theme="purple"] {
+    background: linear-gradient(135deg, #6030a8 40%, #d9beff 100%);
+  }
+  .theme-btn[data-theme="walnut"] {
+    background: linear-gradient(135deg, #b58863 40%, #f0d9b5 100%);
+  }

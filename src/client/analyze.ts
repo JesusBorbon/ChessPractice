@@ -1,6 +1,7 @@
 import { Chess, Square, Move } from "chess.js";
 import { buildSquareList, isLightSquare, SquareName, BoardOrientation } from "../../engine";
 import "./analyze.css";
+import { mountThemeSwitcher } from "./theme";
 
 type PromotionPiece = "q" | "r" | "b" | "n";
 type MoveCategory = "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder";
@@ -302,8 +303,11 @@ app.innerHTML = `
 `;
 
 // ── Element refs ───────────────────────────────────────────────────────────────
-const boardEl    = q<HTMLDivElement>("#board");
+mountThemeSwitcher();
+
+// ── Element refs ───────────────────────────────────────────────────────────────
 const arrowLayer = q<SVGSVGElement>("#arrowLayer");
+const boardEl    = q<HTMLDivElement>("#board");
 const statusBar  = q<HTMLDivElement>("#statusBar");
 const fenDisplay = q<HTMLTextAreaElement>("#fenDisplay");
 const pgnDisplay = q<HTMLTextAreaElement>("#pgnDisplay");

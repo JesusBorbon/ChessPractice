@@ -3,6 +3,7 @@ import { io } from "socket.io-client";
 
 import { BoardOrientation, SquareName, buildSquareList, isLightSquare } from "../../engine";
 import "./styles.css";
+import { mountThemeSwitcher } from "./theme";
 
 type PlayerRole = "w" | "b";
 type RoomRole = PlayerRole | "spectator";
@@ -273,6 +274,9 @@ const moveList = must<HTMLDivElement>("#moveList");
 const toast = must<HTMLDivElement>("#toast");
 const promotionDialog = must<HTMLDivElement>("#promotionDialog");
 const createRoomButton = must<HTMLButtonElement>("#createRoomButton");
+
+mountThemeSwitcher();
+
 const joinRoomButton = must<HTMLButtonElement>("#joinRoomButton");
 const copyLinkButton = must<HTMLButtonElement>("#copyLinkButton");
 const leaveRoomButton = must<HTMLButtonElement>("#leaveRoomButton");

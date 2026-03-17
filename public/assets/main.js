@@ -7102,6 +7102,45 @@ var init_styles = __esm({
   }
 });
 
+// src/client/theme.ts
+function setTheme(theme) {
+  if (theme === "forest") {
+    document.documentElement.removeAttribute("data-theme");
+  } else {
+    document.documentElement.setAttribute("data-theme", theme);
+  }
+  localStorage.setItem(STORAGE_KEY, theme);
+  document.querySelectorAll(".theme-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.theme === theme);
+  });
+}
+function mountThemeSwitcher() {
+  const saved = localStorage.getItem(STORAGE_KEY) ?? "forest";
+  setTheme(saved);
+  const widget = document.createElement("div");
+  widget.className = "theme-switcher";
+  widget.setAttribute("role", "group");
+  widget.setAttribute("aria-label", "Choose theme");
+  widget.innerHTML = `
+    <span class="theme-switcher-label">Theme</span>
+    <button class="theme-btn" data-theme="forest" title="Classic Forest" aria-label="Classic Forest theme"></button>
+    <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
+    <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
+  `;
+  document.body.appendChild(widget);
+  widget.addEventListener("click", (e) => {
+    const btn = e.target.closest(".theme-btn");
+    if (btn?.dataset.theme) setTheme(btn.dataset.theme);
+  });
+}
+var STORAGE_KEY;
+var init_theme = __esm({
+  "src/client/theme.ts"() {
+    "use strict";
+    STORAGE_KEY = "chess-theme";
+  }
+});
+
 // src/client/main.ts
 var require_main = __commonJS({
   "src/client/main.ts"() {
@@ -7109,6 +7148,7 @@ var require_main = __commonJS({
     init_esm5();
     init_engine();
     init_styles();
+    init_theme();
     var PIECES = {
       wp: "\u265F",
       wn: "\u265E",
@@ -7311,6 +7351,7 @@ var require_main = __commonJS({
     var toast = must("#toast");
     var promotionDialog = must("#promotionDialog");
     var createRoomButton = must("#createRoomButton");
+    mountThemeSwitcher();
     var joinRoomButton = must("#joinRoomButton");
     var copyLinkButton = must("#copyLinkButton");
     var leaveRoomButton = must("#leaveRoomButton");
