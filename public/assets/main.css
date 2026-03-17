@@ -236,7 +236,6 @@ button {
 .square.legal::before {
   content: "";
   position: absolute;
-  inset: 14%;
   border-radius: 50%;
   pointer-events: none;
 }
@@ -277,9 +276,8 @@ button {
 }
 .square.legal::before {
   background: rgba(25, 35, 32, 0.18);
-  width: 24%;
-  height: 24%;
-  margin: auto;
+  inset: 32%;
+  border-radius: 50%;
 }
 .piece {
   position: relative;
