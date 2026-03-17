@@ -74,6 +74,7 @@ type AppState = {
   liveAnalysisSummary: string;
   lastAnalyzedMoveKey: string | null;
   liveMoveGrades: Record<number, { label: string; cpl: number; category: "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder" }>;
+  animationStyle: "smooth" | "epic";
 };
 
 type EngineEval = {
@@ -129,6 +130,7 @@ const state: AppState = {
   liveAnalysisSummary: "Live analysis disabled.",
   lastAnalyzedMoveKey: null,
   liveMoveGrades: {},
+    animationStyle: (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth",
 };
 
 let lastAnimatedMoveKey: string | null = null;
@@ -485,6 +487,10 @@ joinRoomButton.addEventListener("click", () => {
     showToast("Enter a room code first.");
     return;
   }
+  window.addEventListener("animationchange", (event: Event) => {
+    const customEvent = event as CustomEvent<{ style: "smooth" | "epic" }>;
+    state.animationStyle = customEvent.detail.style;
+  });
 
   if (!ROOM_ID_PATTERN.test(code)) {
     showToast("Room code must be exactly 4 digits.");
@@ -1072,7 +1078,11 @@ function renderBoard(): void {
   }
 
   board.replaceChildren(fragment);
-  animateLastMove(lastMove);
+  if (state.animationStyle === "epic") {
+    animateLastMoveEpic(lastMove);
+  } else {
+    animateLastMove(lastMove);
+  }
   renderArrows();
 }
 
@@ -1676,6 +1686,167 @@ function requestBoardRefresh(): void {
   }
 
   renderBoard();
+}
+
+function animateLastMoveEpic(lastMove: MoveSummary | null): void {
+  if (!state.snapshot || !lastMove) {
+    lastAnimatedMoveKey = null;
+    return;
+  }
+
+  const moveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
+
+  if (lastAnimatedMoveKey === moveKey) {
+    return;
+  }
+
+  lastAnimatedMoveKey = moveKey;
+
+  if (suppressAnimationForMove) {
+    const matchesSuppressedDrag =
+      suppressAnimationForMove.from === lastMove.from &&
+      suppressAnimationForMove.to === lastMove.to;
+    suppressAnimationForMove = null;
+    if (matchesSuppressedDrag) {
+      return;
+    }
+  }
+
+  // Cancel any in-flight ghost first.
+  if (activeGhostAnimation) {
+    activeGhostAnimation.cancel();
+  }
+  if (activeGhostNode) {
+    activeGhostNode.remove();
+    activeGhostNode = null;
+  }
+  if (activeGhostDestinationPiece) {
+    activeGhostDestinationPiece.style.visibility = "";
+    activeGhostDestinationPiece = null;
+  }
+
+  const fromSquareButton = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.from}"]`);
+  const toSquareButton   = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.to}"]`);
+  const destinationPiece = toSquareButton?.querySelector<HTMLElement>(".piece");
+  if (!fromSquareButton || !toSquareButton || !destinationPiece) {
+    return;
+  }
+
+  const fromRect = fromSquareButton.getBoundingClientRect();
+  const toRect = toSquareButton.getBoundingClientRect();
+  const startX = fromRect.left + fromRect.width / 2 + window.scrollX;
+  const startY = fromRect.top + fromRect.height / 2 + window.scrollY;
+  const endX = toRect.left + toRect.width / 2 + window.scrollX;
+  const endY = toRect.top + toRect.height / 2 + window.scrollY;
+  const deltaX = startX - endX;
+  const deltaY = startY - endY;
+
+  const computed = window.getComputedStyle(destinationPiece);
+  const pieceRect = destinationPiece.getBoundingClientRect();
+  const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
+  
+  // Efectos épicos random
+  const randomRotation = Math.random() * 1080 + 720; // 720-1800 grados
+  const randomScale = Math.random() * 0.4 + 0.8; // 0.8-1.2
+  const hasFlip = Math.random() > 0.5;
+  const spinDirection = Math.random() > 0.5 ? 1 : -1;
+  const settleWobble = Math.random() * 14 + 8; // 8-22 grados para acomodado final
+  
+  Object.assign(ghostPiece.style, {
+    position: "absolute",
+    left: `${endX}px`,
+    top: `${endY}px`,
+    width: `${pieceRect.width}px`,
+    height: `${pieceRect.height}px`,
+    transform: "translate3d(-50%, -50%, 0)",
+    margin: "0",
+    zIndex: "9999",
+    pointerEvents: "none",
+    fontSize: computed.fontSize,
+    fontFamily: computed.fontFamily,
+    color: computed.color,
+    filter: computed.filter,
+    textShadow: computed.textShadow,
+    lineHeight: "1",
+    animation: "none",
+    opacity: "1",
+    willChange: "transform",
+    perspective: "1000px",
+  });
+
+  destinationPiece.style.visibility = "hidden";
+  activeGhostNode = ghostPiece;
+  activeGhostDestinationPiece = destinationPiece;
+  document.body.append(ghostPiece);
+
+  // Keyframes épicas con saltos, rotaciones y efectos
+  const keyframes = [
+    {
+      transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) rotateX(0deg) scaleY(1)`,
+      filter: "brightness(1)",
+      offset: 0,
+    },
+    {
+      transform: `translate3d(calc(-50% + ${deltaX * 0.6}px), calc(-50% + ${deltaY * 0.6 - 80}px), 0) rotateZ(${randomRotation * 0.3 * spinDirection}deg) rotateX(${hasFlip ? 180 : 0}deg) scale(${Math.max(0.88, randomScale)})`,
+      filter: "brightness(1.1)",
+      offset: 0.4,
+    },
+    {
+      transform: `translate3d(calc(-50% + ${deltaX * 0.85}px), calc(-50% + ${deltaY * 0.85 - 120}px), 0) rotateZ(${randomRotation * 0.6 * spinDirection}deg) rotateX(${hasFlip ? 360 : 0}deg) scale(${Math.max(0.82, randomScale - 0.12)})`,
+      filter: "brightness(1.2)",
+      offset: 0.65,
+    },
+    {
+      transform: `translate3d(-50%, calc(-50% + 6px), 0) rotateZ(${settleWobble * spinDirection}deg) rotateX(${hasFlip ? 12 : 0}deg) scale(1.04)`,
+      filter: "brightness(1.06)",
+      offset: 0.86,
+    },
+    {
+      transform: `translate3d(-50%, calc(-50% - 2px), 0) rotateZ(${-(settleWobble * 0.55) * spinDirection}deg) rotateX(${hasFlip ? -6 : 0}deg) scale(0.985)`,
+      filter: "brightness(1.02)",
+      offset: 0.94,
+    },
+    {
+      transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) rotateX(0deg) scale(1)",
+      filter: "brightness(1)",
+      offset: 1,
+    },
+  ];
+
+  const animation = ghostPiece.animate(keyframes, {
+    duration: 980,
+    easing: "cubic-bezier(0.22, 0.61, 0.36, 1)",
+  });
+
+  activeGhostAnimation = animation;
+
+  animation.addEventListener("finish", () => {
+    ghostPiece.remove();
+    destinationPiece.style.visibility = "";
+    if (activeGhostAnimation === animation) {
+      activeGhostAnimation = null;
+      activeGhostNode = null;
+      activeGhostDestinationPiece = null;
+      if (pendingBoardRefresh) {
+        pendingBoardRefresh = false;
+        renderBoard();
+      }
+    }
+  });
+
+  animation.addEventListener("cancel", () => {
+    ghostPiece.remove();
+    destinationPiece.style.visibility = "";
+    if (activeGhostAnimation === animation) {
+      activeGhostAnimation = null;
+      activeGhostNode = null;
+      activeGhostDestinationPiece = null;
+      if (pendingBoardRefresh) {
+        pendingBoardRefresh = false;
+        renderBoard();
+      }
+    }
+  });
 }
 
 function onSquarePressed(square: Square): void {

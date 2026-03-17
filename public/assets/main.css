@@ -1636,6 +1636,38 @@ body.focus-mode.focus-multiplayer .board-panel {
       #6c879d 40%,
       #eaf0f5 100%);
 }
+.animation-switcher-options {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+.animation-btn {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1.5px solid transparent;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--ink);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 150ms ease;
+  outline: none;
+}
+.animation-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
+.animation-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent-strong);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
 @media (max-width: 640px) {
   .theme-switcher {
     right: 10px;

@@ -3,6 +3,10 @@ export type Theme = "forest" | "purple" | "walnut" | "refined";
 const THEME_STORAGE_KEY = "chess-theme";
 const THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
 
+export type AnimationStyle = "smooth" | "epic";
+
+const ANIMATION_STORAGE_KEY = "chess-animation-style";
+
 function setTheme(theme: Theme): void {
   if (theme === "forest") {
     document.documentElement.removeAttribute("data-theme");
@@ -15,6 +19,15 @@ function setTheme(theme: Theme): void {
   });
 }
 
+  function setAnimationStyle(style: AnimationStyle): void {
+    localStorage.setItem(ANIMATION_STORAGE_KEY, style);
+    document.querySelectorAll<HTMLElement>(".animation-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.animation === style);
+    });
+    // Actualizar el estado en la app
+    const event = new CustomEvent("animationchange", { detail: { style } });
+    window.dispatchEvent(event);
+  }
 function setPanelCollapsed(widget: HTMLElement, toggleButton: HTMLButtonElement, collapsed: boolean): void {
   widget.classList.toggle("is-collapsed", collapsed);
   toggleButton.setAttribute("aria-expanded", String(!collapsed));
@@ -46,6 +59,17 @@ export function mountThemeSwitcher(): void {
       <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
     </div>
   `;
+
+    // Agregar estilos de animación solo si hay una partida en curso
+    const savedAnimationStyle = (localStorage.getItem(ANIMATION_STORAGE_KEY) ?? "smooth") as AnimationStyle;
+    const animationsHtml = `
+      <div class="animation-switcher-options" id="animationOptions">
+        <span class="theme-switcher-label">Animations</span>
+        <button class="animation-btn" data-animation="smooth" title="Smooth" aria-label="Smooth animations"></button>
+        <button class="animation-btn" data-animation="epic" title="Epic" aria-label="Epic animations"></button>
+      </div>
+    `;
+    widget.innerHTML += animationsHtml;
   document.body.appendChild(widget);
 
   const toggleButton = widget.querySelector<HTMLButtonElement>(".theme-toggle-btn");
@@ -66,4 +90,17 @@ export function mountThemeSwitcher(): void {
     const btn = (e.target as Element).closest<HTMLButtonElement>(".theme-btn");
     if (btn?.dataset.theme) setTheme(btn.dataset.theme as Theme);
   });
+
+    // Inicializar botones de animación con estilo guardado (usando la var declarada arriba)
+    document.querySelectorAll<HTMLElement>(".animation-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
+    });
+
+    // Manejar clics en botones de animación
+    document.addEventListener("click", (e) => {
+      const animBtn = (e.target as Element).closest<HTMLButtonElement>(".animation-btn");
+      if (animBtn?.dataset.animation) {
+        setAnimationStyle(animBtn.dataset.animation as AnimationStyle);
+      }
+    });
 }

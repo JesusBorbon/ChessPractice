@@ -3511,6 +3511,14 @@ function setTheme(theme) {
     btn.classList.toggle("active", btn.dataset.theme === theme);
   });
 }
+function setAnimationStyle(style) {
+  localStorage.setItem(ANIMATION_STORAGE_KEY, style);
+  document.querySelectorAll(".animation-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.animation === style);
+  });
+  const event = new CustomEvent("animationchange", { detail: { style } });
+  window.dispatchEvent(event);
+}
 function setPanelCollapsed(widget, toggleButton, collapsed) {
   widget.classList.toggle("is-collapsed", collapsed);
   toggleButton.setAttribute("aria-expanded", String(!collapsed));
@@ -3539,6 +3547,15 @@ function mountThemeSwitcher() {
       <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
     </div>
   `;
+  const savedAnimationStyle = localStorage.getItem(ANIMATION_STORAGE_KEY) ?? "smooth";
+  const animationsHtml = `
+      <div class="animation-switcher-options" id="animationOptions">
+        <span class="theme-switcher-label">Animations</span>
+        <button class="animation-btn" data-animation="smooth" title="Smooth" aria-label="Smooth animations"></button>
+        <button class="animation-btn" data-animation="epic" title="Epic" aria-label="Epic animations"></button>
+      </div>
+    `;
+  widget.innerHTML += animationsHtml;
   document.body.appendChild(widget);
   const toggleButton = widget.querySelector(".theme-toggle-btn");
   if (!toggleButton) {
@@ -3555,13 +3572,23 @@ function mountThemeSwitcher() {
     const btn = e.target.closest(".theme-btn");
     if (btn?.dataset.theme) setTheme(btn.dataset.theme);
   });
+  document.querySelectorAll(".animation-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
+  });
+  document.addEventListener("click", (e) => {
+    const animBtn = e.target.closest(".animation-btn");
+    if (animBtn?.dataset.animation) {
+      setAnimationStyle(animBtn.dataset.animation);
+    }
+  });
 }
-var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY;
+var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, ANIMATION_STORAGE_KEY;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
     THEME_STORAGE_KEY = "chess-theme";
     THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
+    ANIMATION_STORAGE_KEY = "chess-animation-style";
   }
 });
 
