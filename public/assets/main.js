@@ -7197,6 +7197,8 @@ var require_main = __commonJS({
       throw new Error("Missing #app root element.");
     }
     var initialRoomCode = new URLSearchParams(window.location.search).get("room")?.trim() ?? null;
+    var savedRoomId = localStorage.getItem("chess_roomId");
+    var autoJoinCode = initialRoomCode ?? (savedRoomId || null);
     var state = {
       connected: false,
       roomId: null,
@@ -7209,7 +7211,7 @@ var require_main = __commonJS({
       toastMessage: "",
       pendingPromotion: null,
       premove: null,
-      autoJoinCode: initialRoomCode,
+      autoJoinCode,
       focusMode: false,
       liveAnalysisSummary: "Live analysis disabled.",
       lastAnalyzedMoveKey: null,
@@ -7397,7 +7399,7 @@ var require_main = __commonJS({
     <main class="layout">
       <section class="panel board-panel">
         <div class="board-toolbar">
-          <button class="action cta-gold" id="createRoomButton" type="button">Create room</button>
+          <button class="action cta-turquoise" id="createRoomButton" type="button">Create room</button>
           <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
           <button class="ghost" id="flipBoardButton" type="button" hidden>Flip board</button>
           <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
@@ -7421,7 +7423,7 @@ var require_main = __commonJS({
 
       <aside class="panel side-panel">
         <section class="control-card" id="inviteJoinCard">
-          <h2 class="card-title">Invite or join</h2>
+          <h2 class="card-title">Invite or join <span class="title-decor">!!</span></h2>
           <div class="control-row">
             <button class="chip" id="copyLinkButton" type="button" hidden>Copy invite link</button>
             <button class="chip" id="leaveRoomButton" type="button" hidden>Leave room</button>
@@ -7807,6 +7809,7 @@ var require_main = __commonJS({
       state.role = payload.role;
       state.shareUrl = payload.shareUrl || `${window.location.origin}/?room=${payload.roomId}`;
       roomInput.value = payload.roomId;
+      localStorage.setItem("chess_roomId", payload.roomId);
       if (payload.role === "w" || payload.role === "b") {
         state.orientation = payload.role;
       }
@@ -8688,6 +8691,7 @@ var require_main = __commonJS({
       state.lastAnalyzedMoveKey = null;
       state.liveMoveGrades = {};
       liveAnalysisToken += 1;
+      localStorage.removeItem("chess_roomId");
       clearArrows();
       clearSelection();
       chess.reset();

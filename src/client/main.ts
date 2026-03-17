@@ -108,6 +108,10 @@ if (!app) {
 
 const initialRoomCode = new URLSearchParams(window.location.search).get("room")?.trim() ?? null;
 
+// Restaurar roomId guardada en localStorage si existe
+const savedRoomId = localStorage.getItem("chess_roomId");
+const autoJoinCode = initialRoomCode ?? (savedRoomId || null);
+
 const state: AppState = {
   connected: false,
   roomId: null,
@@ -120,7 +124,7 @@ const state: AppState = {
   toastMessage: "",
   pendingPromotion: null,
   premove: null,
-  autoJoinCode: initialRoomCode,
+  autoJoinCode,
   focusMode: false,
   liveAnalysisSummary: "Live analysis disabled.",
   lastAnalyzedMoveKey: null,
@@ -333,7 +337,7 @@ app.innerHTML = `
     <main class="layout">
       <section class="panel board-panel">
         <div class="board-toolbar">
-          <button class="action cta-gold" id="createRoomButton" type="button">Create room</button>
+          <button class="action cta-turquoise" id="createRoomButton" type="button">Create room</button>
           <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
           <button class="ghost" id="flipBoardButton" type="button" hidden>Flip board</button>
           <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
@@ -357,7 +361,7 @@ app.innerHTML = `
 
       <aside class="panel side-panel">
         <section class="control-card" id="inviteJoinCard">
-          <h2 class="card-title">Invite or join</h2>
+          <h2 class="card-title">Invite or join <span class="title-decor">!!</span></h2>
           <div class="control-row">
             <button class="chip" id="copyLinkButton" type="button" hidden>Copy invite link</button>
             <button class="chip" id="leaveRoomButton" type="button" hidden>Leave room</button>
@@ -811,6 +815,9 @@ socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl
   state.role = payload.role;
   state.shareUrl = payload.shareUrl || `${window.location.origin}/?room=${payload.roomId}`;
   roomInput.value = payload.roomId;
+
+  // Guardar roomId en localStorage para reconexión automática
+  localStorage.setItem("chess_roomId", payload.roomId);
 
   if (payload.role === "w" || payload.role === "b") {
     state.orientation = payload.role;
@@ -1916,6 +1923,10 @@ function clearLocalRoomState(): void {
   state.lastAnalyzedMoveKey = null;
   state.liveMoveGrades = {};
   liveAnalysisToken += 1;
+  
+  // Limpiar localStorage cuando se abandona la sala
+  localStorage.removeItem("chess_roomId");
+  
   clearArrows();
   clearSelection();
   chess.reset();

@@ -50,6 +50,8 @@ type GameRoom = {
   chess: Chess;
   white?: string;
   black?: string;
+  whiteDisconnectedAt?: number;
+  blackDisconnectedAt?: number;
   rematchVotes: Set<string>;
   analysisVotes: Set<string>;
   analysisEnabled: boolean;
@@ -62,6 +64,9 @@ const io = new Server(server, {
   cors: {
     origin: "*",
   },
+  // Aumentar timeouts para mantener conexiones más tiempo
+  pingInterval: 25000, // Enviar ping cada 25 segundos
+  pingTimeout: 60000,  // Esperar 60 segundos por pong antes de cerrar
 });
 
 const rooms = new Map<string, GameRoom>();
@@ -69,6 +74,7 @@ const ROOM_ALPHABET = "0123456789";
 const ROOM_CODE_LENGTH = 4;
 const ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
 const ROOM_TTL_MS = 1000 * 60 * 60 * 4;
+const PLAYER_DISCONNECT_GRACE_MS = 1000 * 60 * 3; // 3 minutos para reconectarse
 
 const projectRoot = process.cwd();
 const publicDir =
@@ -205,19 +211,29 @@ function resetSocketState(socketId: string): void {
   delete clientState.role;
 }
 
-function removeFromRoom(socketId: string): void {
+function removeFromRoom(socketId: string, immediate: boolean = false): void {
   const socket = io.sockets.sockets.get(socketId);
 
   for (const room of rooms.values()) {
     let changed = false;
 
-    if (room.white === socketId) {
+    // Si es desconexión normal (no inmediata), marcar como "desconectado temporalmente"
+    // permitiendo reconexión dentro del grace period
+    if (room.white === socketId && !immediate) {
+      room.whiteDisconnectedAt = Date.now();
+      changed = true;
+    } else if (room.white === socketId && immediate) {
       delete room.white;
+      delete room.whiteDisconnectedAt;
       changed = true;
     }
 
-    if (room.black === socketId) {
+    if (room.black === socketId && !immediate) {
+      room.blackDisconnectedAt = Date.now();
+      changed = true;
+    } else if (room.black === socketId && immediate) {
       delete room.black;
+      delete room.blackDisconnectedAt;
       changed = true;
     }
 
@@ -239,9 +255,17 @@ function removeFromRoom(socketId: string): void {
       continue;
     }
 
-    socket?.leave(room.id);
+    if (socket) {
+      socket.leave(room.id);
+    }
 
-    if (!room.white && !room.black && getSpectatorCount(room.id, room) === 0) {
+    // Solo eliminar la sala si:
+    // 1. Ambos jugadores se desconectaron inmediatamente, O
+    // 2. El grace period pasó para ambos jugadores
+    const bothDisconnected = !room.white && !room.black;
+    const noSpectators = getSpectatorCount(room.id, room) === 0;
+
+    if (bothDisconnected && noSpectators) {
       rooms.delete(room.id);
       resetSocketState(socketId);
       continue;
@@ -289,6 +313,26 @@ const cleanupTimer = setInterval(() => {
   const now = Date.now();
 
   for (const [roomId, room] of rooms.entries()) {
+    let changed = false;
+
+    // Limpiar grace periods expirados
+    if (room.whiteDisconnectedAt && now - room.whiteDisconnectedAt > PLAYER_DISCONNECT_GRACE_MS) {
+      delete room.white;
+      delete room.whiteDisconnectedAt;
+      changed = true;
+    }
+
+    if (room.blackDisconnectedAt && now - room.blackDisconnectedAt > PLAYER_DISCONNECT_GRACE_MS) {
+      delete room.black;
+      delete room.blackDisconnectedAt;
+      changed = true;
+    }
+
+    if (changed) {
+      emitRoomState(room);
+    }
+
+    // Limpiar salas vacías después del TTL
     if (now - room.updatedAt < ROOM_TTL_MS) {
       continue;
     }
@@ -357,7 +401,21 @@ io.on("connection", (socket) => {
     removeFromRoom(socket.id);
 
     socket.join(roomId);
-    const role = assignRole(room, socket.id);
+    
+    // Intentar reconectarse si está dentro del grace period
+    let role: RoomRole = "spectator";
+    if (room.whiteDisconnectedAt && Date.now() - room.whiteDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS) {
+      role = "w";
+      room.white = socket.id;
+      delete room.whiteDisconnectedAt;
+    } else if (room.blackDisconnectedAt && Date.now() - room.blackDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS) {
+      role = "b";
+      room.black = socket.id;
+      delete room.blackDisconnectedAt;
+    } else {
+      role = assignRole(room, socket.id);
+    }
+
     const clientState = socket.data as ClientState;
     clientState.roomId = roomId;
     clientState.role = role;
@@ -511,7 +569,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    removeFromRoom(socket.id);
+    removeFromRoom(socket.id, false); // false = no es inmediato, aplicar grace period
   });
 });
 
