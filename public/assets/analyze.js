@@ -3579,6 +3579,7 @@ function mountThemeSwitcher() {
           <button class="fx-btn" type="button" data-bloodfx="on" role="radio" aria-label="Enable blood effect">On</button>
         </div>
       </div>
+
     </div>
   `;
   document.body.appendChild(widget);

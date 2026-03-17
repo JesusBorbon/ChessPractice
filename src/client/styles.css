@@ -1,3 +1,4 @@
+
   /* Blood pool effect */
   .capture-blood-pool {
     position: absolute;
@@ -15,6 +16,43 @@
     transition: opacity 1.2s linear;
   }
   .capture-blood-pool-fade {
+      /* Overlay wind trail effect */
+      .overlay-wind-trail {
+          /* Overlay wind dust particles */
+          .overlay-wind-dust {
+            position: absolute;
+            pointer-events: none;
+            z-index: 8;
+            background: radial-gradient(circle, rgba(255,255,255,0.22) 60%, rgba(120,180,255,0.18) 100%);
+            border-radius: 50%;
+            opacity: 0.32;
+            filter: blur(0.8px);
+            transition: opacity 0.8s;
+            animation: overlay-wind-dust-fade 2.2s linear forwards;
+          }
+
+          @keyframes overlay-wind-dust-fade {
+            0% { opacity: 0.32; }
+            80% { opacity: 0.18; }
+            100% { opacity: 0.04; }
+          }
+        position: absolute;
+        pointer-events: none;
+        z-index: 7;
+        background: linear-gradient(90deg, rgba(220,220,220,0.01) 0%, rgba(220,220,220,0.22) 18%, rgba(220,220,220,0.14) 60%, rgba(220,220,220,0.01) 100%);
+        border-radius: 12px;
+        box-shadow: 0 0 18px 8px rgba(220,220,220,0.12);
+        opacity: 0.92;
+        animation: overlay-wind-fade 1.8s cubic-bezier(0.22,0.61,0.36,1) forwards;
+        transition: opacity 0.8s;
+      }
+
+      @keyframes overlay-wind-fade {
+        0% { opacity: 0.98; }
+        40% { opacity: 0.82; }
+        70% { opacity: 0.32; }
+        100% { opacity: 0.06; }
+      }
     animation: blood-pool-fade 2.2s linear forwards;
   }
 

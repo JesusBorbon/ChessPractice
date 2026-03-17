@@ -1,3 +1,4 @@
+//
 import { Chess, Square, Move, PieceSymbol } from "chess.js";
 import { buildSquareList, isLightSquare, SquareName, BoardOrientation } from "../../engine";
 import "./analyze.css";

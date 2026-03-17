@@ -8,6 +8,7 @@ export type AnimationStyle = "smooth" | "epic";
 const ANIMATION_STORAGE_KEY = "chess-animation-style";
 const BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
 
+
 function setTheme(theme: Theme): void {
   if (theme === "forest") {
     document.documentElement.removeAttribute("data-theme");
@@ -60,6 +61,7 @@ export function mountThemeSwitcher(): void {
   const savedAnimationStyle: AnimationStyle = animationRaw === "epic" ? "epic" : "smooth";
   const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
   const bloodFxEnabled = bloodFxRaw === "on";
+
   const defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
   const initialCollapsed = collapsedRaw === null ? defaultCollapsed : collapsedRaw === "1";
 
@@ -95,6 +97,7 @@ export function mountThemeSwitcher(): void {
           <button class="fx-btn" type="button" data-bloodfx="on" role="radio" aria-label="Enable blood effect">On</button>
         </div>
       </div>
+
     </div>
   `;
 
@@ -117,6 +120,8 @@ export function mountThemeSwitcher(): void {
 
     const btn = (e.target as Element).closest<HTMLButtonElement>(".theme-btn");
     if (btn?.dataset.theme) setTheme(btn.dataset.theme as Theme);
+
+
 
     const animBtn = (e.target as Element).closest<HTMLButtonElement>(".animation-btn");
     if (animBtn?.dataset.animation) {
