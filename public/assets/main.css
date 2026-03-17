@@ -208,8 +208,6 @@ button {
   user-select: none;
   -webkit-tap-highlight-color: transparent;
 }
-.piece.draggable-piece {
-}
 .square.dragging {
   opacity: 0.55;
 }

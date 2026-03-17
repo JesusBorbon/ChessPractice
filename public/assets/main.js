@@ -7142,7 +7142,6 @@ var require_main = __commonJS({
       toastMessage: "",
       pendingPromotion: null,
       autoJoinCode: initialRoomCode,
-      dragFromSquare: null,
       suppressClickOnce: false
     };
     app.innerHTML = `
@@ -7349,57 +7348,85 @@ var require_main = __commonJS({
       }
       onSquarePressed(square);
     });
-    board.addEventListener("dragstart", (event) => {
+    var ptrDragFrom = null;
+    var ptrDragNode = null;
+    var ptrDragMoved = false;
+    var ptrStartX = 0;
+    var ptrStartY = 0;
+    board.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
       const squareButton = event.target.closest(".square");
       const square = squareButton?.dataset.square;
-      if (!square || !canStartMoveFrom(square)) {
-        event.preventDefault();
-        return;
-      }
-      state.dragFromSquare = square;
-      state.selectedSquare = square;
-      state.legalTargets = legalTargetsFor(square);
-      syncBoardInteractionState();
-      updateCaption();
-      setPieceDragImage(event, squareButton, square);
-      squareButton?.classList.add("dragging");
+      if (!square || !canStartMoveFrom(square)) return;
+      ptrDragFrom = square;
+      ptrDragMoved = false;
+      ptrStartX = event.clientX;
+      ptrStartY = event.clientY;
+      board.setPointerCapture(event.pointerId);
     });
-    board.addEventListener("dragover", (event) => {
-      const squareButton = event.target.closest(".square");
-      const targetSquare = squareButton?.dataset.square;
-      if (!targetSquare || !state.dragFromSquare) {
-        return;
+    board.addEventListener("pointermove", (event) => {
+      if (!ptrDragFrom) return;
+      if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 5) return;
+      if (!ptrDragMoved) {
+        ptrDragMoved = true;
+        state.selectedSquare = ptrDragFrom;
+        state.legalTargets = legalTargetsFor(ptrDragFrom);
+        syncBoardInteractionState();
+        updateCaption();
+        const btn = board.querySelector(`[data-square="${ptrDragFrom}"]`);
+        const piece = btn?.querySelector(".piece");
+        if (piece && btn) {
+          const cs = window.getComputedStyle(piece);
+          ptrDragNode = piece.cloneNode(true);
+          Object.assign(ptrDragNode.style, {
+            position: "fixed",
+            pointerEvents: "none",
+            zIndex: "9999",
+            margin: "0",
+            lineHeight: "1",
+            fontSize: cs.fontSize,
+            fontFamily: cs.fontFamily,
+            color: cs.color,
+            textShadow: cs.textShadow,
+            filter: cs.filter,
+            transform: "scale(1.5)",
+            transformOrigin: "center center",
+            transition: "none"
+          });
+          document.body.append(ptrDragNode);
+          btn.classList.add("dragging");
+        }
       }
-      if (targetSquare === state.dragFromSquare || state.legalTargets.includes(targetSquare)) {
-        event.preventDefault();
+      if (ptrDragNode) {
+        ptrDragNode.style.left = `${event.clientX - ptrDragNode.offsetWidth / 2}px`;
+        ptrDragNode.style.top = `${event.clientY - ptrDragNode.offsetHeight / 2}px`;
       }
     });
-    board.addEventListener("drop", (event) => {
-      const squareButton = event.target.closest(".square");
-      const targetSquare = squareButton?.dataset.square;
-      const fromSquare = state.dragFromSquare;
-      if (!targetSquare || !fromSquare) {
-        state.dragFromSquare = null;
-        return;
-      }
-      event.preventDefault();
+    function endPointerDrag(event, commit) {
+      if (!ptrDragFrom) return;
+      const fromSquare = ptrDragFrom;
+      const wasDrag = ptrDragMoved;
+      ptrDragFrom = null;
+      ptrDragMoved = false;
+      ptrDragNode?.remove();
+      ptrDragNode = null;
+      board.querySelector(".square.dragging")?.classList.remove("dragging");
+      if (!wasDrag) return;
       state.suppressClickOnce = true;
-      if (targetSquare !== fromSquare) {
-        tryMoveFromTo(fromSquare, targetSquare);
+      if (commit) {
+        const el = document.elementFromPoint(event.clientX, event.clientY);
+        const squareButton = el?.closest(".square");
+        const targetSquare = squareButton?.dataset.square;
+        if (targetSquare && targetSquare !== fromSquare) {
+          tryMoveFromTo(fromSquare, targetSquare);
+        }
       }
-      state.dragFromSquare = null;
-      document.querySelector(".square.dragging")?.classList.remove("dragging");
       clearSelection();
       renderBoard();
       updateCaption();
-    });
-    board.addEventListener("dragend", () => {
-      state.dragFromSquare = null;
-      document.querySelector(".square.dragging")?.classList.remove("dragging");
-      clearSelection();
-      renderBoard();
-      updateCaption();
-    });
+    }
+    board.addEventListener("pointerup", (event) => endPointerDrag(event, true));
+    board.addEventListener("pointercancel", (event) => endPointerDrag(event, false));
     promotionDialog.addEventListener("click", (event) => {
       const button = event.target.closest("[data-promotion]");
       if (!button) {
@@ -7534,11 +7561,6 @@ var require_main = __commonJS({
           const pieceElement = document.createElement("span");
           pieceElement.className = `piece ${piece.color === "w" ? "white" : "black"}`;
           pieceElement.textContent = glyph;
-          const pieceIsDraggable = canStartMoveFrom(square);
-          pieceElement.draggable = pieceIsDraggable;
-          if (pieceIsDraggable) {
-            pieceElement.classList.add("draggable-piece");
-          }
           button.append(pieceElement);
         }
         fragment.append(button);
@@ -7643,38 +7665,6 @@ var require_main = __commonJS({
     }
     function legalTargetsFor(square) {
       return chess.moves({ square, verbose: true }).map((move) => move.to);
-    }
-    function setPieceDragImage(event, squareButton, square) {
-      if (!event.dataTransfer) {
-        return;
-      }
-      event.dataTransfer.effectAllowed = "move";
-      event.dataTransfer.setData("application/x-chess-square", square);
-      const pieceElement = squareButton?.querySelector(".piece");
-      if (!pieceElement) {
-        return;
-      }
-      const pieceStyle = window.getComputedStyle(pieceElement);
-      const dragScale = 1.34;
-      const dragImage = pieceElement.cloneNode(true);
-      dragImage.style.position = "fixed";
-      dragImage.style.top = "-9999px";
-      dragImage.style.left = "-9999px";
-      dragImage.style.margin = "0";
-      dragImage.style.display = "inline-block";
-      dragImage.style.pointerEvents = "none";
-      dragImage.style.fontSize = pieceStyle.fontSize;
-      dragImage.style.lineHeight = pieceStyle.lineHeight;
-      dragImage.style.fontFamily = pieceStyle.fontFamily;
-      dragImage.style.fontWeight = pieceStyle.fontWeight;
-      dragImage.style.color = pieceStyle.color;
-      dragImage.style.textShadow = pieceStyle.textShadow;
-      dragImage.style.filter = pieceStyle.filter;
-      dragImage.style.transform = `scale(${dragScale})`;
-      dragImage.style.transformOrigin = "center center";
-      document.body.append(dragImage);
-      event.dataTransfer.setDragImage(dragImage, Math.round(dragImage.offsetWidth * dragScale / 2), Math.round(dragImage.offsetHeight * dragScale / 2));
-      requestAnimationFrame(() => dragImage.remove());
     }
     function canStartMoveFrom(square) {
       if (!state.snapshot || !state.role || state.role === "spectator") {
