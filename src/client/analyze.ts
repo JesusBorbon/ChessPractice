@@ -38,10 +38,10 @@ const CATEGORY_SYMBOLS: Record<MoveCategory, string> = {
   brilliant: "!!",
   great: "!",
   excellent: "★",
-  good: "+",
+  good: "✓",
   inaccuracy: "?!",
   mistake: "x",
-  blunder: "X",
+  blunder: "??",
 };
 
 const PIECE_VALUES: Record<string, number> = {

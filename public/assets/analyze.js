@@ -3518,10 +3518,10 @@ var require_analyze = __commonJS({
       brilliant: "!!",
       great: "!",
       excellent: "\u2605",
-      good: "+",
+      good: "\u2713",
       inaccuracy: "?!",
       mistake: "x",
-      blunder: "X"
+      blunder: "??"
     };
     var PIECE_VALUES = {
       p: 100,
