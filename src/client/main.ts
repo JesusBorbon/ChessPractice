@@ -68,7 +68,7 @@ type AppState = {
   legalTargets: Square[];
   toastMessage: string;
   pendingPromotion: PendingPromotion | null;
-  premove: Premove | null;
+  premoves: Premove[]; 
   autoJoinCode: string | null;
   focusMode: boolean;
   liveAnalysisSummary: string;
@@ -125,7 +125,7 @@ const state: AppState = {
   legalTargets: [],
   toastMessage: "",
   pendingPromotion: null,
-  premove: null,
+  premoves: [],
   autoJoinCode,
   focusMode: false,
   liveAnalysisSummary: "Live analysis disabled.",
@@ -890,22 +890,29 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
     liveAnalysisToken += 1;
   }
 
-  if (state.role && state.role !== "spectator" && snapshot.turn === state.role && state.premove) {
-    const queued = state.premove;
-    state.premove = null;
+ // Lógica para ejecutar la cola de premoves (estilo Chess.com)
+  if (state.role && state.role !== "spectator" && snapshot.turn === state.role && state.premoves.length > 0) {
+    const nextMove = state.premoves.shift(); // Sacamos el primero de la lista
+    
+    if (nextMove) { // Con este "if", TypeScript ya sabe que nextMove no es undefined
+      // Validamos si el movimiento es legal en la posición actual del tablero
+      const isLegal = chess.moves({ verbose: true }).some(m => m.from === nextMove.from && m.to === nextMove.to);
 
-    const stillLegal = legalTargetsForRole(queued.from, state.role).includes(queued.to);
-    if (stillLegal && !snapshot.checkmate && !snapshot.draw) {
-      socket.emit("game:move", queued.promotion ? queued : { from: queued.from, to: queued.to });
-      showToast(`Premove played: ${queued.from} -> ${queued.to}`);
-    } else {
-      showToast("Premove canceled (position changed).");
+      if (isLegal && !snapshot.checkmate && !snapshot.draw) {
+        // Ejecutamos el movimiento
+        socket.emit("game:move", nextMove.promotion ? nextMove : { from: nextMove.from, to: nextMove.to });
+        showToast(`Premove played: ${nextMove.from} -> ${nextMove.to}`); 
+      } else {
+        // Si el movimiento ya no es legal (ej: nos capturaron la pieza), limpiamos toda la cola
+        state.premoves = []; 
+        showToast("Premoves canceled (illegal move or check).");
+      }
     }
   }
 
   render();
   void maybeRunLiveAnalysis(snapshot);
-});
+  }); //
 
 socket.on("room:error", (payload: { message: string }) => {
   suppressAnimationForMove = null;
@@ -1063,13 +1070,10 @@ function renderBoard(): void {
       button.classList.add("in-check");
     }
 
-    if (premove && premove.from === square) {
-      button.classList.add("premove-from");
-    }
-
-    if (premove && premove.to === square) {
-      button.classList.add("premove-to");
-    }
+   state.premoves.forEach((p) => {
+  if (p.from === square) button.classList.add("premove-from");
+  if (p.to === square) button.classList.add("premove-to");
+});
 
     if (piece) {
       const spritePath = PIECES[`${piece.color}${piece.type}`];
@@ -1387,10 +1391,16 @@ function updateCaption(): void {
     return;
   }
 
-  if (state.snapshot.turn !== state.role) {
-    boardCaption.textContent = state.premove
-      ? `Premove queued: ${state.premove.from} -> ${state.premove.to}.`
-      : `Waiting for ${state.snapshot.turn === "w" ? "White" : "Black"} to move. You can set one premove.`;
+if (state.snapshot.turn !== state.role) {
+    const first = state.premoves[0]; // Intentamos obtener el primero de la cola
+    if (first) {
+      const count = state.premoves.length;
+      boardCaption.textContent = count === 1 
+        ? `Premove queued: ${first.from} -> ${first.to}.`
+        : `Premoves queued: ${count} (${first.from} -> ${first.to}, ...)`;
+    } else {
+      boardCaption.textContent = `Waiting for ${state.snapshot.turn === "w" ? "White" : "Black"} to move. You can set up to 10 premoves.`;
+    }
     return;
   }
 
@@ -2099,29 +2109,33 @@ function queuePremove(from: Square, to: Square): void {
     return;
   }
 
-  const legalTargets = legalTargetsForRole(from, state.role);
-  if (!legalTargets.includes(to)) {
-    showToast("Invalid premove.");
+  // 1. Límite de 10 premoves
+  if (state.premoves.length >= 10) {
+    showToast("Max premoves reached (10).");
     return;
   }
 
-  const promotion = (() => {
-    const selectedPiece = chess.get(from);
-    if (selectedPiece?.type !== "p") {
-      return undefined;
-    }
-
-    return reachesPromotionRank(to, state.role) ? "q" : undefined;
-  })();
-
-  if (state.premove && state.premove.from === from && state.premove.to === to) {
-    state.premove = null;
+  // 2. Lógica de "Toggle": Si clickeas un premove que ya existe, lo borramos
+  const existingIndex = state.premoves.findIndex(p => p.from === from && p.to === to);
+  if (existingIndex !== -1) {
+    state.premoves.splice(existingIndex, 1);
     showToast("Premove cleared.");
   } else {
-    state.premove = promotion ? { from, to, promotion } : { from, to };
+    // 3. Validación básica: Solo comprobamos que la pieza que intentas mover sea TUYA
+    const piece = chess.get(from);
+    if (!piece || piece.color !== state.role) {
+      return;
+    }
+
+    // 4. Lógica de Promoción (automática a Dama para premoves)
+    const promotion = (piece.type === "p" && reachesPromotionRank(to, state.role)) ? "q" : undefined;
+    
+    // 5. Guardamos el premove (aquí permitimos cualquier destino, ¡incluso tus propias piezas!)
+    state.premoves.push(promotion ? { from, to, promotion } : { from, to });
     showToast(`Premove set: ${from} -> ${to}`);
   }
 
+  // 6. Actualizar UI
   clearSelection();
   requestBoardRefresh();
   updateCaption();
@@ -2133,9 +2147,12 @@ function onPremoveSquarePressed(square: Square): void {
   }
 
   const clickedPiece = chess.get(square);
+
+  // 1. Si no hay nada seleccionado, intentamos seleccionar una pieza propia
   if (!state.selectedSquare) {
     if (clickedPiece && clickedPiece.color === state.role) {
       state.selectedSquare = square;
+      // Mostramos los puntos legales actuales solo como guía visual
       state.legalTargets = legalTargetsForRole(square, state.role);
       requestBoardRefresh();
       updateCaption();
@@ -2143,6 +2160,7 @@ function onPremoveSquarePressed(square: Square): void {
     return;
   }
 
+  // 2. Si tocas la misma pieza, deseleccionamos
   if (square === state.selectedSquare) {
     clearSelection();
     requestBoardRefresh();
@@ -2150,19 +2168,10 @@ function onPremoveSquarePressed(square: Square): void {
     return;
   }
 
-  if (state.legalTargets.includes(square)) {
-    queuePremove(state.selectedSquare, square);
-    return;
-  }
+  // 3. Si tocas otro de tus piezas, cambiamos la selección
+  queuePremove(state.selectedSquare, square);
 
-  if (clickedPiece && clickedPiece.color === state.role) {
-    state.selectedSquare = square;
-    state.legalTargets = legalTargetsForRole(square, state.role);
-    requestBoardRefresh();
-    updateCaption();
-    return;
-  }
-
+  // Limpiamos selección después de intentar el premove para que puedas hacer el siguiente rápido
   clearSelection();
   requestBoardRefresh();
   updateCaption();
@@ -2217,7 +2226,7 @@ function clearLocalRoomState(): void {
   state.shareUrl = "";
   state.snapshot = null;
   state.pendingPromotion = null;
-  state.premove = null;
+  state.premoves = [];
   focusTimerStartMs = null;
   state.liveAnalysisSummary = "Live analysis disabled.";
   state.lastAnalyzedMoveKey = null;

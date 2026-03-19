@@ -7271,7 +7271,7 @@ var require_main = __commonJS({
       legalTargets: [],
       toastMessage: "",
       pendingPromotion: null,
-      premove: null,
+      premoves: [],
       autoJoinCode,
       focusMode: false,
       liveAnalysisSummary: "Live analysis disabled.",
@@ -7926,15 +7926,17 @@ var require_main = __commonJS({
         state.liveMoveGrades = {};
         liveAnalysisToken += 1;
       }
-      if (state.role && state.role !== "spectator" && snapshot.turn === state.role && state.premove) {
-        const queued = state.premove;
-        state.premove = null;
-        const stillLegal = legalTargetsForRole(queued.from, state.role).includes(queued.to);
-        if (stillLegal && !snapshot.checkmate && !snapshot.draw) {
-          socket.emit("game:move", queued.promotion ? queued : { from: queued.from, to: queued.to });
-          showToast(`Premove played: ${queued.from} -> ${queued.to}`);
-        } else {
-          showToast("Premove canceled (position changed).");
+      if (state.role && state.role !== "spectator" && snapshot.turn === state.role && state.premoves.length > 0) {
+        const nextMove = state.premoves.shift();
+        if (nextMove) {
+          const isLegal = chess.moves({ verbose: true }).some((m) => m.from === nextMove.from && m.to === nextMove.to);
+          if (isLegal && !snapshot.checkmate && !snapshot.draw) {
+            socket.emit("game:move", nextMove.promotion ? nextMove : { from: nextMove.from, to: nextMove.to });
+            showToast(`Premove played: ${nextMove.from} -> ${nextMove.to}`);
+          } else {
+            state.premoves = [];
+            showToast("Premoves canceled (illegal move or check).");
+          }
         }
       }
       render();
@@ -8061,12 +8063,10 @@ var require_main = __commonJS({
         if (checkedKingSquare === squareName) {
           button.classList.add("in-check");
         }
-        if (premove && premove.from === square) {
-          button.classList.add("premove-from");
-        }
-        if (premove && premove.to === square) {
-          button.classList.add("premove-to");
-        }
+        state.premoves.forEach((p) => {
+          if (p.from === square) button.classList.add("premove-from");
+          if (p.to === square) button.classList.add("premove-to");
+        });
         if (piece) {
           const spritePath = PIECES[`${piece.color}${piece.type}`];
           const pieceElement = document.createElement("span");
@@ -8325,7 +8325,13 @@ var require_main = __commonJS({
         return;
       }
       if (state.snapshot.turn !== state.role) {
-        boardCaption.textContent = state.premove ? `Premove queued: ${state.premove.from} -> ${state.premove.to}.` : `Waiting for ${state.snapshot.turn === "w" ? "White" : "Black"} to move. You can set one premove.`;
+        const first = state.premoves[0];
+        if (first) {
+          const count = state.premoves.length;
+          boardCaption.textContent = count === 1 ? `Premove queued: ${first.from} -> ${first.to}.` : `Premoves queued: ${count} (${first.from} -> ${first.to}, ...)`;
+        } else {
+          boardCaption.textContent = `Waiting for ${state.snapshot.turn === "w" ? "White" : "Black"} to move. You can set up to 10 premoves.`;
+        }
         return;
       }
       boardCaption.textContent = state.selectedSquare ? `Selected ${state.selectedSquare}. Choose one of the highlighted targets.` : `Your move as ${state.role === "w" ? "White" : "Black"}.`;
@@ -8893,23 +8899,21 @@ var require_main = __commonJS({
       if (!state.role || state.role === "spectator") {
         return;
       }
-      const legalTargets = legalTargetsForRole(from, state.role);
-      if (!legalTargets.includes(to)) {
-        showToast("Invalid premove.");
+      if (state.premoves.length >= 10) {
+        showToast("Max premoves reached (10).");
         return;
       }
-      const promotion = (() => {
-        const selectedPiece = chess.get(from);
-        if (selectedPiece?.type !== "p") {
-          return void 0;
-        }
-        return reachesPromotionRank(to, state.role) ? "q" : void 0;
-      })();
-      if (state.premove && state.premove.from === from && state.premove.to === to) {
-        state.premove = null;
+      const existingIndex = state.premoves.findIndex((p) => p.from === from && p.to === to);
+      if (existingIndex !== -1) {
+        state.premoves.splice(existingIndex, 1);
         showToast("Premove cleared.");
       } else {
-        state.premove = promotion ? { from, to, promotion } : { from, to };
+        const piece = chess.get(from);
+        if (!piece || piece.color !== state.role) {
+          return;
+        }
+        const promotion = piece.type === "p" && reachesPromotionRank(to, state.role) ? "q" : void 0;
+        state.premoves.push(promotion ? { from, to, promotion } : { from, to });
         showToast(`Premove set: ${from} -> ${to}`);
       }
       clearSelection();
@@ -8936,17 +8940,7 @@ var require_main = __commonJS({
         updateCaption();
         return;
       }
-      if (state.legalTargets.includes(square)) {
-        queuePremove(state.selectedSquare, square);
-        return;
-      }
-      if (clickedPiece && clickedPiece.color === state.role) {
-        state.selectedSquare = square;
-        state.legalTargets = legalTargetsForRole(square, state.role);
-        requestBoardRefresh();
-        updateCaption();
-        return;
-      }
+      queuePremove(state.selectedSquare, square);
       clearSelection();
       requestBoardRefresh();
       updateCaption();
@@ -8990,7 +8984,7 @@ var require_main = __commonJS({
       state.shareUrl = "";
       state.snapshot = null;
       state.pendingPromotion = null;
-      state.premove = null;
+      state.premoves = [];
       focusTimerStartMs = null;
       state.liveAnalysisSummary = "Live analysis disabled.";
       state.lastAnalyzedMoveKey = null;
