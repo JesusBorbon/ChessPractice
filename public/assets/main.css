@@ -2044,4 +2044,33 @@ body.focus-mode.focus-multiplayer .board-panel {
   position: relative;
   top: -20%;
 }
+#focusMaterialHud {
+  position: absolute;
+  bottom: -120px;
+  right: 5px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 1000;
+  text-align: center;
+}
+#focusMaterialScore {
+  font-weight: 700;
+  color: var(--on-accent);
+  background: var(--accent);
+  font-size: 1rem;
+  padding: 0.25rem 0.6rem;
+  min-width: 40px;
+}
+#focusMaterialIcons {
+  font-size: 1.1rem;
+  letter-spacing: 2px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  opacity: 0.9;
+}
 /*# sourceMappingURL=main.css.map */

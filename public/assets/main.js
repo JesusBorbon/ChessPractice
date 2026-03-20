@@ -7300,6 +7300,13 @@ var require_main = __commonJS({
       q: 900,
       k: 0
     };
+    var PIECE_SYMBOLS_MAP = {
+      p: "\u265F",
+      n: "\u265E",
+      b: "\u265D",
+      r: "\u265C",
+      q: "\u265B"
+    };
     var LIVE_CATEGORY_LABELS = {
       brilliant: "Brilliant",
       great: "Great",
@@ -7481,12 +7488,17 @@ var require_main = __commonJS({
         <div class="board-caption" id="boardCaption">
           Tap or click one of your pieces, then choose a legal destination.
         </div>
+
         <div class="focus-hud" id="focusHud" hidden>
           <span class="focus-chip" id="focusTimer">00:00</span>
-           
         </div>
-         <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
-      
+
+        <div id="focusMaterialHud" class="focus-material-hud" hidden>
+          <span class="focus-chip" id="focusMaterialScore"></span>
+          <span class="focus-chip" id="focusMaterialIcons"></span>
+        </div>
+
+        <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
       </section>
 
       <aside class="panel side-panel">
@@ -7591,6 +7603,9 @@ var require_main = __commonJS({
     var focusHud = must("#focusHud");
     var focusTimer = must("#focusTimer");
     var focusModeButton = must("#focusModeBtn");
+    var focusMaterialHud = must("#focusMaterialHud");
+    var focusMaterialScore = must("#focusMaterialScore");
+    var focusMaterialIcons = must("#focusMaterialIcons");
     mountThemeSwitcher();
     window.addEventListener("animationchange", (event) => {
       const customEvent = event;
@@ -8372,17 +8387,45 @@ var require_main = __commonJS({
       moveList.innerHTML = rows.join("");
     }
     function updateCaption() {
-      if (!state.snapshot) {
-        boardCaption.textContent = "";
+      const snapshot = state.snapshot;
+      if (!snapshot || !state.role || state.role === "spectator") {
+        boardCaption.textContent = snapshot ? `Spectating room ${snapshot.roomId}` : "";
         return;
       }
-      if (state.role === "spectator") {
-        boardCaption.textContent = `Spectating room ${state.snapshot.roomId}.`;
-        return;
+      const fen = snapshot.fen || "";
+      const myColor = state.role;
+      const rawValue = materialFromPerspective(fen, myColor);
+      const netValue = Math.floor(rawValue / 100);
+      const boardFen = fen.split(" ")[0] || "";
+      const counts = {};
+      for (const char of boardFen) {
+        if (/[prnbqkPRNBQK]/.test(char)) {
+          counts[char] = (counts[char] || 0) + 1;
+        }
       }
-      if (state.snapshot.turn !== state.role) {
-        const count = state.premoves.length;
-        return;
+      let advantageIcons = "";
+      const types = ["q", "r", "b", "n", "p"];
+      types.forEach((type) => {
+        const whiteKey = type.toUpperCase();
+        const blackKey = type.toLowerCase();
+        const myCount = myColor === "w" ? counts[whiteKey] || 0 : counts[blackKey] || 0;
+        const opCount = myColor === "w" ? counts[blackKey] || 0 : counts[whiteKey] || 0;
+        const diff = myCount - opCount;
+        if (diff > 0) {
+          advantageIcons += PIECE_SYMBOLS_MAP[type].repeat(diff) + " ";
+        }
+      });
+      if (netValue > 0) {
+        boardCaption.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 8px; justify-content: center;">
+        <span style="font-size: 1.3rem; letter-spacing: 2px;">${advantageIcons.trim()}</span>
+        <strong style="color: var(--accent); font-size: 1.1rem;">+${netValue}</strong>
+      </div>
+    `;
+      } else if (netValue < 0) {
+        boardCaption.innerHTML = `<span style="opacity: 0.6;">Material: <b>${netValue}</b></span>`;
+      } else {
+        boardCaption.textContent = "Material: Even";
       }
     }
     function materialFromPerspective(fen, color) {
@@ -9125,10 +9168,49 @@ var require_main = __commonJS({
     function updateFocusHud() {
       if (!state.focusMode) {
         focusHud.hidden = true;
+        focusMaterialHud.hidden = true;
         return;
       }
       const elapsedSeconds = focusTimerStartMs ? Math.max(0, Math.floor((Date.now() - focusTimerStartMs) / 1e3)) : 0;
       focusTimer.textContent = formatElapsed(elapsedSeconds);
+      const snapshot = state.snapshot;
+      if (snapshot && state.role && state.role !== "spectator") {
+        const fen = snapshot.fen || "";
+        const myColor = state.role;
+        const rawValue = materialFromPerspective(fen, myColor);
+        const netValue = Math.floor(rawValue / 100);
+        const boardFen = fen.split(" ")[0] || "";
+        const counts = {};
+        for (const char of boardFen) {
+          if (/[prnbqkPRNBQK]/.test(char)) {
+            counts[char] = (counts[char] || 0) + 1;
+          }
+        }
+        let advantageIcons = "";
+        const types = ["q", "r", "b", "n", "p"];
+        types.forEach((type) => {
+          const myCount = myColor === "w" ? counts[type.toUpperCase()] || 0 : counts[type.toLowerCase()] || 0;
+          const opCount = myColor === "w" ? counts[type.toLowerCase()] || 0 : counts[type.toUpperCase()] || 0;
+          const diff = myCount - opCount;
+          if (diff > 0) advantageIcons += PIECE_SYMBOLS_MAP[type].repeat(diff);
+        });
+        if (netValue > 0) {
+          focusMaterialScore.textContent = `+${netValue}`;
+          focusMaterialIcons.textContent = advantageIcons;
+          focusMaterialScore.style.display = "block";
+          focusMaterialIcons.style.display = "block";
+          focusMaterialHud.hidden = false;
+        } else if (netValue < 0) {
+          focusMaterialScore.textContent = `${netValue}`;
+          focusMaterialScore.style.display = "block";
+          focusMaterialIcons.style.display = "none";
+          focusMaterialHud.hidden = false;
+        } else {
+          focusMaterialHud.hidden = true;
+        }
+      } else {
+        focusMaterialHud.hidden = true;
+      }
       focusHud.hidden = false;
     }
     function applyFocusMode() {

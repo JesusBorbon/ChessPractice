@@ -157,6 +157,14 @@ const PIECE_VALUES: Record<string, number> = {
   q: 900,
   k: 0,
 };
+
+const PIECE_SYMBOLS_MAP: Record<string, string> = {
+  p: "♟",
+  n: "♞",
+  b: "♝",
+  r: "♜",
+  q: "♛",
+} as const;
 const LIVE_CATEGORY_LABELS: Record<MoveCategory, string> = {
   brilliant: "Brilliant",
   great: "Great",
@@ -361,12 +369,17 @@ app.innerHTML = `
         <div class="board-caption" id="boardCaption">
           Tap or click one of your pieces, then choose a legal destination.
         </div>
+
         <div class="focus-hud" id="focusHud" hidden>
           <span class="focus-chip" id="focusTimer">00:00</span>
-           
         </div>
-         <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
-      
+
+        <div id="focusMaterialHud" class="focus-material-hud" hidden>
+          <span class="focus-chip" id="focusMaterialScore"></span>
+          <span class="focus-chip" id="focusMaterialIcons"></span>
+        </div>
+
+        <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
       </section>
 
       <aside class="panel side-panel">
@@ -472,6 +485,9 @@ const createRoomButton = must<HTMLButtonElement>("#createRoomButton");
 const focusHud = must<HTMLDivElement>("#focusHud");
 const focusTimer = must<HTMLSpanElement>("#focusTimer");
 const focusModeButton = must<HTMLButtonElement>("#focusModeBtn");
+const focusMaterialHud = must<HTMLDivElement>("#focusMaterialHud");
+const focusMaterialScore = must<HTMLSpanElement>("#focusMaterialScore");
+const focusMaterialIcons = must<HTMLSpanElement>("#focusMaterialIcons");
 
 mountThemeSwitcher();
 
@@ -1505,26 +1521,60 @@ function renderMoves(): void {
   moveList.innerHTML = rows.join("");
 }
 function updateCaption(): void {
-  if (!state.snapshot) {
-    boardCaption.textContent = "";
+  const snapshot = state.snapshot;
+  
+  if (!snapshot || !state.role || state.role === "spectator") {
+    boardCaption.textContent = snapshot ? `Spectating room ${snapshot.roomId}` : "";
     return;
   }
 
-  if (state.role === "spectator") {
-    boardCaption.textContent = `Spectating room ${state.snapshot.roomId}.`;
-    return;
+  // Aseguramos que fen existe
+  const fen = snapshot.fen || ""; 
+  const myColor = state.role as PlayerRole;
+  
+  const rawValue = materialFromPerspective(fen, myColor);
+  const netValue = Math.floor(rawValue / 100);
+
+  // CORRECCIÓN 1: Añadimos || "" para evitar el undefined
+  const boardFen = fen.split(" ")[0] || ""; 
+  
+  const counts: Record<string, number> = {};
+  for (const char of boardFen) {
+    if (/[prnbqkPRNBQK]/.test(char)) {
+      counts[char] = (counts[char] || 0) + 1;
+    }
   }
 
-  if (state.snapshot.turn !== state.role) {
-    const count = state.premoves.length;
-    // Solo muestra el número de premoves si hay alguno, si no, vacío.
-    // boardCaption.textContent = count > 0 ? `Premoves queued: ${count}` : "";
-    return;
-  }
+  let advantageIcons = "";
+  // CORRECCIÓN 2: Tipamos explícitamente las piezas permitidas
+  const types: (keyof typeof PIECE_SYMBOLS_MAP)[] = ["q", "r", "b", "n", "p"];
+  
+  types.forEach(type => {
+    const whiteKey = type.toUpperCase();
+    const blackKey = type.toLowerCase();
+    
+    const myCount = myColor === "w" ? (counts[whiteKey] || 0) : (counts[blackKey] || 0);
+    const opCount = myColor === "w" ? (counts[blackKey] || 0) : (counts[whiteKey] || 0);
+    
+    const diff = myCount - opCount;
+    if (diff > 0) {
+      // Ahora TS sabe que PIECE_SYMBOLS_MAP[type] siempre existirá
+      advantageIcons += PIECE_SYMBOLS_MAP[type].repeat(diff) + " ";
+    }
+  });
 
-  // boardCaption.textContent = state.selectedSquare
-  //   ? `Selected ${state.selectedSquare}`
-  //   : `Your move (${state.role === "w" ? "White" : "Black"})`;
+  if (netValue > 0) {
+    boardCaption.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 8px; justify-content: center;">
+        <span style="font-size: 1.3rem; letter-spacing: 2px;">${advantageIcons.trim()}</span>
+        <strong style="color: var(--accent); font-size: 1.1rem;">+${netValue}</strong>
+      </div>
+    `;
+  } else if (netValue < 0) {
+    boardCaption.innerHTML = `<span style="opacity: 0.6;">Material: <b>${netValue}</b></span>`;
+  } else {
+    boardCaption.textContent = "Material: Even";
+  }
 }
 
 function materialFromPerspective(fen: string, color: "w" | "b"): number {
@@ -2461,16 +2511,73 @@ function formatElapsed(secondsTotal: number): string {
 }
 
 function updateFocusHud(): void {
+  // Ocultamos ambos HUDs si no estamos en modo focus
   if (!state.focusMode) {
     focusHud.hidden = true;
+    focusMaterialHud.hidden = true; // Ocultamos el nuevo HUD también
     return;
   }
 
+  // 1. Lógica del Cronómetro (Tu lógica original)
   const elapsedSeconds = focusTimerStartMs
     ? Math.max(0, Math.floor((Date.now() - focusTimerStartMs) / 1000))
     : 0;
-  
   focusTimer.textContent = formatElapsed(elapsedSeconds);
+
+  // 2. Lógica de Material para el HUD (Reparada)
+  const snapshot = state.snapshot;
+  if (snapshot && state.role && state.role !== "spectator") {
+    const fen = snapshot.fen || "";
+    const myColor = state.role as PlayerRole;
+    
+    // Calculamos el valor neto
+    const rawValue = materialFromPerspective(fen, myColor);
+    const netValue = Math.floor(rawValue / 100);
+
+    // Contamos piezas para los iconos
+    const boardFen = fen.split(" ")[0] || "";
+    const counts: Record<string, number> = {};
+    for (const char of boardFen) {
+      if (/[prnbqkPRNBQK]/.test(char)) {
+        counts[char] = (counts[char] || 0) + 1;
+      }
+    }
+
+    let advantageIcons = "";
+    // Aseguramos que PIECE_SYMBOLS_MAP está definida con 'as const' para TypeScript
+    const types: (keyof typeof PIECE_SYMBOLS_MAP)[] = ["q", "r", "b", "n", "p"];
+    
+    types.forEach(type => {
+      const myCount = myColor === "w" ? (counts[type.toUpperCase()] || 0) : (counts[type.toLowerCase()] || 0);
+      const opCount = myColor === "w" ? (counts[type.toLowerCase()] || 0) : (counts[type.toUpperCase()] || 0);
+      const diff = myCount - opCount;
+      if (diff > 0) advantageIcons += PIECE_SYMBOLS_MAP[type].repeat(diff);
+    });
+
+    // Mostramos u ocultamos según el balance
+    if (netValue > 0) {
+      // Ventaja: Mostramos puntos e iconos (apilados por el CSS)
+      focusMaterialScore.textContent = `+${netValue}`;
+      focusMaterialIcons.textContent = advantageIcons;
+      focusMaterialScore.style.display = "block";
+      focusMaterialIcons.style.display = "block";
+      focusMaterialHud.hidden = false;
+    } else if (netValue < 0) {
+      // Desventaja: Solo mostramos el número
+      focusMaterialScore.textContent = `${netValue}`;
+      focusMaterialScore.style.display = "block";
+      focusMaterialIcons.style.display = "none";
+      focusMaterialHud.hidden = false;
+    } else {
+      // Igualdad: Ocultamos el HUD para limpiar la pantalla
+      focusMaterialHud.hidden = true;
+    }
+  } else {
+    // Si no hay partida o somos espectadores, ocultamos el material
+    focusMaterialHud.hidden = true;
+  }
+
+  // Mostramos el timer (siempre visible en focus)
   focusHud.hidden = false;
 }
 

@@ -1955,3 +1955,42 @@ body.focus-mode.focus-multiplayer .board-panel {
 
 
 
+/* === AÑADE ESTO AL FINAL DE STYLES.CSS === */
+
+/* Nuevo contenedor para el material abajo en el centro */
+#focusMaterialHud {
+  position: absolute;
+  bottom: -120px;       /* Separación del borde inferior */
+  right: 5px;          /* Centrado horizontal al 50%... */
+  transform: translateX(-50%); /* ...y corregido por su propio ancho */
+  display: flex;
+  flex-direction: column; /* Apilados en columna */
+  gap: 6px;       /* Pequeña separación entre puntos e iconos */
+  pointer-events: none; /* No intercepta clics */
+  z-index: 1000;      /* Encima de todo */
+  text-align: center;
+}
+
+/* Estilo específico para la pastilla de puntos */
+#focusMaterialScore {
+  font-weight: 700;
+  color: var(--on-accent);
+  background: var(--accent); /* Fondo de color de acento para que resalte */
+  font-size: 1rem;
+  padding: 0.25rem 0.6rem;
+  min-width: 40px;    /* Asegura un ancho mínimo */
+}
+
+/* Estilo específico para la pastilla de iconos */
+#focusMaterialIcons {
+  font-size: 1.1rem;
+  letter-spacing: 2px;
+  background: rgba(0, 0, 0, 0.5); /* Fondo negro sutil */
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  opacity: 0.9;
+}
+
+
+
