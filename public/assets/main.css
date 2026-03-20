@@ -454,7 +454,9 @@ button {
   gap: 12px;
 }
 .board-toolbar {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
   margin-bottom: 16px;
 }
 .action,
@@ -1941,5 +1943,43 @@ body.focus-mode.focus-multiplayer .board-panel {
   pointer-events: none;
   z-index: 2;
   filter: grayscale(30%);
+}
+.game-over-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(18, 28, 24, 0.92);
+  backdrop-filter: blur(8px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  border-radius: 26px;
+  color: #fff;
+  text-align: center;
+  padding: 20px;
+  pointer-events: all;
+}
+.game-over-title {
+  font-family: "Fraunces", serif;
+  font-size: 3rem;
+  margin: 0 0 10px 0;
+  color: #fff;
+  text-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+.game-over-reason {
+  font-size: 1.2rem;
+  opacity: 0.8;
+  margin: 0;
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 /*# sourceMappingURL=main.css.map */

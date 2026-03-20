@@ -7280,6 +7280,7 @@ var require_main = __commonJS({
       animationStyle: localStorage.getItem("chess-animation-style") || "smooth",
       bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on"
     };
+    window.state = state;
     var lastAnimatedMoveKey = null;
     var suppressAnimationForMove = null;
     var currentPremoveHoverSquare = null;
@@ -7467,6 +7468,7 @@ var require_main = __commonJS({
           <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
           <button class="ghost" id="flipBoardButton" type="button" hidden>Flip board</button>
           <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
+          <button class="ghost" id="resignButton" type="button" hidden>Resign</button>
         </div>
         <div class="pregame-placeholder" id="pregamePlaceholder">
           <h2>Waiting for match start</h2>
@@ -7603,6 +7605,7 @@ var require_main = __commonJS({
     var rematchButton = must("#rematchButton");
     var liveAnalysisButton = must("#liveAnalysisButton");
     var arrowLayer = must("#arrowLayer");
+    var resignButton = must("#resignButton");
     var arrowAnnotations = /* @__PURE__ */ new Set();
     createRoomButton.addEventListener("click", () => {
       socket.emit("room:create");
@@ -7640,6 +7643,13 @@ var require_main = __commonJS({
       socket.emit("room:leave");
       clearLocalRoomState();
       render();
+    });
+    resignButton.addEventListener("click", () => {
+      if (!state.roomId) return;
+      const confirmResign = confirm("\xBFEst\xE1s seguro de que quieres abandonar la partida?");
+      if (confirmResign) {
+        socket.emit("game:resign");
+      }
     });
     flipBoardButton.addEventListener("click", () => {
       state.orientation = state.orientation === "w" ? "b" : "w";
@@ -7706,6 +7716,8 @@ var require_main = __commonJS({
     var arrowDragPointer = null;
     var arrowDragMoved = false;
     board.addEventListener("pointerdown", (event) => {
+      const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
+      if (gameEnded) return;
       if (event.button === 2) {
         const square2 = getSquareFromPoint(event.clientX, event.clientY);
         if (!square2) return;
@@ -8014,12 +8026,13 @@ var require_main = __commonJS({
       leaveRoomButton.hidden = !hasRoom;
       copyLinkButton.hidden = !state.shareUrl;
       flipBoardButton.hidden = !isMatchReady;
-      liveAnalysisButton.hidden = !isMatchReady || !canVote;
-      rematchButton.hidden = !gameEnded || !canVote;
       focusModeButton.hidden = !isMatchReady;
       seatCard.hidden = !hasRoom;
       summaryCard.hidden = !isMatchReady;
       movesCard.hidden = !isMatchReady;
+      liveAnalysisButton.hidden = !isMatchReady || !canVote;
+      rematchButton.hidden = !gameEnded || !canVote;
+      resignButton.hidden = !isMatchReady || gameEnded || !canVote;
       if (!isMatchReady && state.focusMode) {
         state.focusMode = false;
         applyFocusMode();
@@ -8080,7 +8093,6 @@ var require_main = __commonJS({
         button.tabIndex = -1;
         button.className = `square ${isLightSquare(squareName) ? "light" : "dark"}`;
         button.dataset.square = squareName;
-        button.setAttribute("aria-label", squareName);
         if (state.selectedSquare === square) button.classList.add("selected");
         if (state.legalTargets.includes(square)) button.classList.add("legal");
         if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
@@ -8099,7 +8111,6 @@ var require_main = __commonJS({
           const pieceImage = document.createElement("img");
           pieceImage.className = "piece-image";
           pieceImage.src = spritePath;
-          pieceImage.alt = `${piece.color === "w" ? "White" : "Black"} ${piece.type}`;
           pieceImage.draggable = false;
           pieceElement.append(pieceImage);
           button.append(pieceElement);
@@ -8117,14 +8128,31 @@ var require_main = __commonJS({
       if (isPremoveExecution) {
         lastAnimatedMoveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
         suppressAnimationForMove = null;
-      } else {
-        if (state.animationStyle === "epic") {
-          animateLastMoveEpic(lastMove);
-        } else {
-          animateLastMove(lastMove);
-        }
+      } else if (lastMove) {
+        if (state.animationStyle === "epic") animateLastMoveEpic(lastMove);
+        else animateLastMove(lastMove);
       }
       renderArrows();
+      const snapshot = state.snapshot;
+      const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
+      if (gameEnded && snapshot) {
+        const overlay = document.createElement("div");
+        overlay.className = "game-over-overlay";
+        const title = document.createElement("h2");
+        title.className = "game-over-title";
+        if (snapshot.checkmate) {
+          title.textContent = snapshot.winner === state.role ? "\xA1Victoria!" : "Jaque Mate";
+        } else if (snapshot.winner !== null) {
+          title.textContent = snapshot.winner === state.role ? "\xA1Ganaste!" : "Te rendiste";
+        } else {
+          title.textContent = "Tablas";
+        }
+        const reason = document.createElement("p");
+        reason.className = "game-over-reason";
+        reason.textContent = snapshot.status;
+        overlay.append(title, reason);
+        board.append(overlay);
+      }
     }
     function buildArrowPath(start, end, shaftWidth = 10, headLength = 46, headWidth = 38) {
       const dx = end.x - start.x;
@@ -8823,6 +8851,8 @@ var require_main = __commonJS({
       });
     }
     function onSquarePressed(square) {
+      const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
+      if (gameEnded) return;
       if (!state.snapshot || !state.role || state.role === "spectator") {
         return;
       }
@@ -8885,6 +8915,8 @@ var require_main = __commonJS({
       return true;
     }
     function tryMoveFromTo(from, to) {
+      const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
+      if (gameEnded) return;
       if (!state.snapshot || !state.role || state.role === "spectator") {
         return;
       }

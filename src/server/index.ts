@@ -50,6 +50,8 @@ type GameRoom = {
   chess: Chess;
   white?: string;
   black?: string;
+  winner?: PlayerRole | null;      
+  statusOverride?: string;
   whiteDisconnectedAt?: number;
   blackDisconnectedAt?: number;
   rematchVotes: Set<string>;
@@ -168,7 +170,13 @@ function toMoveSummary(move: Move): MoveSummary {
 
 function buildSnapshot(room: GameRoom): RoomSnapshot {
   const verboseHistory = room.chess.history({ verbose: true }).map(toMoveSummary);
-  const { status, winner } = buildStatus(room.chess);
+  
+  let { status, winner } = buildStatus(room.chess);
+
+  if (room.winner) {
+    winner = room.winner;
+    status = room.statusOverride || status;
+  }
 
   return {
     roomId: room.id,
@@ -498,6 +506,23 @@ io.on("connection", (socket) => {
     },
   );
 
+  socket.on("game:resign", () => {
+    const clientState = socket.data as ClientState;
+    const roomId = clientState.roomId;
+    const role = clientState.role;
+
+    if (!roomId || !role || role === "spectator") return;
+
+    const room = rooms.get(roomId);
+    if (!room || room.chess.isGameOver() || room.winner) return;
+
+    // El ganador es el oponente del que se rinde
+    room.winner = role === "w" ? "b" : "w";
+    room.statusOverride = `${role === "w" ? "White" : "Black"} resigned.`;
+    
+    emitRoomState(room);
+  });
+
   socket.on("analysis:toggle", () => {
     const clientState = socket.data as ClientState;
     const roomId = clientState.roomId;
@@ -541,7 +566,7 @@ io.on("connection", (socket) => {
     emitRoomState(room);
   });
 
-  socket.on("game:rematch", () => {
+socket.on("game:rematch", () => {
     const clientState = socket.data as ClientState;
     const roomId = clientState.roomId;
     const role = clientState.role;
@@ -560,8 +585,14 @@ io.on("connection", (socket) => {
     room.rematchVotes.add(socket.id);
     const players = getActivePlayerSockets(room);
 
+    // Si ambos jugadores han votado por la revancha
     if (players.length === 2 && players.every((playerId) => room.rematchVotes.has(playerId))) {
       room.chess.reset();
+
+    
+      delete room.winner;      
+      delete room.statusOverride; 
+      
       room.rematchVotes.clear();
     }
 

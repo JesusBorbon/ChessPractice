@@ -135,6 +135,8 @@ const state: AppState = {
   bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on",
 };
 
+(window as any).state = state;
+
 let lastAnimatedMoveKey: string | null = null;
 let suppressAnimationForMove: { from: Square; to: Square } | null = null;
 let currentPremoveHoverSquare: Square | null = null;
@@ -346,6 +348,7 @@ app.innerHTML = `
           <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
           <button class="ghost" id="flipBoardButton" type="button" hidden>Flip board</button>
           <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
+          <button class="ghost" id="resignButton" type="button" hidden>Resign</button>
         </div>
         <div class="pregame-placeholder" id="pregamePlaceholder">
           <h2>Waiting for match start</h2>
@@ -475,6 +478,8 @@ window.addEventListener("animationchange", (event: Event) => {
   state.animationStyle = customEvent.detail.style;
 });
 
+
+
 window.addEventListener("bloodfxchange", (event: Event) => {
   const customEvent = event as CustomEvent<{ enabled: boolean }>;
   state.bloodFxEnabled = customEvent.detail.enabled;
@@ -487,7 +492,10 @@ const flipBoardButton = must<HTMLButtonElement>("#flipBoardButton");
 const rematchButton = must<HTMLButtonElement>("#rematchButton");
 const liveAnalysisButton = must<HTMLButtonElement>("#liveAnalysisButton");
 const arrowLayer = must<SVGSVGElement>("#arrowLayer");
+const resignButton = must<HTMLButtonElement>("#resignButton");
 const arrowAnnotations = new Set<string>();
+
+
 
 createRoomButton.addEventListener("click", () => {
   socket.emit("room:create");
@@ -532,6 +540,16 @@ leaveRoomButton.addEventListener("click", () => {
   socket.emit("room:leave");
   clearLocalRoomState();
   render();
+});
+
+resignButton.addEventListener("click", () => {
+  if (!state.roomId) return;
+
+  // Confirmación para evitar abandonos accidentales
+  const confirmResign = confirm("¿Estás seguro de que quieres abandonar la partida?");
+  if (confirmResign) {
+    socket.emit("game:resign");
+  }
 });
 
 flipBoardButton.addEventListener("click", () => {
@@ -625,6 +643,10 @@ let arrowDragPointer: { x: number; y: number } | null = null;
 let arrowDragMoved = false;
 
 board.addEventListener("pointerdown", (event) => {
+
+  const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
+  if (gameEnded) return;
+
   if (event.button === 2) {
     const square = getSquareFromPoint(event.clientX, event.clientY);
     if (!square) return;
@@ -1008,26 +1030,37 @@ function renderSession(): void {
   const canVote = state.role === "w" || state.role === "b";
   const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
 
+  // 1. Información básica de la sesión
   roomBadge.textContent = state.roomId ? `Room ${state.roomId}` : "No active room";
   roleBadge.textContent = humanRole(state.role);
   shareLink.textContent = state.shareUrl || "Create or join a room to get a live invite link.";
 
-  // Show controls only when they are actionable for the current session stage.
+  // 2. Control de visibilidad de botones y paneles
+  // Mostramos controles solo cuando son accionables para la etapa actual.
   leaveRoomButton.hidden = !hasRoom;
   copyLinkButton.hidden = !state.shareUrl;
   flipBoardButton.hidden = !isMatchReady;
-  liveAnalysisButton.hidden = !isMatchReady || !canVote;
-  rematchButton.hidden = !gameEnded || !canVote;
   focusModeButton.hidden = !isMatchReady;
+  
+  // Paneles laterales
   seatCard.hidden = !hasRoom;
   summaryCard.hidden = !isMatchReady;
   movesCard.hidden = !isMatchReady;
 
+  // Lógica específica para botones de juego
+  liveAnalysisButton.hidden = !isMatchReady || !canVote;
+  rematchButton.hidden = !gameEnded || !canVote;
+  
+  // RESIGN: Solo se muestra si la partida empezó, NO ha terminado y eres jugador.
+  resignButton.hidden = !isMatchReady || gameEnded || !canVote;
+
+  // Si se pierde la conexión o alguien sale, desactivamos el modo focus automáticamente
   if (!isMatchReady && state.focusMode) {
     state.focusMode = false;
     applyFocusMode();
   }
   
+  // 3. Estado inicial (Sin partida o esperando jugadores)
   if (!snapshot) {
     pregamePlaceholder.hidden = false;
     matchStatus.textContent = "Create a room to start.";
@@ -1041,8 +1074,10 @@ function renderSession(): void {
     return;
   }
 
+  // Ocultar el placeholder si ya hay 2 jugadores
   pregamePlaceholder.hidden = isMatchReady;
 
+  // 4. Actualización de datos en vivo de la partida
   matchStatus.textContent = snapshot.status;
   whiteSeat.textContent = snapshot.players.whiteConnected ? seatLabel("w") : "Waiting for player";
   blackSeat.textContent = snapshot.players.blackConnected ? seatLabel("b") : "Waiting for player";
@@ -1050,26 +1085,35 @@ function renderSession(): void {
   movesMeta.textContent = String(snapshot.moveCount);
   spectatorMeta.textContent = String(snapshot.players.spectatorCount);
 
+  // 5. Construcción del resumen textual
   const roleDescription = state.role === "spectator"
     ? "Spectating."
     : state.role
       ? `Playing ${state.role === "w" ? "White" : "Black"}.`
       : "Not seated.";
+      
   const lastMoveDescription = snapshot.lastMove
     ? ` Last move: ${snapshot.lastMove.san} (${snapshot.lastMove.from} to ${snapshot.lastMove.to}).`
     : "";
-  const rematchDescription = snapshot.rematchVotes > 0 ? ` Rematch votes: ${snapshot.rematchVotes}/2.` : "";
+    
+  const rematchDescription = snapshot.rematchVotes > 0 
+    ? ` Rematch votes: ${snapshot.rematchVotes}/2.` 
+    : "";
 
   summaryText.textContent = `${roleDescription} ${snapshot.status}${lastMoveDescription}${rematchDescription}`.trim();
+
+  // 6. Configuración de botones de Análisis y Rematch
   const seatedPlayers = Number(snapshot.players.whiteConnected) + Number(snapshot.players.blackConnected);
+  
   liveAnalysisButton.disabled = seatedPlayers < 2 || !canVote;
   liveAnalysisButton.textContent = snapshot.analysis.enabled
     ? "Disable analysis"
     : `Enable analysis (${snapshot.analysis.votes}/2)`;
 
-  // Enable rematch button only if game has ended
+  // La revancha solo es posible si la partida terminó
   rematchButton.disabled = !gameEnded;
 
+  // 7. Texto del Análisis en vivo
   if (snapshot.analysis.enabled) {
     liveAnalysisText.textContent = state.liveAnalysisSummary;
   } else if (snapshot.analysis.votes > 0) {
@@ -1077,6 +1121,7 @@ function renderSession(): void {
   } else {
     liveAnalysisText.textContent = "Live analysis disabled.";
   }
+
   updateFocusHud();
 }
 
@@ -1097,6 +1142,7 @@ function renderBoard(): void {
     lastMoveSquares.add(lastMove.to);
   }
 
+  // Dibujamos las casillas y piezas
   for (const squareName of squares) {
     const square = squareName as Square;
     const piece = chess.get(square);
@@ -1105,7 +1151,6 @@ function renderBoard(): void {
     button.tabIndex = -1;
     button.className = `square ${isLightSquare(squareName) ? "light" : "dark"}`;
     button.dataset.square = squareName;
-    button.setAttribute("aria-label", squareName);
 
     if (state.selectedSquare === square) button.classList.add("selected");
     if (state.legalTargets.includes(square)) button.classList.add("legal");
@@ -1122,7 +1167,6 @@ function renderBoard(): void {
       const pieceElement = document.createElement("span");
       pieceElement.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
       
-      // Aplicar 0ms en CSS si es el destino del premove actual
       if (suppressAnimationForMove && square === suppressAnimationForMove.to) {
         pieceElement.style.transition = "none";
       }
@@ -1130,7 +1174,6 @@ function renderBoard(): void {
       const pieceImage = document.createElement("img");
       pieceImage.className = "piece-image";
       pieceImage.src = spritePath;
-      pieceImage.alt = `${piece.color === "w" ? "White" : "Black"} ${piece.type}`;
       pieceImage.draggable = false;
       pieceElement.append(pieceImage);
       button.append(pieceElement);
@@ -1145,29 +1188,53 @@ function renderBoard(): void {
     fragment.append(button);
   }
 
+  // Limpiamos y renderizamos el tablero base
   board.replaceChildren(fragment);
 
-  // --- LÓGICA DE SUPRESIÓN DE ANIMACIÓN MEJORADA ---
+  // --- LÓGICA DE SUPRESIÓN DE ANIMACIÓN ---
   const isPremoveExecution = suppressAnimationForMove && 
                              lastMove && 
                              lastMove.from === suppressAnimationForMove.from && 
                              lastMove.to === suppressAnimationForMove.to;
 
   if (isPremoveExecution) {
-    // Marcamos el movimiento como "ya procesado" para que el motor de animación no lo intente después
     lastAnimatedMoveKey = `${state.snapshot!.moveCount}:${lastMove!.from}:${lastMove!.to}:${lastMove!.san}`;
-    // LIMPIEZA SEGURA: Solo lo ponemos a null si ya se ejecutó
     suppressAnimationForMove = null; 
-  } else {
-    // Si no es la ejecución del premove, animamos según el estilo elegido
-    if (state.animationStyle === "epic") {
-      animateLastMoveEpic(lastMove);
-    } else {
-      animateLastMove(lastMove);
-    }
+  } else if (lastMove) {
+    if (state.animationStyle === "epic") animateLastMoveEpic(lastMove);
+    else animateLastMove(lastMove);
   }
 
+  // Dibujamos flechas
   renderArrows();
+
+  // --- CAPA ÚNICA DE FIN DE PARTIDA ---
+  const snapshot = state.snapshot;
+  const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
+
+  if (gameEnded && snapshot) {
+    const overlay = document.createElement("div");
+    overlay.className = "game-over-overlay";
+    
+    const title = document.createElement("h2");
+    title.className = "game-over-title";
+    
+    if (snapshot.checkmate) {
+      title.textContent = snapshot.winner === state.role ? "¡Victoria!" : "Jaque Mate";
+    } else if (snapshot.winner !== null) {
+      // Caso de abandono (Resign)
+      title.textContent = snapshot.winner === state.role ? "¡Ganaste!" : "Te rendiste";
+    } else {
+      title.textContent = "Tablas";
+    }
+
+    const reason = document.createElement("p");
+    reason.className = "game-over-reason";
+    reason.textContent = snapshot.status; // "White resigned", "Draw by stalemate", etc.
+
+    overlay.append(title, reason);
+    board.append(overlay);
+  }
 }
 
 function buildArrowPath(
@@ -2038,6 +2105,9 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
 }
 
 function onSquarePressed(square: Square): void {
+  const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
+  if (gameEnded) return;
+
   if (!state.snapshot || !state.role || state.role === "spectator") {
     return;
   }
@@ -2117,6 +2187,10 @@ function canStartMoveFrom(square: Square): boolean {
 }
 
 function tryMoveFromTo(from: Square, to: Square): void {
+
+  const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
+  if (gameEnded) return;
+  
   if (!state.snapshot || !state.role || state.role === "spectator") {
     return;
   }
