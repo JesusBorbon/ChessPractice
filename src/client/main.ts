@@ -137,6 +137,7 @@ const state: AppState = {
 
 let lastAnimatedMoveKey: string | null = null;
 let suppressAnimationForMove: { from: Square; to: Square } | null = null;
+let currentPremoveHoverSquare: Square | null = null;
 let activeGhostAnimation: Animation | null = null;
 let activeGhostNode: HTMLElement | null = null;
 let activeGhostDestinationPiece: HTMLElement | null = null;
@@ -600,7 +601,7 @@ board.addEventListener("contextmenu", (event) => {
   event.preventDefault(); 
   if (state.premoves.length > 0) {
     state.premoves = [];
-    showToast("Premoves canceled.");
+    // showToast("Premoves canceled.");
     requestBoardRefresh();
     updateCaption();
   }
@@ -608,6 +609,7 @@ board.addEventListener("contextmenu", (event) => {
 
 
 // ── Pointer drag ───────────────────────────────────────────────────────────────
+
 let ptrDragFrom: Square | null = null;
 let ptrDragNode: HTMLElement | null = null;
 let ptrDragMoved = false;
@@ -651,6 +653,7 @@ board.addEventListener("pointerdown", (event) => {
 });
 
 board.addEventListener("pointermove", (event) => {
+  // Lógica existente para flechas
   if (arrowDragFrom) {
     const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
     arrowDragTo = hoverSquare && hoverSquare !== arrowDragFrom ? hoverSquare : null;
@@ -665,45 +668,76 @@ board.addEventListener("pointermove", (event) => {
   if (!ptrDragFrom) return;
   if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 5) return;
 
+  // Si apenas comienza el movimiento real
   if (!ptrDragMoved) {
     ptrDragMoved = true;
     state.selectedSquare = ptrDragFrom;
-    state.legalTargets = legalTargetsFor(ptrDragFrom);
+    
+    const vBoard = getVirtualBoard(); // ⚡️ Miramos el futuro
+    const virtualPiece = vBoard.get(ptrDragFrom);
+    
+    state.legalTargets = vBoard.moves({ square: ptrDragFrom, verbose: true }).map(m => m.to);
     syncBoardInteractionState();
     updateCaption();
 
     const btn = board.querySelector<HTMLButtonElement>(`[data-square="${ptrDragFrom}"]`);
-    const piece = btn?.querySelector<HTMLElement>(".piece");
-    if (piece && btn) {
-      const cs = window.getComputedStyle(piece);
-      const pieceRect = piece.getBoundingClientRect();
-      ptrDragNode = piece.cloneNode(true) as HTMLElement;
+    if (btn && virtualPiece) {
+      // ⚡️ CAMBIO CLAVE: Creamos el nodo de arrastre aunque la pieza física no esté ahí
+      const spritePath = PIECES[`${virtualPiece.color}${virtualPiece.type}`];
+      
+      ptrDragNode = document.createElement("img");
+      ptrDragNode.src = spritePath;
       Object.assign(ptrDragNode.style, {
         position: "fixed",
         pointerEvents: "none",
         zIndex: "9999",
-        width: `${pieceRect.width}px`,
-        height: `${pieceRect.height}px`,
-        margin: "0",
-        lineHeight: "1",
-        fontSize: cs.fontSize,
-        fontFamily: cs.fontFamily,
-        color: cs.color,
-        textShadow: cs.textShadow,
-        filter: cs.filter,
-        transformOrigin: "center center",
+        width: `${btn.offsetWidth * 0.8}px`, // Ajustamos al tamaño de la casilla
+        height: `${btn.offsetHeight * 0.8}px`,
+        transform: "translate(-50%, -50%)",
         transition: "none",
+        opacity: "0.9"
       });
+      
       document.body.append(ptrDragNode);
       btn.classList.add("dragging");
     }
   }
 
+  // 1. Mover la pieza que arrastras
+  // 1. Mover la pieza que llevas en el dedo/ratón
   if (ptrDragNode) {
-    ptrDragNode.style.left = `${event.clientX - ptrDragNode.offsetWidth / 2}px`;
-    ptrDragNode.style.top  = `${event.clientY - ptrDragNode.offsetHeight / 2}px`;
+    ptrDragNode.style.left = `${event.clientX}px`;
+    ptrDragNode.style.top  = `${event.clientY}px`;
+
+    // 2. Lógica de la PIEZA FANTASMA (Silueta)
+    const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
+    
+    if (hoverSquare !== currentPremoveHoverSquare) {
+      // Limpiar anterior
+      if (currentPremoveHoverSquare) {
+        const oldSq = board.querySelector<HTMLElement>(`[data-square="${currentPremoveHoverSquare}"]`);
+        oldSq?.classList.remove("premove-hover");
+        currentPremoveHoverSquare = null;
+      }
+
+      // Dibujar nueva silueta
+      if (hoverSquare && state.selectedSquare && hoverSquare !== state.selectedSquare) {
+        const vBoard = getVirtualBoard();
+        const movingPiece = vBoard.get(state.selectedSquare);
+
+        if (movingPiece && isTheoreticallyPossible(state.selectedSquare, hoverSquare, movingPiece.type, movingPiece.color)) {
+          const sqEl = board.querySelector<HTMLElement>(`[data-square="${hoverSquare}"]`);
+          const spritePath = PIECES[`${movingPiece.color}${movingPiece.type}`];
+          
+          sqEl?.style.setProperty("--ghost-piece-image", `url(${spritePath})`);
+          sqEl?.classList.add("premove-hover");
+          currentPremoveHoverSquare = hoverSquare;
+        }
+      }
+    }
   }
-});
+}
+);
 
 function endPointerDrag(event: PointerEvent, commit: boolean): void {
   if (!ptrDragFrom) return;
@@ -744,6 +778,14 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
 
 function endArrowDrag(event: PointerEvent, commit: boolean): void {
   if (!arrowDragFrom) return;
+
+  // LIMPIEZA DE PIEZA FANTASMA
+  if (currentPremoveHoverSquare) {
+    const oldSquareEl = board.querySelector<HTMLElement>(`[data-square="${currentPremoveHoverSquare}"]`);
+    oldSquareEl?.classList.remove("premove-hover");
+    oldSquareEl?.style.removeProperty("--ghost-piece-image");
+    currentPremoveHoverSquare = null;
+  }
 
   const fromSquare = arrowDragFrom;
   const previewTo = arrowDragTo;
@@ -909,13 +951,13 @@ if (state.role && state.role !== "spectator" && snapshot.turn === state.role && 
 
     
       socket.emit("game:move", nextMove.promotion ? nextMove : { from: nextMove.from, to: nextMove.to });
-      showToast(`Premove played: ${nextMove.from} -> ${nextMove.to}`);
+      // showToast(`Premove played: ${nextMove.from} -> ${nextMove.to}`);
   
       void maybeRunLiveAnalysis(snapshot);
       return; 
     } else {
       state.premoves = [];
-      showToast("Premoves canceled (illegal move or check).");
+      // showToast("Premoves canceled (illegal move or check).");
     }
   }
 }
@@ -1393,39 +1435,27 @@ function renderMoves(): void {
 
   moveList.innerHTML = rows.join("");
 }
-
 function updateCaption(): void {
   if (!state.snapshot) {
-    boardCaption.textContent = "Tap or click one of your pieces, then choose a legal destination.";
+    boardCaption.textContent = "";
     return;
   }
 
   if (state.role === "spectator") {
-    boardCaption.textContent = `Spectating room ${state.snapshot.roomId}. Flip the board if you want the black perspective.`;
+    boardCaption.textContent = `Spectating room ${state.snapshot.roomId}.`;
     return;
   }
 
-  if (!state.role) {
-    boardCaption.textContent = "Join a room to claim an open seat or watch as a spectator.";
-    return;
-  }
-
-if (state.snapshot.turn !== state.role) {
-    const first = state.premoves[0]; // Intentamos obtener el primero de la cola
-    if (first) {
-      const count = state.premoves.length;
-      boardCaption.textContent = count === 1 
-        ? `Premove queued: ${first.from} -> ${first.to}.`
-        : `Premoves queued: ${count} (${first.from} -> ${first.to}, ...)`;
-    } else {
-      boardCaption.textContent = `Waiting for ${state.snapshot.turn === "w" ? "White" : "Black"} to move. You can set up to 10 premoves.`;
-    }
+  if (state.snapshot.turn !== state.role) {
+    const count = state.premoves.length;
+    // Solo muestra el número de premoves si hay alguno, si no, vacío.
+    boardCaption.textContent = count > 0 ? `Premoves queued: ${count}` : "";
     return;
   }
 
   boardCaption.textContent = state.selectedSquare
-    ? `Selected ${state.selectedSquare}. Choose one of the highlighted targets.`
-    : `Your move as ${state.role === "w" ? "White" : "Black"}.`;
+    ? `Selected ${state.selectedSquare}`
+    : `Your move (${state.role === "w" ? "White" : "Black"})`;
 }
 
 function materialFromPerspective(fen: string, color: "w" | "b"): number {
@@ -2074,20 +2104,16 @@ function legalTargetsForRole(square: Square, role: PlayerRole): Square[] {
 }
 
 function canStartMoveFrom(square: Square): boolean {
-  if (!state.snapshot || !state.role || state.role === "spectator") {
-    return false;
-  }
+  if (!state.snapshot || !state.role || state.role === "spectator") return false;
 
-  const piece = chess.get(square);
-  if (!piece || !isOwnPiece(piece.color)) {
-    return false;
-  }
+  // Miramos el tablero virtual para permitir arrastrar "fantasmas"
+  const vBoard = getVirtualBoard();
+  const piece = vBoard.get(square);
 
-  if (state.snapshot.turn === state.role) {
-    return true;
-  }
+  if (!piece || piece.color !== state.role) return false;
 
-  return legalTargetsForRole(square, state.role).length > 0;
+  // Si es tu turno real o si la pieza tiene movimientos teóricos/legales
+  return true; 
 }
 
 function tryMoveFromTo(from: Square, to: Square): void {
@@ -2159,32 +2185,48 @@ function isTheoreticallyPossible(from: Square, to: Square, piece: PieceSymbol, c
   }
 }
 
+
+
+function getVirtualBoard(): Chess {
+  // 1. Creamos el tablero virtual
+  const vBoard = new Chess(chess.fen());
+  
+  for (const p of state.premoves) {
+    try {
+      // EL TRUCO: Forzamos el turno del tablero virtual a TU rol
+      // para que chess.js permita encadenar movimientos seguidos.
+      const fenParts = vBoard.fen().split(" ");
+      fenParts[1] = state.role as string; 
+      vBoard.load(fenParts.join(" "));
+
+      vBoard.move({ from: p.from, to: p.to, promotion: p.promotion || "q" });
+    } catch (e) {
+      // Si un movimiento de la cadena es físicamente imposible, paramos.
+      break; 
+    }
+  }
+  return vBoard;
+}
+
 function queuePremove(from: Square, to: Square): void {
   if (!state.role || state.role === "spectator") return;
 
-  const piece = chess.get(from);
+  // Miramos el tablero virtual para saber qué pieza estamos moviendo realmente
+  const vBoard = getVirtualBoard();
+  const piece = vBoard.get(from);
+
   if (!piece || piece.color !== state.role) return;
 
-  // --- EL NUEVO FILTRO ---
-  if (!isTheoreticallyPossible(from, to, piece.type, piece.color)) {
-    // Si es un movimiento imposible, ignoramos y no mostramos error (así no "raya")
-    return; 
-  }
+  // Verificamos geometría básica (caballo en L, alfil en diagonal, etc.)
+  if (!isTheoreticallyPossible(from, to, piece.type, piece.color)) return;
 
-  // Lógica de "Toggle" y guardado que ya tenías
   const existingIndex = state.premoves.findIndex(p => p.from === from && p.to === to);
   if (existingIndex !== -1) {
     state.premoves.splice(existingIndex, 1);
-    showToast("Premove cleared.");
   } else {
-    if (state.premoves.length >= 10) {
-      showToast("Max premoves reached (10).");
-      return;
-    }
-
+    if (state.premoves.length >= 10) return;
     const promotion = (piece.type === "p" && reachesPromotionRank(to, state.role)) ? "q" : undefined;
     state.premoves.push(promotion ? { from, to, promotion } : { from, to });
-    showToast(`Premove set: ${from} -> ${to}`);
   }
 
   clearSelection();
@@ -2195,21 +2237,21 @@ function queuePremove(from: Square, to: Square): void {
 function onPremoveSquarePressed(square: Square): void {
   if (!state.role || state.role === "spectator") return;
 
-  const clickedPiece = chess.get(square);
+  const vBoard = getVirtualBoard(); // Miramos el futuro
+  const clickedPiece = vBoard.get(square);
 
-  // 1. Si no hay nada seleccionado aún
   if (!state.selectedSquare) {
+    // ¿Habrá una pieza mía aquí tras mis premoves anteriores?
     if (clickedPiece && clickedPiece.color === state.role) {
-      // Seleccionamos tu pieza para empezar un premove
       state.selectedSquare = square;
-      state.legalTargets = legalTargetsForRole(square, state.role);
+      // Usamos el tablero virtual para calcular los legales futuros
+      state.legalTargets = vBoard.moves({ square, verbose: true }).map(m => m.to);
       requestBoardRefresh();
       updateCaption();
     } else {
-      // CLICK EN CUALQUIER OTRO LUGAR -> Cancelar todos los premoves
+      // Si tocas el vacío, cancelamos la cadena (Modo Zen)
       if (state.premoves.length > 0) {
         state.premoves = [];
-        showToast("Premoves canceled.");
         requestBoardRefresh();
         updateCaption();
       }
@@ -2217,7 +2259,6 @@ function onPremoveSquarePressed(square: Square): void {
     return;
   }
 
-  // 2. Si ya hay una pieza seleccionada y clickeas la misma -> Deseleccionar
   if (square === state.selectedSquare) {
     clearSelection();
     requestBoardRefresh();
@@ -2225,15 +2266,12 @@ function onPremoveSquarePressed(square: Square): void {
     return;
   }
 
-  // 3. Intentar crear el premove
-  const piece = chess.get(state.selectedSquare);
-  // Usamos el filtro de "Teóricamente posible" que pusimos antes
-  if (piece && isTheoreticallyPossible(state.selectedSquare, square, piece.type, piece.color)) {
+  // Si ya tenemos una pieza seleccionada (real o fantasma), intentamos moverla
+  const pieceToMove = vBoard.get(state.selectedSquare);
+  if (pieceToMove && isTheoreticallyPossible(state.selectedSquare, square, pieceToMove.type, pieceToMove.color)) {
     queuePremove(state.selectedSquare, square);
   } else {
-    // CLICK EN DESTINO IMPOSIBLE -> Cancelar todos los premoves
-    state.premoves = [];
-    showToast("Premoves canceled.");
+    state.premoves = []; // Movimiento imposible -> Limpiar todo
   }
 
   clearSelection();

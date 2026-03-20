@@ -7282,6 +7282,7 @@ var require_main = __commonJS({
     };
     var lastAnimatedMoveKey = null;
     var suppressAnimationForMove = null;
+    var currentPremoveHoverSquare = null;
     var activeGhostAnimation = null;
     var activeGhostNode = null;
     var activeGhostDestinationPiece = null;
@@ -7687,7 +7688,6 @@ var require_main = __commonJS({
       event.preventDefault();
       if (state.premoves.length > 0) {
         state.premoves = [];
-        showToast("Premoves canceled.");
         requestBoardRefresh();
         updateCaption();
       }
@@ -7729,55 +7729,73 @@ var require_main = __commonJS({
       ptrStartY = event.clientY;
       board.setPointerCapture(event.pointerId);
     });
-    board.addEventListener("pointermove", (event) => {
-      if (arrowDragFrom) {
-        const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
-        arrowDragTo = hoverSquare && hoverSquare !== arrowDragFrom ? hoverSquare : null;
-        arrowDragPointer = boardPointFromClient(event.clientX, event.clientY);
-        renderArrows();
-      }
-      if (arrowDragFrom && !arrowDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) >= 5) {
-        arrowDragMoved = true;
-      }
-      if (!ptrDragFrom) return;
-      if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 5) return;
-      if (!ptrDragMoved) {
-        ptrDragMoved = true;
-        state.selectedSquare = ptrDragFrom;
-        state.legalTargets = legalTargetsFor(ptrDragFrom);
-        syncBoardInteractionState();
-        updateCaption();
-        const btn = board.querySelector(`[data-square="${ptrDragFrom}"]`);
-        const piece = btn?.querySelector(".piece");
-        if (piece && btn) {
-          const cs = window.getComputedStyle(piece);
-          const pieceRect = piece.getBoundingClientRect();
-          ptrDragNode = piece.cloneNode(true);
-          Object.assign(ptrDragNode.style, {
-            position: "fixed",
-            pointerEvents: "none",
-            zIndex: "9999",
-            width: `${pieceRect.width}px`,
-            height: `${pieceRect.height}px`,
-            margin: "0",
-            lineHeight: "1",
-            fontSize: cs.fontSize,
-            fontFamily: cs.fontFamily,
-            color: cs.color,
-            textShadow: cs.textShadow,
-            filter: cs.filter,
-            transformOrigin: "center center",
-            transition: "none"
-          });
-          document.body.append(ptrDragNode);
-          btn.classList.add("dragging");
+    board.addEventListener(
+      "pointermove",
+      (event) => {
+        if (arrowDragFrom) {
+          const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
+          arrowDragTo = hoverSquare && hoverSquare !== arrowDragFrom ? hoverSquare : null;
+          arrowDragPointer = boardPointFromClient(event.clientX, event.clientY);
+          renderArrows();
+        }
+        if (arrowDragFrom && !arrowDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) >= 5) {
+          arrowDragMoved = true;
+        }
+        if (!ptrDragFrom) return;
+        if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 5) return;
+        if (!ptrDragMoved) {
+          ptrDragMoved = true;
+          state.selectedSquare = ptrDragFrom;
+          const vBoard = getVirtualBoard();
+          const virtualPiece = vBoard.get(ptrDragFrom);
+          state.legalTargets = vBoard.moves({ square: ptrDragFrom, verbose: true }).map((m) => m.to);
+          syncBoardInteractionState();
+          updateCaption();
+          const btn = board.querySelector(`[data-square="${ptrDragFrom}"]`);
+          if (btn && virtualPiece) {
+            const spritePath = PIECES[`${virtualPiece.color}${virtualPiece.type}`];
+            ptrDragNode = document.createElement("img");
+            ptrDragNode.src = spritePath;
+            Object.assign(ptrDragNode.style, {
+              position: "fixed",
+              pointerEvents: "none",
+              zIndex: "9999",
+              width: `${btn.offsetWidth * 0.8}px`,
+              // Ajustamos al tamaño de la casilla
+              height: `${btn.offsetHeight * 0.8}px`,
+              transform: "translate(-50%, -50%)",
+              transition: "none",
+              opacity: "0.9"
+            });
+            document.body.append(ptrDragNode);
+            btn.classList.add("dragging");
+          }
+        }
+        if (ptrDragNode) {
+          ptrDragNode.style.left = `${event.clientX}px`;
+          ptrDragNode.style.top = `${event.clientY}px`;
+          const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
+          if (hoverSquare !== currentPremoveHoverSquare) {
+            if (currentPremoveHoverSquare) {
+              const oldSq = board.querySelector(`[data-square="${currentPremoveHoverSquare}"]`);
+              oldSq?.classList.remove("premove-hover");
+              currentPremoveHoverSquare = null;
+            }
+            if (hoverSquare && state.selectedSquare && hoverSquare !== state.selectedSquare) {
+              const vBoard = getVirtualBoard();
+              const movingPiece = vBoard.get(state.selectedSquare);
+              if (movingPiece && isTheoreticallyPossible(state.selectedSquare, hoverSquare, movingPiece.type, movingPiece.color)) {
+                const sqEl = board.querySelector(`[data-square="${hoverSquare}"]`);
+                const spritePath = PIECES[`${movingPiece.color}${movingPiece.type}`];
+                sqEl?.style.setProperty("--ghost-piece-image", `url(${spritePath})`);
+                sqEl?.classList.add("premove-hover");
+                currentPremoveHoverSquare = hoverSquare;
+              }
+            }
+          }
         }
       }
-      if (ptrDragNode) {
-        ptrDragNode.style.left = `${event.clientX - ptrDragNode.offsetWidth / 2}px`;
-        ptrDragNode.style.top = `${event.clientY - ptrDragNode.offsetHeight / 2}px`;
-      }
-    });
+    );
     function endPointerDrag(event, commit) {
       if (!ptrDragFrom) return;
       const fromSquare = ptrDragFrom;
@@ -7813,6 +7831,12 @@ var require_main = __commonJS({
     }
     function endArrowDrag(event, commit) {
       if (!arrowDragFrom) return;
+      if (currentPremoveHoverSquare) {
+        const oldSquareEl = board.querySelector(`[data-square="${currentPremoveHoverSquare}"]`);
+        oldSquareEl?.classList.remove("premove-hover");
+        oldSquareEl?.style.removeProperty("--ghost-piece-image");
+        currentPremoveHoverSquare = null;
+      }
       const fromSquare = arrowDragFrom;
       const previewTo = arrowDragTo;
       arrowDragFrom = null;
@@ -7939,12 +7963,10 @@ var require_main = __commonJS({
           if (isLegal && !snapshot.checkmate && !snapshot.draw) {
             suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
             socket.emit("game:move", nextMove.promotion ? nextMove : { from: nextMove.from, to: nextMove.to });
-            showToast(`Premove played: ${nextMove.from} -> ${nextMove.to}`);
             void maybeRunLiveAnalysis(snapshot);
             return;
           } else {
             state.premoves = [];
-            showToast("Premoves canceled (illegal move or check).");
           }
         }
       }
@@ -8321,28 +8343,19 @@ var require_main = __commonJS({
     }
     function updateCaption() {
       if (!state.snapshot) {
-        boardCaption.textContent = "Tap or click one of your pieces, then choose a legal destination.";
+        boardCaption.textContent = "";
         return;
       }
       if (state.role === "spectator") {
-        boardCaption.textContent = `Spectating room ${state.snapshot.roomId}. Flip the board if you want the black perspective.`;
-        return;
-      }
-      if (!state.role) {
-        boardCaption.textContent = "Join a room to claim an open seat or watch as a spectator.";
+        boardCaption.textContent = `Spectating room ${state.snapshot.roomId}.`;
         return;
       }
       if (state.snapshot.turn !== state.role) {
-        const first = state.premoves[0];
-        if (first) {
-          const count = state.premoves.length;
-          boardCaption.textContent = count === 1 ? `Premove queued: ${first.from} -> ${first.to}.` : `Premoves queued: ${count} (${first.from} -> ${first.to}, ...)`;
-        } else {
-          boardCaption.textContent = `Waiting for ${state.snapshot.turn === "w" ? "White" : "Black"} to move. You can set up to 10 premoves.`;
-        }
+        const count = state.premoves.length;
+        boardCaption.textContent = count > 0 ? `Premoves queued: ${count}` : "";
         return;
       }
-      boardCaption.textContent = state.selectedSquare ? `Selected ${state.selectedSquare}. Choose one of the highlighted targets.` : `Your move as ${state.role === "w" ? "White" : "Black"}.`;
+      boardCaption.textContent = state.selectedSquare ? `Selected ${state.selectedSquare}` : `Your move (${state.role === "w" ? "White" : "Black"})`;
     }
     function materialFromPerspective(fen, color) {
       const board2 = fen.split(" ")[0] ?? "";
@@ -8865,17 +8878,11 @@ var require_main = __commonJS({
       return roleChess.moves({ square, verbose: true }).map((move) => move.to);
     }
     function canStartMoveFrom(square) {
-      if (!state.snapshot || !state.role || state.role === "spectator") {
-        return false;
-      }
-      const piece = chess.get(square);
-      if (!piece || !isOwnPiece(piece.color)) {
-        return false;
-      }
-      if (state.snapshot.turn === state.role) {
-        return true;
-      }
-      return legalTargetsForRole(square, state.role).length > 0;
+      if (!state.snapshot || !state.role || state.role === "spectator") return false;
+      const vBoard = getVirtualBoard();
+      const piece = vBoard.get(square);
+      if (!piece || piece.color !== state.role) return false;
+      return true;
     }
     function tryMoveFromTo(from, to) {
       if (!state.snapshot || !state.role || state.role === "spectator") {
@@ -8932,25 +8939,33 @@ var require_main = __commonJS({
           return false;
       }
     }
+    function getVirtualBoard() {
+      const vBoard = new Chess(chess.fen());
+      for (const p of state.premoves) {
+        try {
+          const fenParts = vBoard.fen().split(" ");
+          fenParts[1] = state.role;
+          vBoard.load(fenParts.join(" "));
+          vBoard.move({ from: p.from, to: p.to, promotion: p.promotion || "q" });
+        } catch (e) {
+          break;
+        }
+      }
+      return vBoard;
+    }
     function queuePremove(from, to) {
       if (!state.role || state.role === "spectator") return;
-      const piece = chess.get(from);
+      const vBoard = getVirtualBoard();
+      const piece = vBoard.get(from);
       if (!piece || piece.color !== state.role) return;
-      if (!isTheoreticallyPossible(from, to, piece.type, piece.color)) {
-        return;
-      }
+      if (!isTheoreticallyPossible(from, to, piece.type, piece.color)) return;
       const existingIndex = state.premoves.findIndex((p) => p.from === from && p.to === to);
       if (existingIndex !== -1) {
         state.premoves.splice(existingIndex, 1);
-        showToast("Premove cleared.");
       } else {
-        if (state.premoves.length >= 10) {
-          showToast("Max premoves reached (10).");
-          return;
-        }
+        if (state.premoves.length >= 10) return;
         const promotion = piece.type === "p" && reachesPromotionRank(to, state.role) ? "q" : void 0;
         state.premoves.push(promotion ? { from, to, promotion } : { from, to });
-        showToast(`Premove set: ${from} -> ${to}`);
       }
       clearSelection();
       requestBoardRefresh();
@@ -8958,17 +8973,17 @@ var require_main = __commonJS({
     }
     function onPremoveSquarePressed(square) {
       if (!state.role || state.role === "spectator") return;
-      const clickedPiece = chess.get(square);
+      const vBoard = getVirtualBoard();
+      const clickedPiece = vBoard.get(square);
       if (!state.selectedSquare) {
         if (clickedPiece && clickedPiece.color === state.role) {
           state.selectedSquare = square;
-          state.legalTargets = legalTargetsForRole(square, state.role);
+          state.legalTargets = vBoard.moves({ square, verbose: true }).map((m) => m.to);
           requestBoardRefresh();
           updateCaption();
         } else {
           if (state.premoves.length > 0) {
             state.premoves = [];
-            showToast("Premoves canceled.");
             requestBoardRefresh();
             updateCaption();
           }
@@ -8981,12 +8996,11 @@ var require_main = __commonJS({
         updateCaption();
         return;
       }
-      const piece = chess.get(state.selectedSquare);
-      if (piece && isTheoreticallyPossible(state.selectedSquare, square, piece.type, piece.color)) {
+      const pieceToMove = vBoard.get(state.selectedSquare);
+      if (pieceToMove && isTheoreticallyPossible(state.selectedSquare, square, pieceToMove.type, pieceToMove.color)) {
         queuePremove(state.selectedSquare, square);
       } else {
         state.premoves = [];
-        showToast("Premoves canceled.");
       }
       clearSelection();
       requestBoardRefresh();
