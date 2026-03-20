@@ -1672,6 +1672,7 @@ body.focus-mode.focus-multiplayer .board-panel {
   box-shadow: var(--shadow);
   z-index: 200;
   backdrop-filter: blur(14px);
+  transition: all 0.3s cubic-bezier(0.8, 0, 0.8, 1);
 }
 .theme-switcher-content {
   display: grid;
@@ -1709,11 +1710,18 @@ body.focus-mode.focus-multiplayer .board-panel {
   gap: 8px;
 }
 .theme-switcher.is-collapsed {
+  width: 44px;
+  height: 44px;
   padding: 8px;
-  border-radius: 999px;
+  border-radius: 50%;
+  overflow: hidden;
+  justify-content: center;
+  align-items: center;
 }
 .theme-switcher.is-collapsed .theme-switcher-content {
   max-width: 0;
+  max-height: 0;
+  margin: 0;
   opacity: 0;
   pointer-events: none;
 }

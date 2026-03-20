@@ -1559,6 +1559,7 @@ body.focus-mode.focus-multiplayer .board-panel {
     box-shadow: var(--shadow);
     z-index: 200;
     backdrop-filter: blur(14px);
+    transition: all 0.3s cubic-bezier(0.8, 0, 0.8, 1);
   }
 
   .theme-switcher-content {
@@ -1601,16 +1602,25 @@ body.focus-mode.focus-multiplayer .board-panel {
     gap: 8px;
   }
 
-  .theme-switcher.is-collapsed {
-    padding: 8px;
-    border-radius: 999px;
-  }
+  /* Modifica la regla .theme-switcher.is-collapsed */
+.theme-switcher.is-collapsed {
+  width: 44px;  /* Forzamos un tamaño de círculo */
+  height: 44px; /* Igual al ancho */
+  padding: 8px;
+  border-radius: 50%; /* Círculo perfecto */
+  overflow: hidden;   /* ¡Clave! Corta cualquier espacio extra del contenido */
+  justify-content: center;
+  align-items: center;
+}
 
-  .theme-switcher.is-collapsed .theme-switcher-content {
-    max-width: 0;
-    opacity: 0;
-    pointer-events: none;
-  }
+ /* Asegúrate de que el contenido no ocupe espacio vertical al colapsar */
+.theme-switcher.is-collapsed .theme-switcher-content {
+  max-width: 0;
+  max-height: 0; /* Añadimos esto para que no empuje hacia abajo */
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
 
   [data-theme="purple"] .theme-switcher {
     border-color: rgba(160, 100, 255, 0.2);

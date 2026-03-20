@@ -7685,6 +7685,12 @@ var require_main = __commonJS({
     });
     board.addEventListener("contextmenu", (event) => {
       event.preventDefault();
+      if (state.premoves.length > 0) {
+        state.premoves = [];
+        showToast("Premoves canceled.");
+        requestBoardRefresh();
+        updateCaption();
+      }
     });
     var ptrDragFrom = null;
     var ptrDragNode = null;
@@ -8895,12 +8901,40 @@ var require_main = __commonJS({
         }
       }
     }
-    function queuePremove(from, to) {
-      if (!state.role || state.role === "spectator") {
-        return;
+    function isTheoreticallyPossible(from, to, piece, color) {
+      const fromFile = from.charCodeAt(0) - 97;
+      const fromRank = parseInt(from[1]);
+      const toFile = to.charCodeAt(0) - 97;
+      const toRank = parseInt(to[1]);
+      const dx = Math.abs(toFile - fromFile);
+      const dy = Math.abs(toRank - fromRank);
+      if (dx === 0 && dy === 0) return false;
+      switch (piece) {
+        case "p":
+          const forward = color === "w" ? toRank - fromRank : fromRank - toRank;
+          const isStartRank = color === "w" && fromRank === 2 || color === "b" && fromRank === 7;
+          if (dx === 0) return forward === 1 || isStartRank && forward === 2;
+          if (dx === 1) return forward === 1;
+          return false;
+        case "n":
+          return dx === 1 && dy === 2 || dx === 2 && dy === 1;
+        case "b":
+          return dx === dy;
+        case "r":
+          return dx === 0 || dy === 0;
+        case "q":
+          return dx === dy || dx === 0 || dy === 0;
+        case "k":
+          return dx <= 1 && dy <= 1 || dx === 2 && dy === 0;
+        default:
+          return false;
       }
-      if (state.premoves.length >= 10) {
-        showToast("Max premoves reached (10).");
+    }
+    function queuePremove(from, to) {
+      if (!state.role || state.role === "spectator") return;
+      const piece = chess.get(from);
+      if (!piece || piece.color !== state.role) return;
+      if (!isTheoreticallyPossible(from, to, piece.type, piece.color)) {
         return;
       }
       const existingIndex = state.premoves.findIndex((p) => p.from === from && p.to === to);
@@ -8908,8 +8942,8 @@ var require_main = __commonJS({
         state.premoves.splice(existingIndex, 1);
         showToast("Premove cleared.");
       } else {
-        const piece = chess.get(from);
-        if (!piece || piece.color !== state.role) {
+        if (state.premoves.length >= 10) {
+          showToast("Max premoves reached (10).");
           return;
         }
         const promotion = piece.type === "p" && reachesPromotionRank(to, state.role) ? "q" : void 0;
@@ -8921,9 +8955,7 @@ var require_main = __commonJS({
       updateCaption();
     }
     function onPremoveSquarePressed(square) {
-      if (!state.role || state.role === "spectator") {
-        return;
-      }
+      if (!state.role || state.role === "spectator") return;
       const clickedPiece = chess.get(square);
       if (!state.selectedSquare) {
         if (clickedPiece && clickedPiece.color === state.role) {
@@ -8931,6 +8963,13 @@ var require_main = __commonJS({
           state.legalTargets = legalTargetsForRole(square, state.role);
           requestBoardRefresh();
           updateCaption();
+        } else {
+          if (state.premoves.length > 0) {
+            state.premoves = [];
+            showToast("Premoves canceled.");
+            requestBoardRefresh();
+            updateCaption();
+          }
         }
         return;
       }
@@ -8940,7 +8979,13 @@ var require_main = __commonJS({
         updateCaption();
         return;
       }
-      queuePremove(state.selectedSquare, square);
+      const piece = chess.get(state.selectedSquare);
+      if (piece && isTheoreticallyPossible(state.selectedSquare, square, piece.type, piece.color)) {
+        queuePremove(state.selectedSquare, square);
+      } else {
+        state.premoves = [];
+        showToast("Premoves canceled.");
+      }
       clearSelection();
       requestBoardRefresh();
       updateCaption();

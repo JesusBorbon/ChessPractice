@@ -597,8 +597,15 @@ board.addEventListener("click", (event) => {
 });
 
 board.addEventListener("contextmenu", (event) => {
-  event.preventDefault();
+  event.preventDefault(); 
+  if (state.premoves.length > 0) {
+    state.premoves = [];
+    showToast("Premoves canceled.");
+    requestBoardRefresh();
+    updateCaption();
+  }
 });
+
 
 // ── Pointer drag ───────────────────────────────────────────────────────────────
 let ptrDragFrom: Square | null = null;
@@ -2104,63 +2111,101 @@ function tryMoveFromTo(from: Square, to: Square): void {
   }
 }
 
+function isTheoreticallyPossible(from: Square, to: Square, piece: PieceSymbol, color: string): boolean {
+  const fromFile = from.charCodeAt(0) - 97; // a=0, b=1...
+  const fromRank = parseInt(from[1]);
+  const toFile = to.charCodeAt(0) - 97;
+  const toRank = parseInt(to[1]);
+  
+  const dx = Math.abs(toFile - fromFile);
+  const dy = Math.abs(toRank - fromRank);
+
+  // No tiene sentido un movimiento a la misma casilla
+  if (dx === 0 && dy === 0) return false;
+
+  switch (piece) {
+    case 'p': // Peón
+      const forward = (color === 'w') ? (toRank - fromRank) : (fromRank - toRank);
+      const isStartRank = (color === 'w' && fromRank === 2) || (color === 'b' && fromRank === 7);
+      // Avance recto (1 o 2) o captura diagonal (1)
+      if (dx === 0) return forward === 1 || (isStartRank && forward === 2);
+      if (dx === 1) return forward === 1;
+      return false;
+    case 'n': // Caballo
+      return (dx === 1 && dy === 2) || (dx === 2 && dy === 1);
+    case 'b': // Alfil
+      return dx === dy;
+    case 'r': // Torre
+      return dx === 0 || dy === 0;
+    case 'q': // Dama
+      return dx === dy || dx === 0 || dy === 0;
+    case 'k': // Rey
+      // 1 casilla en cualquier dirección o enroque (distancia de 2)
+      return (dx <= 1 && dy <= 1) || (dx === 2 && dy === 0);
+    default:
+      return false;
+  }
+}
+
 function queuePremove(from: Square, to: Square): void {
-  if (!state.role || state.role === "spectator") {
-    return;
+  if (!state.role || state.role === "spectator") return;
+
+  const piece = chess.get(from);
+  if (!piece || piece.color !== state.role) return;
+
+  // --- EL NUEVO FILTRO ---
+  if (!isTheoreticallyPossible(from, to, piece.type, piece.color)) {
+    // Si es un movimiento imposible, ignoramos y no mostramos error (así no "raya")
+    return; 
   }
 
-  // 1. Límite de 10 premoves
-  if (state.premoves.length >= 10) {
-    showToast("Max premoves reached (10).");
-    return;
-  }
-
-  // 2. Lógica de "Toggle": Si clickeas un premove que ya existe, lo borramos
+  // Lógica de "Toggle" y guardado que ya tenías
   const existingIndex = state.premoves.findIndex(p => p.from === from && p.to === to);
   if (existingIndex !== -1) {
     state.premoves.splice(existingIndex, 1);
     showToast("Premove cleared.");
   } else {
-    // 3. Validación básica: Solo comprobamos que la pieza que intentas mover sea TUYA
-    const piece = chess.get(from);
-    if (!piece || piece.color !== state.role) {
+    if (state.premoves.length >= 10) {
+      showToast("Max premoves reached (10).");
       return;
     }
 
-    // 4. Lógica de Promoción (automática a Dama para premoves)
     const promotion = (piece.type === "p" && reachesPromotionRank(to, state.role)) ? "q" : undefined;
-    
-    // 5. Guardamos el premove (aquí permitimos cualquier destino, ¡incluso tus propias piezas!)
     state.premoves.push(promotion ? { from, to, promotion } : { from, to });
     showToast(`Premove set: ${from} -> ${to}`);
   }
 
-  // 6. Actualizar UI
   clearSelection();
   requestBoardRefresh();
   updateCaption();
 }
 
 function onPremoveSquarePressed(square: Square): void {
-  if (!state.role || state.role === "spectator") {
-    return;
-  }
+  if (!state.role || state.role === "spectator") return;
 
   const clickedPiece = chess.get(square);
 
-  // 1. Si no hay nada seleccionado, intentamos seleccionar una pieza propia
+  // 1. Si no hay nada seleccionado aún
   if (!state.selectedSquare) {
     if (clickedPiece && clickedPiece.color === state.role) {
+      // Seleccionamos tu pieza para empezar un premove
       state.selectedSquare = square;
-      // Mostramos los puntos legales actuales solo como guía visual
       state.legalTargets = legalTargetsForRole(square, state.role);
       requestBoardRefresh();
       updateCaption();
+    } else {
+      // CLICK EN CUALQUIER OTRO LUGAR -> Cancelar todos los premoves
+      if (state.premoves.length > 0) {
+        state.premoves = [];
+        showToast("Premoves canceled.");
+        requestBoardRefresh();
+        updateCaption();
+      }
     }
     return;
   }
 
-  // 2. Si tocas la misma pieza, deseleccionamos
+  // 2. Si ya hay una pieza seleccionada y clickeas la misma -> Deseleccionar
   if (square === state.selectedSquare) {
     clearSelection();
     requestBoardRefresh();
@@ -2168,10 +2213,17 @@ function onPremoveSquarePressed(square: Square): void {
     return;
   }
 
-  // 3. Si tocas otro de tus piezas, cambiamos la selección
-  queuePremove(state.selectedSquare, square);
+  // 3. Intentar crear el premove
+  const piece = chess.get(state.selectedSquare);
+  // Usamos el filtro de "Teóricamente posible" que pusimos antes
+  if (piece && isTheoreticallyPossible(state.selectedSquare, square, piece.type, piece.color)) {
+    queuePremove(state.selectedSquare, square);
+  } else {
+    // CLICK EN DESTINO IMPOSIBLE -> Cancelar todos los premoves
+    state.premoves = [];
+    showToast("Premoves canceled.");
+  }
 
-  // Limpiamos selección después de intentar el premove para que puedas hacer el siguiente rápido
   clearSelection();
   requestBoardRefresh();
   updateCaption();
