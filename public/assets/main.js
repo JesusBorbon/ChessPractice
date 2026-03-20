@@ -7937,8 +7937,11 @@ var require_main = __commonJS({
         if (nextMove) {
           const isLegal = chess.moves({ verbose: true }).some((m) => m.from === nextMove.from && m.to === nextMove.to);
           if (isLegal && !snapshot.checkmate && !snapshot.draw) {
+            suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
             socket.emit("game:move", nextMove.promotion ? nextMove : { from: nextMove.from, to: nextMove.to });
             showToast(`Premove played: ${nextMove.from} -> ${nextMove.to}`);
+            void maybeRunLiveAnalysis(snapshot);
+            return;
           } else {
             state.premoves = [];
             showToast("Premoves canceled (illegal move or check).");
@@ -8041,7 +8044,6 @@ var require_main = __commonJS({
       const lastMoveSquares = /* @__PURE__ */ new Set();
       const checkedKingSquare = getCheckedKingSquare();
       const lastMove = state.snapshot?.lastMove ?? null;
-      const premove = state.premove;
       const liveGrade = state.snapshot?.analysis.enabled && state.snapshot.lastMove ? state.liveMoveGrades[state.snapshot.moveCount] : void 0;
       const liveMarkerSquare = liveGrade && state.snapshot?.lastMove ? state.snapshot.lastMove.to : null;
       if (lastMove) {
@@ -8057,18 +8059,10 @@ var require_main = __commonJS({
         button.className = `square ${isLightSquare(squareName) ? "light" : "dark"}`;
         button.dataset.square = squareName;
         button.setAttribute("aria-label", squareName);
-        if (state.selectedSquare === square) {
-          button.classList.add("selected");
-        }
-        if (state.legalTargets.includes(square)) {
-          button.classList.add("legal");
-        }
-        if (lastMoveSquares.has(squareName)) {
-          button.classList.add("last-move");
-        }
-        if (checkedKingSquare === squareName) {
-          button.classList.add("in-check");
-        }
+        if (state.selectedSquare === square) button.classList.add("selected");
+        if (state.legalTargets.includes(square)) button.classList.add("legal");
+        if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
+        if (checkedKingSquare === squareName) button.classList.add("in-check");
         state.premoves.forEach((p) => {
           if (p.from === square) button.classList.add("premove-from");
           if (p.to === square) button.classList.add("premove-to");
@@ -8077,6 +8071,9 @@ var require_main = __commonJS({
           const spritePath = PIECES[`${piece.color}${piece.type}`];
           const pieceElement = document.createElement("span");
           pieceElement.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
+          if (suppressAnimationForMove && square === suppressAnimationForMove.to) {
+            pieceElement.style.transition = "none";
+          }
           const pieceImage = document.createElement("img");
           pieceImage.className = "piece-image";
           pieceImage.src = spritePath;
@@ -8088,17 +8085,22 @@ var require_main = __commonJS({
             const marker = document.createElement("span");
             marker.className = `piece-quality-marker ${liveGrade.category}`;
             marker.textContent = symbolForLiveCategory(liveGrade.category);
-            marker.title = `${liveGrade.label} (${liveGrade.cpl} CPL)`;
             button.append(marker);
           }
         }
         fragment.append(button);
       }
       board.replaceChildren(fragment);
-      if (state.animationStyle === "epic") {
-        animateLastMoveEpic(lastMove);
+      const isPremoveExecution = suppressAnimationForMove && lastMove && lastMove.from === suppressAnimationForMove.from && lastMove.to === suppressAnimationForMove.to;
+      if (isPremoveExecution) {
+        lastAnimatedMoveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
+        suppressAnimationForMove = null;
       } else {
-        animateLastMove(lastMove);
+        if (state.animationStyle === "epic") {
+          animateLastMoveEpic(lastMove);
+        } else {
+          animateLastMove(lastMove);
+        }
       }
       renderArrows();
     }

@@ -897,29 +897,33 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
     liveAnalysisToken += 1;
   }
 
- // Lógica para ejecutar la cola de premoves (estilo Chess.com)
-  if (state.role && state.role !== "spectator" && snapshot.turn === state.role && state.premoves.length > 0) {
-    const nextMove = state.premoves.shift(); // Sacamos el primero de la lista
-    
-    if (nextMove) { // Con este "if", TypeScript ya sabe que nextMove no es undefined
-      // Validamos si el movimiento es legal en la posición actual del tablero
-      const isLegal = chess.moves({ verbose: true }).some(m => m.from === nextMove.from && m.to === nextMove.to);
 
-      if (isLegal && !snapshot.checkmate && !snapshot.draw) {
-        // Ejecutamos el movimiento
-        socket.emit("game:move", nextMove.promotion ? nextMove : { from: nextMove.from, to: nextMove.to });
-        showToast(`Premove played: ${nextMove.from} -> ${nextMove.to}`); 
-      } else {
-        // Si el movimiento ya no es legal (ej: nos capturaron la pieza), limpiamos toda la cola
-        state.premoves = []; 
-        showToast("Premoves canceled (illegal move or check).");
-      }
+if (state.role && state.role !== "spectator" && snapshot.turn === state.role && state.premoves.length > 0) {
+  const nextMove = state.premoves.shift();
+  if (nextMove) {
+    const isLegal = chess.moves({ verbose: true }).some(m => m.from === nextMove.from && m.to === nextMove.to);
+    
+    if (isLegal && !snapshot.checkmate && !snapshot.draw) {
+   
+      suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
+
+    
+      socket.emit("game:move", nextMove.promotion ? nextMove : { from: nextMove.from, to: nextMove.to });
+      showToast(`Premove played: ${nextMove.from} -> ${nextMove.to}`);
+  
+      void maybeRunLiveAnalysis(snapshot);
+      return; 
+    } else {
+      state.premoves = [];
+      showToast("Premoves canceled (illegal move or check).");
     }
   }
+}
 
-  render();
-  void maybeRunLiveAnalysis(snapshot);
-  }); //
+
+render();
+void maybeRunLiveAnalysis(snapshot);
+});
 
 socket.on("room:error", (payload: { message: string }) => {
   suppressAnimationForMove = null;
@@ -1040,7 +1044,7 @@ function renderBoard(): void {
   const lastMoveSquares = new Set<string>();
   const checkedKingSquare = getCheckedKingSquare();
   const lastMove = state.snapshot?.lastMove ?? null;
-  const premove = state.premove;
+  
   const liveGrade = state.snapshot?.analysis.enabled && state.snapshot.lastMove
     ? state.liveMoveGrades[state.snapshot.moveCount]
     : undefined;
@@ -1061,58 +1065,66 @@ function renderBoard(): void {
     button.dataset.square = squareName;
     button.setAttribute("aria-label", squareName);
 
-    if (state.selectedSquare === square) {
-      button.classList.add("selected");
-    }
+    if (state.selectedSquare === square) button.classList.add("selected");
+    if (state.legalTargets.includes(square)) button.classList.add("legal");
+    if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
+    if (checkedKingSquare === squareName) button.classList.add("in-check");
 
-    if (state.legalTargets.includes(square)) {
-      button.classList.add("legal");
-    }
-
-    if (lastMoveSquares.has(squareName)) {
-      button.classList.add("last-move");
-    }
-
-    if (checkedKingSquare === squareName) {
-      button.classList.add("in-check");
-    }
-
-   state.premoves.forEach((p) => {
-  if (p.from === square) button.classList.add("premove-from");
-  if (p.to === square) button.classList.add("premove-to");
-});
+    state.premoves.forEach((p) => {
+      if (p.from === square) button.classList.add("premove-from");
+      if (p.to === square) button.classList.add("premove-to");
+    });
 
     if (piece) {
       const spritePath = PIECES[`${piece.color}${piece.type}`];
       const pieceElement = document.createElement("span");
       pieceElement.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
+      
+      // Aplicar 0ms en CSS si es el destino del premove actual
+      if (suppressAnimationForMove && square === suppressAnimationForMove.to) {
+        pieceElement.style.transition = "none";
+      }
+
       const pieceImage = document.createElement("img");
       pieceImage.className = "piece-image";
       pieceImage.src = spritePath;
       pieceImage.alt = `${piece.color === "w" ? "White" : "Black"} ${piece.type}`;
       pieceImage.draggable = false;
       pieceElement.append(pieceImage);
-
       button.append(pieceElement);
 
       if (liveGrade && liveMarkerSquare === squareName) {
         const marker = document.createElement("span");
         marker.className = `piece-quality-marker ${liveGrade.category}`;
         marker.textContent = symbolForLiveCategory(liveGrade.category);
-        marker.title = `${liveGrade.label} (${liveGrade.cpl} CPL)`;
         button.append(marker);
       }
     }
-
     fragment.append(button);
   }
 
   board.replaceChildren(fragment);
-  if (state.animationStyle === "epic") {
-    animateLastMoveEpic(lastMove);
+
+  // --- LÓGICA DE SUPRESIÓN DE ANIMACIÓN MEJORADA ---
+  const isPremoveExecution = suppressAnimationForMove && 
+                             lastMove && 
+                             lastMove.from === suppressAnimationForMove.from && 
+                             lastMove.to === suppressAnimationForMove.to;
+
+  if (isPremoveExecution) {
+    // Marcamos el movimiento como "ya procesado" para que el motor de animación no lo intente después
+    lastAnimatedMoveKey = `${state.snapshot!.moveCount}:${lastMove!.from}:${lastMove!.to}:${lastMove!.san}`;
+    // LIMPIEZA SEGURA: Solo lo ponemos a null si ya se ejecutó
+    suppressAnimationForMove = null; 
   } else {
-    animateLastMove(lastMove);
+    // Si no es la ejecución del premove, animamos según el estilo elegido
+    if (state.animationStyle === "epic") {
+      animateLastMoveEpic(lastMove);
+    } else {
+      animateLastMove(lastMove);
+    }
   }
+
   renderArrows();
 }
 
