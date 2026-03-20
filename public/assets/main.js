@@ -7483,8 +7483,10 @@ var require_main = __commonJS({
         </div>
         <div class="focus-hud" id="focusHud" hidden>
           <span class="focus-chip" id="focusTimer">00:00</span>
+           
         </div>
-        <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
+         <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
+      
       </section>
 
       <aside class="panel side-panel">
@@ -8141,11 +8143,11 @@ var require_main = __commonJS({
         const title = document.createElement("h2");
         title.className = "game-over-title";
         if (snapshot.checkmate) {
-          title.textContent = snapshot.winner === state.role ? "\xA1Victoria!" : "Jaque Mate";
+          title.textContent = snapshot.winner === state.role ? "Victory!" : "Checkmate";
         } else if (snapshot.winner !== null) {
-          title.textContent = snapshot.winner === state.role ? "\xA1Ganaste!" : "Te rendiste";
+          title.textContent = snapshot.winner === state.role ? "You won!" : "You lost!";
         } else {
-          title.textContent = "Tablas";
+          title.textContent = "Draw";
         }
         const reason = document.createElement("p");
         reason.className = "game-over-reason";
@@ -8380,10 +8382,8 @@ var require_main = __commonJS({
       }
       if (state.snapshot.turn !== state.role) {
         const count = state.premoves.length;
-        boardCaption.textContent = count > 0 ? `Premoves queued: ${count}` : "";
         return;
       }
-      boardCaption.textContent = state.selectedSquare ? `Selected ${state.selectedSquare}` : `Your move (${state.role === "w" ? "White" : "Black"})`;
     }
     function materialFromPerspective(fen, color) {
       const board2 = fen.split(" ")[0] ?? "";

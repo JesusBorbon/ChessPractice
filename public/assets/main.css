@@ -891,11 +891,30 @@ button {
 }
 .focus-hud {
   position: fixed;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 30;
+  inset: 0;
   pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 20px;
+  padding-top: calc(env(safe-area-inset-top) + 10px);
+  padding-bottom: calc(env(safe-area-inset-bottom) + 10px);
+  z-index: 999;
+}
+.focus-hud button,
+.focus-hud .timer-display {
+  pointer-events: auto;
+}
+#focusExitButton {
+  align-self: flex-end;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .focus-chip {
   display: inline-flex;
@@ -1981,5 +2000,48 @@ body.focus-mode.focus-multiplayer .board-panel {
     opacity: 1;
     transform: scale(1);
   }
+}
+.focus-layout-active .focus-hud {
+  position: fixed !important;
+  inset: 0 !important;
+  pointer-events: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  padding: calc(env(safe-area-inset-top) + 80px) 20px calc(env(safe-area-inset-bottom) + 40px) 20px !important;
+  z-index: 1000 !important;
+  background: transparent !important;
+}
+.focus-layout-active #focusModeBtn,
+.focus-layout-active #focusTimer {
+  pointer-events: auto !important;
+}
+#focusModeBtn {
+  align-self: center;
+  background: rgba(255, 75, 75, 0.108) !important;
+  color: white !important;
+  border: none !important;
+  border-radius: 25px !important;
+  padding: 12px 30px !important;
+  font-weight: bold !important;
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  position: relative;
+  left: 50%;
+  top: 10px;
+  transform: translateX(-50%);
+}
+#focusTimer {
+  align-self: center;
+  font-family: monospace;
+  font-size: 1.6rem;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  padding: 8px 20px;
+  border-radius: 25px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  position: relative;
+  top: -20%;
 }
 /*# sourceMappingURL=main.css.map */

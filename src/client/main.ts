@@ -363,8 +363,10 @@ app.innerHTML = `
         </div>
         <div class="focus-hud" id="focusHud" hidden>
           <span class="focus-chip" id="focusTimer">00:00</span>
+           
         </div>
-        <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
+         <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
+      
       </section>
 
       <aside class="panel side-panel">
@@ -1220,12 +1222,12 @@ function renderBoard(): void {
     title.className = "game-over-title";
     
     if (snapshot.checkmate) {
-      title.textContent = snapshot.winner === state.role ? "¡Victoria!" : "Jaque Mate";
+      title.textContent = snapshot.winner === state.role ? "Victory!" : "Checkmate";
     } else if (snapshot.winner !== null) {
       // Caso de abandono (Resign)
-      title.textContent = snapshot.winner === state.role ? "¡Ganaste!" : "Te rendiste";
+      title.textContent = snapshot.winner === state.role ? "You won!" : "You lost!";
     } else {
-      title.textContent = "Tablas";
+      title.textContent = "Draw";
     }
 
     const reason = document.createElement("p");
@@ -1516,13 +1518,13 @@ function updateCaption(): void {
   if (state.snapshot.turn !== state.role) {
     const count = state.premoves.length;
     // Solo muestra el número de premoves si hay alguno, si no, vacío.
-    boardCaption.textContent = count > 0 ? `Premoves queued: ${count}` : "";
+    // boardCaption.textContent = count > 0 ? `Premoves queued: ${count}` : "";
     return;
   }
 
-  boardCaption.textContent = state.selectedSquare
-    ? `Selected ${state.selectedSquare}`
-    : `Your move (${state.role === "w" ? "White" : "Black"})`;
+  // boardCaption.textContent = state.selectedSquare
+  //   ? `Selected ${state.selectedSquare}`
+  //   : `Your move (${state.role === "w" ? "White" : "Black"})`;
 }
 
 function materialFromPerspective(fen: string, color: "w" | "b"): number {
@@ -2467,6 +2469,7 @@ function updateFocusHud(): void {
   const elapsedSeconds = focusTimerStartMs
     ? Math.max(0, Math.floor((Date.now() - focusTimerStartMs) / 1000))
     : 0;
+  
   focusTimer.textContent = formatElapsed(elapsedSeconds);
   focusHud.hidden = false;
 }
