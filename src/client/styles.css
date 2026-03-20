@@ -1897,7 +1897,7 @@ body.focus-mode.focus-multiplayer .board-panel {
   to { opacity: 1; transform: scale(1); }
 }
 
-/* --- Estilos Modo Focus (Tu versión con corrección de altura) --- */
+/* --- Estilos Modo Focus (Adaptados a la paleta de colores del tema) --- */
 .focus-layout-active .focus-hud {
   position: fixed !important;
   inset: 0 !important;
@@ -1905,7 +1905,6 @@ body.focus-mode.focus-multiplayer .board-panel {
   display: flex !important;
   flex-direction: column !important;
   justify-content: space-between !important;
-  /* Aumentamos el padding superior a 80px para sacarlo del tablero */
   padding: calc(env(safe-area-inset-top) + 80px) 20px calc(env(safe-area-inset-bottom) + 40px) 20px !important;
   z-index: 1000 !important;
   background: transparent !important;
@@ -1917,12 +1916,13 @@ body.focus-mode.focus-multiplayer .board-panel {
   pointer-events: auto !important;
 }
 
-/* El botón de salida (Abajo en el área púrpura) */
+/* El botón de salida (Dinámico según el tema) */
 #focusModeBtn {
   align-self: center;
-  background: rgba(255, 75, 75, 0.108) !important;
-  color: white !important;
-  border: none !important;
+  /* Usamos el color de acento fuerte del tema con transparencia */
+  background: color-mix(in srgb, var(--accent-strong), transparent 85%) !important;
+  color: var(--ink) !important; /* Texto adaptado al tema */
+  border: 1px solid var(--accent) !important; /* Borde sutil del color del tema */
   border-radius: 25px !important;
   padding: 12px 30px !important;
   font-weight: bold !important;
@@ -1930,67 +1930,60 @@ body.focus-mode.focus-multiplayer .board-panel {
   cursor: pointer;
   box-shadow: 0 4px 15px rgba(0,0,0,0.3);
   position: relative;
-  /*centrarlo
-  */
-
   left: 50%;
   top: 10px;
   transform: translateX(-50%);
- 
 }
 
-/* El cronómetro (Arriba en el área púrpura) */
+/* El cronómetro (Dinámico según el tema) */
 #focusTimer {
   align-self: center;
   font-family: monospace;
-  font-size: 1.6rem; /* Un poco más grande para que se vea bien */
-  background: rgba(0, 0, 0, 0.6);
-  color: white;
+  font-size: 1.6rem;
+  /* Fondo basado en el color de papel del tema */
+  background: color-mix(in srgb, var(--paper-strong), black 20%) !important;
+  color: var(--ink) !important;
   padding: 8px 20px;
   border-radius: 25px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--accent) !important;
   position: relative; 
   top: -20%; 
 }
 
-
-
-/* === AÑADE ESTO AL FINAL DE STYLES.CSS === */
-
-/* Nuevo contenedor para el material abajo en el centro */
+/* === Material HUD (Dinámico según el tema) === */
 #focusMaterialHud {
   position: absolute;
-  bottom: -120px;       /* Separación del borde inferior */
-  right: 5px;          /* Centrado horizontal al 50%... */
-  transform: translateX(-50%); /* ...y corregido por su propio ancho */
+  bottom: -120px;
+  right: 5px;
+  transform: translateX(-50%);
   display: flex;
-  flex-direction: column; /* Apilados en columna */
-  gap: 6px;       /* Pequeña separación entre puntos e iconos */
-  pointer-events: none; /* No intercepta clics */
-  z-index: 1000;      /* Encima de todo */
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 1000;
   text-align: center;
 }
 
 /* Estilo específico para la pastilla de puntos */
 #focusMaterialScore {
   font-weight: 700;
-  color: var(--on-accent);
-  background: var(--accent); /* Fondo de color de acento para que resalte */
+  color: var(--on-accent); /* Variable que ya usas para contraste */
+  background: var(--accent); /* Se adapta automáticamente al morado, café, etc. */
   font-size: 1rem;
   padding: 0.25rem 0.6rem;
-  min-width: 40px;    /* Asegura un ancho mínimo */
+  min-width: 40px;
 }
 
 /* Estilo específico para la pastilla de iconos */
 #focusMaterialIcons {
   font-size: 1.1rem;
   letter-spacing: 2px;
-  background: rgba(0, 0, 0, 0.5); /* Fondo negro sutil */
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  /* Fondo oscuro semi-transparente que respeta el tono del tema */
+  background: color-mix(in srgb, var(--paper-strong), black 40%) !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--accent) !important;
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   opacity: 0.9;
+  border-radius: 25px; /* Para que haga juego con el botón y el timer */
 }
-
-
-
