@@ -73,6 +73,7 @@
   --radius-xl: 28px;
   --radius-lg: 20px;
   --radius-md: 14px;
+  --move-duration: 600ms;
 }
 
 * {
@@ -675,6 +676,10 @@ button {
   opacity: 0.55;
 }
 
+.square.dragging .piece {
+  opacity: 0;
+}
+
 .square.light {
   background: var(--board-light);
 }
@@ -752,7 +757,11 @@ button {
   align-items: center;
   justify-content: center;
   transition: transform var(--move-duration) cubic-bezier(0.2, 0, 0, 1);
+  will-change: transform; /* Hint to the browser for smoother animations */
+  pointer-events: none;
 }
+
+
 
 .piece-image {
   width: 100%;
@@ -761,9 +770,8 @@ button {
   pointer-events: none;
   user-select: none;
   image-rendering: -webkit-optimize-contrast;
-  image-rendering: crisp-edges;
-  transform: translateZ(0);
-  backface-visibility: hidden;
+  backface-visibility: hidden; /* Evita parpadeos en Chrome/Safari */
+  transform: translateZ(0); /* Fuerza aceleración por GPU */
 }
 
 .piece.piece-b {
@@ -1335,7 +1343,6 @@ body.focus-mode.focus-multiplayer .board-panel {
     --cta-turquoise-border: linear-gradient(120deg, #26f0ff, #00d4ff, #00bfd6, #00d8f5, #00e8ff, #00d4ff, #26f0ff);
     --cta-turquoise-glow: linear-gradient(130deg, rgba(38, 240, 255, 0.42), rgba(0, 212, 255, 0.38), rgba(0, 191, 214, 0.34), rgba(0, 216, 245, 0.4), rgba(0, 232, 255, 0.38));
     --cta-random-hue: 320;
-    --move-duration: 250ms;
     --shadow: 0 24px 70px rgba(80, 20, 160, 0.36);
     --radius-xl: 28px;
     --radius-lg: 20px;
@@ -2185,4 +2192,25 @@ body.modal-open {
 [data-theme="purple"] #resignButton:hover {
   background: #ff5c5c;
   color: #120d1e;
+}
+
+/* styles.css */
+.square .piece.animating-target {
+  opacity: 0 !important; /* Hide the static piece at the destination square */
+  visibility: hidden;
+}
+
+.ghost-piece {
+  pointer-events: none;
+  z-index: 100;
+  will-change: transform; /* Smooth out the flicker on high-refresh monitors */
+}
+
+.square .piece[style*="opacity: 0"] {
+  pointer-events: none;
+}
+
+.piece {
+  will-change: transform, opacity;
+  transition: transform var(--move-duration) cubic-bezier(0.2, 0, 0, 1);
 }

@@ -150,6 +150,8 @@ let focusTimerStartMs: number | null = null;
 let liveAnalyzer: StockfishBridge | null = null;
 let liveAnalysisToken = 0;
 let currentModalAction: "leave" | "resign" | "bot" | null = null;
+let animationFinished = true; 
+let animatingToSquare: Square | null = null;
 
 
 const LIVE_MATE_CP = 100000;
@@ -313,9 +315,14 @@ function playSound(name: string): void {
   audio.play().catch(() => {});
 }
 let _lastPlayedMoveCount = -1;
+
+// main.ts
+// main.ts
 function playSoundForSnapshot(snapshot: RoomSnapshot): void {
   const last = snapshot.lastMove;
   if (!last) return;
+
+  // Seguimos usando sonidos especiales para eventos críticos
   if (snapshot.checkmate || snapshot.draw) {
     playSound("gameEndOrCheckmate");
   } else if (snapshot.check) {
@@ -325,10 +332,10 @@ function playSoundForSnapshot(snapshot: RoomSnapshot): void {
   } else if (last.san.includes("x")) {
     playSound("capture");
   } else {
+    // FIX: Como no tienes move-opponent, usamos move-self para TODOS los movimientos
     playSound("move-self");
   }
 }
-
 app.innerHTML = `
   <div class="app-shell">
     <nav class="game-nav" id="gameNav" hidden>
@@ -1015,7 +1022,37 @@ board.addEventListener("pointercancel", (event) => {
   endPointerDrag(event, false);
 });
 
+async function triggerBotResponse() {
+  if (!liveAnalyzer) liveAnalyzer = new StockfishBridge();
+  
+  const botMoveUci = await liveAnalyzer.getBotMove(chess.fen());
+  const bFrom = botMoveUci.substring(0, 2) as Square;
+  const bTo = botMoveUci.substring(2, 4) as Square;
+  const bPromo = botMoveUci.length === 5 ? botMoveUci[4] as any : "q";
 
+  const bMove = chess.move({ from: bFrom, to: bTo, promotion: bPromo });
+  
+  if (bMove && state.snapshot) {
+    // 1. Actualizar estado (procesa sangre)
+    updateManualSnapshot(bMove);
+
+    // 2. Sonido del bot
+    playSoundForSnapshot(state.snapshot);
+
+    // 3. Si hay premoves, ejecutarlos YA
+    if (state.premoves.length > 0) {
+      checkAndExecutePremove(); 
+    }
+
+    // 4. Render único (animateLastMove decidirá si anima o no)
+    if (activeGhostAnimation) activeGhostAnimation.cancel();
+    renderBoard(); 
+
+    if (state.snapshot.analysis.enabled) {
+      void maybeRunLiveAnalysis(state.snapshot);
+    }
+  }
+}
 promotionDialog.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-promotion]");
   if (!button || !state.pendingPromotion) return;
@@ -1024,27 +1061,31 @@ promotionDialog.addEventListener("click", (event) => {
   const { from, to } = state.pendingPromotion;
 
   if (state.gameMode === "bot") {
-  
+    // 1. Execute the promotion move locally
     const moveResult = chess.move({ from, to, promotion });
+    
     if (moveResult) {
+      // 2. Update the local snapshot so the UI reflects the new piece
       updateManualSnapshot(moveResult);
-     
+      
+      // 3. Clear UI flags and render
       suppressAnimationForMove = { from, to }; 
+      state.pendingPromotion = null;
+      promotionDialog.hidden = true;
       render();
       playSoundForSnapshot(state.snapshot!);
 
-      // Trigger the Bot's next move response
+      // 4. FIX: Manually trigger the Bot's response
       if (!state.snapshot!.checkmate && !state.snapshot!.draw) {
-         // (Your existing bot timeout logic here...)
+        triggerBotResponse(); 
       }
     }
   } else {
-   
+    // Standard multiplayer logic
     socket.emit("game:move", { from, to, promotion });
+    state.pendingPromotion = null;
+    promotionDialog.hidden = true;
   }
-
-  state.pendingPromotion = null;
-  promotionDialog.hidden = true;
 });
 
 socket.on("connect", () => {
@@ -1095,22 +1136,33 @@ socket.on("session:left", () => {
 socket.on("room:state", (snapshot: RoomSnapshot) => {
   const previousMoveCount = state.snapshot?.moveCount ?? 0;
   const previousFen = chess.fen();
-  state.snapshot = snapshot;
+  
+  // 1. ANIMATION FIX: Detect if a new move arrived and interrupt any lingering player animation
+  const isNewMove = snapshot.moveCount > previousMoveCount;
+  if (isNewMove && activeGhostAnimation) {
+    activeGhostAnimation.cancel();
+  }
+
+  state.snapshot = snapshot; //
+  
+  // 2. Timer Logic
   if (!focusTimerStartMs || snapshot.moveCount < previousMoveCount) {
     focusTimerStartMs = Date.now();
   }
-  chess.load(snapshot.fen);
+  
+  chess.load(snapshot.fen); //
 
-  const isNewMove = _lastPlayedMoveCount !== -1 && snapshot.moveCount > _lastPlayedMoveCount;
+  // 3. Sound & Visual Effects
+  const isActuallyNewMove = _lastPlayedMoveCount !== -1 && snapshot.moveCount > _lastPlayedMoveCount;
   _lastPlayedMoveCount = snapshot.moveCount;
-  if (isNewMove) playSoundForSnapshot(snapshot);
-
-  if (snapshot.check && isNewMove) {
-    triggerCheckFlash();
+  
+  if (isActuallyNewMove) {
+    playSoundForSnapshot(snapshot);
+    if (snapshot.check) triggerCheckFlash();
   }
 
   const capturedByCount = countFenPieces(snapshot.fen) < countFenPieces(previousFen);
-  if (state.bloodFxEnabled && isNewMove && capturedByCount && snapshot.lastMove) {
+  if (state.bloodFxEnabled && isActuallyNewMove && capturedByCount && snapshot.lastMove) {
     const capturedPiece = detectCapturedPiece(previousFen, snapshot.lastMove);
     spawnBloodSplatter(snapshot.lastMove.to, capturedPiece ?? "p");
   }
@@ -1119,6 +1171,7 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
     clearArrows();
   }
 
+  // 4. Interaction State Update
   if (state.selectedSquare) {
     const currentPiece = chess.get(state.selectedSquare);
     if (!currentPiece || !isOwnPiece(currentPiece.color)) {
@@ -1130,38 +1183,38 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
     }
   }
 
+  // 5. Analysis Cleanup
   if (!snapshot.analysis.enabled) {
     state.lastAnalyzedMoveKey = null;
     state.liveMoveGrades = {};
     liveAnalysisToken += 1;
   }
 
-
-if (state.role && state.role !== "spectator" && snapshot.turn === state.role && state.premoves.length > 0) {
-  const nextMove = state.premoves.shift();
-  if (nextMove) {
-    const isLegal = chess.moves({ verbose: true }).some(m => m.from === nextMove.from && m.to === nextMove.to);
-    
-    if (isLegal && !snapshot.checkmate && !snapshot.draw) {
-   
-      suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
-
-    
-      socket.emit("game:move", nextMove.promotion ? nextMove : { from: nextMove.from, to: nextMove.to });
-      // showToast(`Premove played: ${nextMove.from} -> ${nextMove.to}`);
-  
-      void maybeRunLiveAnalysis(snapshot);
-      return; 
-    } else {
-      state.premoves = [];
-      // showToast("Premoves canceled (illegal move or check).");
+  // 6. PREMOVE EXECUTION
+  if (state.role && state.role !== "spectator" && snapshot.turn === state.role && state.premoves.length > 0) {
+    const nextMove = state.premoves.shift();
+    if (nextMove) {
+      const isLegal = chess.moves({ verbose: true }).some(m => m.from === nextMove.from && m.to === nextMove.to);
+      
+      if (isLegal && !snapshot.checkmate && !snapshot.draw) {
+        suppressAnimationForMove = { from: nextMove.from, to: nextMove.to }; //
+        socket.emit("game:move", nextMove.promotion ? nextMove : { from: nextMove.from, to: nextMove.to });
+        void maybeRunLiveAnalysis(snapshot);
+        return; 
+      } else {
+        state.premoves = [];
+      }
     }
   }
-}
 
+  // 7. FINAL RENDER: Use requestBoardRefresh with the 'force' flag for new moves
+  requestBoardRefresh(isNewMove); 
+  renderSession(); // Update UI text and buttons
+  renderMoves(); // Update the move list
+  updateCaption(); // Update material count
+  updateFocusHud(); // Update timers
 
-render();
-void maybeRunLiveAnalysis(snapshot);
+  void maybeRunLiveAnalysis(snapshot); //
 });
 
 socket.on("room:error", (payload: { message: string }) => {
@@ -1332,7 +1385,6 @@ function renderBoard(): void {
     lastMoveSquares.add(lastMove.to);
   }
 
-  // Dibujamos las casillas y piezas
   for (const squareName of squares) {
     const square = squareName as Square;
     const piece = chess.get(square);
@@ -1352,12 +1404,28 @@ function renderBoard(): void {
       if (p.to === square) button.classList.add("premove-to");
     });
 
-    if (piece) {
+if (piece) {
       const spritePath = PIECES[`${piece.color}${piece.type}`];
       const pieceElement = document.createElement("span");
       pieceElement.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
       
-      if (suppressAnimationForMove && square === suppressAnimationForMove.to) {
+      // 1. ¿Es esta mi respuesta instantánea (premove)?
+      const isMyPremove = suppressAnimationForMove && square === suppressAnimationForMove.to;
+
+      // 2. ¿Esta casilla es el destino de una animación activa (fantasma)?
+      // Usamos animatingToSquare porque es independiente del snapshot actual.
+      const isTargetOfActiveAnimation = square === animatingToSquare && !animationFinished;
+
+      // REGLA DE ORO: Si hay un fantasma viajando a esta casilla, ocultamos la pieza REAL.
+      // Pero si yo acabo de hacer un premove a esta misma casilla, la mostramos siempre.
+      if (isTargetOfActiveAnimation && !isMyPremove) {
+        pieceElement.style.opacity = "0";
+        pieceElement.style.visibility = "hidden";
+        pieceElement.style.pointerEvents = "none";
+      }
+
+      // Desactivamos la transición CSS si el movimiento debe ser atómico (instantáneo)
+      if (isMyPremove) {
         pieceElement.style.transition = "none";
       }
 
@@ -1368,6 +1436,7 @@ function renderBoard(): void {
       pieceElement.append(pieceImage);
       button.append(pieceElement);
 
+      // Marcadores de calidad de la jugada (Análisis en vivo)
       if (liveGrade && liveMarkerSquare === squareName) {
         const marker = document.createElement("span");
         marker.className = `piece-quality-marker ${liveGrade.category}`;
@@ -1375,47 +1444,57 @@ function renderBoard(): void {
         button.append(marker);
       }
     }
+
     fragment.append(button);
   }
 
-  // Limpiamos y renderizamos el tablero base
   board.replaceChildren(fragment);
 
-  // --- LÓGICA DE SUPRESIÓN DE ANIMACIÓN ---
+  // --- ANIMATION SCHEDULING ---
   const isPremoveExecution = suppressAnimationForMove && 
                              lastMove && 
                              lastMove.from === suppressAnimationForMove.from && 
                              lastMove.to === suppressAnimationForMove.to;
 
+  // ... resto del bucle de piezas
   if (isPremoveExecution) {
     lastAnimatedMoveKey = `${state.snapshot!.moveCount}:${lastMove!.from}:${lastMove!.to}:${lastMove!.san}`;
     suppressAnimationForMove = null; 
+    animationFinished = true; // Forzamos fin para que el premove no intente ocultar piezas
+    requestAnimationFrame(() => renderBoard());
   } else if (lastMove) {
-    if (state.animationStyle === "epic") animateLastMoveEpic(lastMove);
-    else animateLastMove(lastMove);
+    const moveKey = `${state.snapshot!.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
+    if (lastAnimatedMoveKey !== moveKey) {
+      // Si no es un premove, activamos la animación elegida
+      if (state.animationStyle === "epic") animateLastMoveEpic(lastMove);
+      else animateLastMove(lastMove);
+    }
   }
 
-  // Dibujamos flechas
   renderArrows();
 
-  // --- CAPA ÚNICA DE FIN DE PARTIDA ---
+  // --- GAME OVER OVERLAY ---
   const snapshot = state.snapshot;
   const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
 
- // Inside renderBoard(), find the gameEnded block
-if (gameEnded && snapshot) {
+  if (gameEnded && snapshot) {
     const overlay = document.createElement("div");
     overlay.className = "game-over-overlay";
-    
     const title = document.createElement("h2");
     title.className = "game-over-title";
-    // ... (keep your existing title logic)
+    
+    if (snapshot.checkmate) {
+      title.textContent = snapshot.winner === "w" ? "White Wins!" : "Black Wins!";
+    } else if (snapshot.draw) {
+      title.textContent = "Draw";
+    } else if (snapshot.winner) {
+      title.textContent = snapshot.winner === "w" ? "White Wins (Resignation)" : "Black Wins (Resignation)";
+    }
 
     const reason = document.createElement("p");
     reason.className = "game-over-reason";
     reason.textContent = snapshot.status;
 
-    // NEW: Action button inside the overlay
     const overlayRematchBtn = document.createElement("button");
     overlayRematchBtn.className = "action cta-turquoise";
     overlayRematchBtn.style.marginTop = "20px";
@@ -1428,7 +1507,7 @@ if (gameEnded && snapshot) {
 
     overlay.append(title, reason, overlayRematchBtn);
     board.append(overlay);
-}
+  }
 }
 
 function buildArrowPath(
@@ -1663,6 +1742,7 @@ function syncBoardInteractionState(): void {
 }
 
 
+// main.ts
 function checkAndExecutePremove(): void {
   const snapshot = state.snapshot;
   if (!snapshot || !state.role || state.role === "spectator") return;
@@ -1673,13 +1753,13 @@ function checkAndExecutePremove(): void {
       const isLegal = chess.moves({ verbose: true }).some(m => m.from === nextMove.from && m.to === nextMove.to);
       
       if (isLegal && !snapshot.checkmate && !snapshot.draw) {
-        // 1. SUPPRESS ANIMATION: This makes the premove feel "instant"
+        // Marcamos para que renderBoard sepa que este movimiento NO se anima
         suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
+        animationFinished = true; 
 
-        // 2. Execute the move
         tryMoveFromTo(nextMove.from, nextMove.to);
 
-        // 3. FORCE REFRESH: Immediately clear the red squares
+        // Forzamos el refresco inmediato para limpiar las marcas rojas del premove
         requestBoardRefresh(true); 
       } else {
         state.premoves = [];
@@ -2037,27 +2117,24 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   }
 
   const moveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
+  if (lastAnimatedMoveKey === moveKey) return;
 
-  if (lastAnimatedMoveKey === moveKey) {
-    return;
+  // BLOQUEO DE ANIMACIÓN: Si el jugador tiene premoves, el movimiento del rival es instantáneo
+  if (state.premoves.length > 0 || suppressAnimationForMove) {
+    lastAnimatedMoveKey = moveKey;
+    suppressAnimationForMove = null; 
+    if (activeGhostAnimation) activeGhostAnimation.cancel();
+    activeGhostAnimation = null;
+    animationFinished = true;
+    animatingToSquare = null;
+    return; 
   }
 
   lastAnimatedMoveKey = moveKey;
+  animationFinished = false;
+  animatingToSquare = lastMove.to;
 
-  if (suppressAnimationForMove) {
-    const matchesSuppressedDrag =
-      suppressAnimationForMove.from === lastMove.from &&
-      suppressAnimationForMove.to === lastMove.to;
-    suppressAnimationForMove = null;
-    if (matchesSuppressedDrag) {
-      return;
-    }
-  }
-
-  // Cancel any in-flight ghost first.
-  if (activeGhostAnimation) {
-    activeGhostAnimation.cancel();
-  }
+  if (activeGhostAnimation) activeGhostAnimation.cancel();
   if (activeGhostNode) {
     activeGhostNode.remove();
     activeGhostNode = null;
@@ -2070,41 +2147,23 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   const fromSquareButton = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.from}"]`);
   const toSquareButton   = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.to}"]`);
   const destinationPiece = toSquareButton?.querySelector<HTMLElement>(".piece");
-  if (!fromSquareButton || !toSquareButton || !destinationPiece) {
-    return;
-  }
+  if (!fromSquareButton || !toSquareButton || !destinationPiece) return;
 
   const fromRect = fromSquareButton.getBoundingClientRect();
   const toRect = toSquareButton.getBoundingClientRect();
-  const startX = fromRect.left + fromRect.width / 2 + window.scrollX;
-  const startY = fromRect.top + fromRect.height / 2 + window.scrollY;
-  const endX = toRect.left + toRect.width / 2 + window.scrollX;
-  const endY = toRect.top + toRect.height / 2 + window.scrollY;
-  const deltaX = startX - endX;
-  const deltaY = startY - endY;
+  const deltaX = (fromRect.left + fromRect.width / 2) - (toRect.left + toRect.width / 2);
+  const deltaY = (fromRect.top + fromRect.height / 2) - (toRect.top + toRect.height / 2);
 
-  const computed = window.getComputedStyle(destinationPiece);
-  const pieceRect = destinationPiece.getBoundingClientRect();
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
   Object.assign(ghostPiece.style, {
     position: "absolute",
-    left: `${endX}px`,
-    top: `${endY}px`,
-    width: `${pieceRect.width}px`,
-    height: `${pieceRect.height}px`,
+    left: `${toRect.left + toRect.width / 2 + window.scrollX}px`,
+    top: `${toRect.top + toRect.height / 2 + window.scrollY}px`,
+    width: `${destinationPiece.getBoundingClientRect().width}px`,
+    height: `${destinationPiece.getBoundingClientRect().height}px`,
     transform: "translate3d(-50%, -50%, 0)",
-    margin: "0",
     zIndex: "9999",
     pointerEvents: "none",
-    fontSize: computed.fontSize,
-    fontFamily: computed.fontFamily,
-    color: computed.color,
-    filter: computed.filter,
-    textShadow: computed.textShadow,
-    lineHeight: "1",
-    animation: "none",
-    opacity: "1",
-    willChange: "transform",
   });
 
   destinationPiece.style.visibility = "hidden";
@@ -2114,52 +2173,31 @@ function animateLastMove(lastMove: MoveSummary | null): void {
 
   const animation = ghostPiece.animate(
     [
-      {
-        transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0)`,
-        offset: 0,
-      },
-      {
-        transform: "translate3d(-50%, -50%, 0)",
-        offset: 1,
-      },
+      { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0)` },
+      { transform: "translate3d(-50%, -50%, 0)" },
     ],
-    {
-      duration: 700,
-      easing: "cubic-bezier(0.22, 0.61, 0.36, 1)",
-    },
+    { duration: 700, easing: "cubic-bezier(0.22, 0.61, 0.36, 1)" }
   );
 
   activeGhostAnimation = animation;
 
-  animation.addEventListener("finish", () => {
+  const onEnd = () => {
     ghostPiece.remove();
     destinationPiece.style.visibility = "";
+    animationFinished = true;
+    animatingToSquare = null;
+    
     if (activeGhostAnimation === animation) {
       activeGhostAnimation = null;
       activeGhostNode = null;
       activeGhostDestinationPiece = null;
-      if (pendingBoardRefresh) {
-        pendingBoardRefresh = false;
-        renderBoard();
-      }
+      renderBoard(); 
     }
-  });
+  };
 
-  animation.addEventListener("cancel", () => {
-    ghostPiece.remove();
-    destinationPiece.style.visibility = "";
-    if (activeGhostAnimation === animation) {
-      activeGhostAnimation = null;
-      activeGhostNode = null;
-      activeGhostDestinationPiece = null;
-      if (pendingBoardRefresh) {
-        pendingBoardRefresh = false;
-        renderBoard();
-      }
-    }
-  });
+  animation.addEventListener("finish", onEnd);
+  animation.addEventListener("cancel", onEnd);
 }
-
 
 function requestBoardRefresh(force = false): void {
   // If we're forcing (like for a premove or cancel), we don't wait for animations
@@ -2178,10 +2216,7 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   }
 
   const moveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
-
-  if (lastAnimatedMoveKey === moveKey) {
-    return;
-  }
+  if (lastAnimatedMoveKey === moveKey) return;
 
   lastAnimatedMoveKey = moveKey;
 
@@ -2190,15 +2225,11 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
       suppressAnimationForMove.from === lastMove.from &&
       suppressAnimationForMove.to === lastMove.to;
     suppressAnimationForMove = null;
-    if (matchesSuppressedDrag) {
-      return;
-    }
+    if (matchesSuppressedDrag) return;
   }
 
   // Cancel any in-flight ghost first.
-  if (activeGhostAnimation) {
-    activeGhostAnimation.cancel();
-  }
+  if (activeGhostAnimation) activeGhostAnimation.cancel();
   if (activeGhostNode) {
     activeGhostNode.remove();
     activeGhostNode = null;
@@ -2211,9 +2242,10 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   const fromSquareButton = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.from}"]`);
   const toSquareButton   = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.to}"]`);
   const destinationPiece = toSquareButton?.querySelector<HTMLElement>(".piece");
-  if (!fromSquareButton || !toSquareButton || !destinationPiece) {
-    return;
-  }
+  if (!fromSquareButton || !toSquareButton || !destinationPiece) return;
+
+  // FIX: Mark animation as active
+  animationFinished = false;
 
   const fromRect = fromSquareButton.getBoundingClientRect();
   const toRect = toSquareButton.getBoundingClientRect();
@@ -2228,39 +2260,19 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   const pieceRect = destinationPiece.getBoundingClientRect();
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
   
-  // Perfiles épicos: no siempre gira fuerte; a veces se mueve por inercia o con tilt corto.
+  // Random Epic profile logic...
   const randomRotation = Math.random() * 300 + 220;
-  const randomScale = Math.random() * 0.4 + 0.8;
   const spinDirection = Math.random() > 0.5 ? 1 : -1;
   const settleWobble = Math.random() * 14 + 8;
   const profileRoll = Math.random();
   const motionProfile = profileRoll < 0.38 ? "spin" : profileRoll < 0.76 ? "inertia" : "tilt";
   const hasFlip = motionProfile === "spin" ? Math.random() > 0.45 : motionProfile === "inertia" ? Math.random() > 0.92 : false;
-
-  const spinStart = motionProfile === "spin"
-    ? randomRotation * 0.22 * spinDirection
-    : motionProfile === "inertia"
-      ? settleWobble * 1.25 * spinDirection
-      : settleWobble * 0.85 * spinDirection;
-  const spinMid = motionProfile === "spin"
-    ? randomRotation * 0.46 * spinDirection
-    : motionProfile === "inertia"
-      ? settleWobble * 0.72 * spinDirection
-      : -settleWobble * 0.92 * spinDirection;
-  const spinPeak = motionProfile === "spin"
-    ? randomRotation * 0.68 * spinDirection
-    : motionProfile === "inertia"
-      ? settleWobble * 1.05 * spinDirection
-      : settleWobble * 0.55 * spinDirection;
-
-  const pullX = motionProfile === "inertia"
-    ? deltaX * (0.14 + Math.random() * 0.1) * (Math.random() > 0.5 ? 1 : -1)
-    : deltaX * (0.02 + Math.random() * 0.05) * (Math.random() > 0.5 ? 1 : -1);
-  const pullY = motionProfile === "inertia"
-    ? 20 + Math.random() * 22
-    : 8 + Math.random() * 12;
-  const jumpA = motionProfile === "inertia" ? 62 + Math.random() * 36 : 74 + Math.random() * 44;
-  const jumpB = motionProfile === "spin" ? 100 + Math.random() * 32 : 84 + Math.random() * 28;
+  
+  const spinStart = motionProfile === "spin" ? randomRotation * 0.22 * spinDirection : settleWobble * spinDirection;
+  const spinMid = motionProfile === "spin" ? randomRotation * 0.46 * spinDirection : -settleWobble * spinDirection;
+  const spinPeak = motionProfile === "spin" ? randomRotation * 0.68 * spinDirection : settleWobble * 0.55 * spinDirection;
+  const jumpA = 62 + Math.random() * 36;
+  const jumpB = 100 + Math.random() * 32;
   const duration = 900 + Math.floor(Math.random() * 170);
   
   Object.assign(ghostPiece.style, {
@@ -2290,39 +2302,30 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   activeGhostDestinationPiece = destinationPiece;
   document.body.append(ghostPiece);
 
-  // Keyframes épicas con saltos, rotaciones y efectos
-  const keyframes = [
-    {
-      transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) rotateX(0deg) scale(1)`,
-      filter: "brightness(1)",
-      offset: 0,
-    },
-    {
-      transform: `translate3d(calc(-50% + ${deltaX * 0.58 + pullX}px), calc(-50% + ${deltaY * 0.58 - jumpA}px), 0) rotateZ(${spinStart}deg) rotateX(${hasFlip ? 180 : 0}deg) scale(${Math.max(0.88, randomScale)})`,
-      filter: "brightness(1.1)",
-      offset: 0.4,
-    },
-    {
-      transform: `translate3d(calc(-50% + ${deltaX * 0.84 - pullX * 0.35}px), calc(-50% + ${deltaY * 0.84 - jumpB + pullY * 0.2}px), 0) rotateZ(${spinMid}deg) rotateX(${hasFlip ? 360 : 0}deg) scale(${Math.max(0.82, randomScale - 0.12)})`,
-      filter: "brightness(1.2)",
-      offset: 0.65,
-    },
-    {
-      transform: `translate3d(calc(-50% + ${pullX * 0.22}px), calc(-50% + ${6 + pullY * 0.15}px), 0) rotateZ(${spinPeak}deg) rotateX(${hasFlip ? 12 : 0}deg) scale(1.04)`,
-      filter: "brightness(1.06)",
-      offset: 0.86,
-    },
-    {
-      transform: `translate3d(-50%, calc(-50% - 2px), 0) rotateZ(${-(settleWobble * 0.55) * spinDirection}deg) rotateX(${hasFlip ? -6 : 0}deg) scale(0.985)`,
-      filter: "brightness(1.02)",
-      offset: 0.94,
-    },
-    {
-      transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) rotateX(0deg) scale(1)",
-      filter: "brightness(1)",
-      offset: 1,
-    },
-  ];
+ // main.ts - Dentro de animateLastMoveEpic
+const keyframes = [
+  { 
+    transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) rotateX(0deg) scale(1)`, 
+    filter: "brightness(1)", 
+    offset: 0 
+  },
+  { 
+    transform: `translate3d(calc(-50% + ${deltaX * 0.58}px), calc(-50% + ${deltaY * 0.58 - jumpA}px), 0) rotateZ(${spinStart}deg) rotateX(${hasFlip ? 180 : 0}deg) scale(1.1)`, 
+    filter: "brightness(1.1)", 
+    offset: 0.4 
+  },
+  { 
+    transform: `translate3d(calc(-50% + ${deltaX * 0.84}px), calc(-50% + ${deltaY * 0.84 - jumpB}px), 0) rotateZ(${spinMid}deg) rotateX(${hasFlip ? 360 : 0}deg) scale(0.9)`, 
+    filter: "brightness(1.2)", 
+    offset: 0.65 
+  },
+  { 
+    // FIX: Cambiado de translate3d(0,0,0) a (-50%, -50%, 0) para evitar el salto final
+    transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) rotateX(0deg) scale(1)", 
+    filter: "brightness(1)", 
+    offset: 1 
+  },
+];
 
   const animation = ghostPiece.animate(keyframes, {
     duration,
@@ -2331,33 +2334,22 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
 
   activeGhostAnimation = animation;
 
-  animation.addEventListener("finish", () => {
+  const onEnd = () => {
     ghostPiece.remove();
     destinationPiece.style.visibility = "";
-    if (activeGhostAnimation === animation) {
-      activeGhostAnimation = null;
-      activeGhostNode = null;
-      activeGhostDestinationPiece = null;
-      if (pendingBoardRefresh) {
-        pendingBoardRefresh = false;
-        renderBoard();
-      }
-    }
-  });
+    // FIX: Mark as finished and trigger a clean render
+    animationFinished = true;
 
-  animation.addEventListener("cancel", () => {
-    ghostPiece.remove();
-    destinationPiece.style.visibility = "";
     if (activeGhostAnimation === animation) {
       activeGhostAnimation = null;
       activeGhostNode = null;
       activeGhostDestinationPiece = null;
-      if (pendingBoardRefresh) {
-        pendingBoardRefresh = false;
-        renderBoard();
-      }
+      renderBoard();
     }
-  });
+  };
+
+  animation.addEventListener("finish", onEnd);
+  animation.addEventListener("cancel", onEnd);
 }
 
 function onSquarePressed(square: Square): void {
@@ -2448,28 +2440,30 @@ function tryMoveFromTo(from: Square, to: Square): void {
   
   if (!state.snapshot || !state.role || state.role === "spectator") return;
 
+  // Handle Premoves
   if (state.snapshot.turn !== state.role) {
     queuePremove(from, to);
     return;
   }
 
+  // Handle Promotion Branch
   const selectedPiece = chess.get(from);
   if (selectedPiece?.type === "p" && reachesPromotionRank(to, state.role)) {
     state.pendingPromotion = { from, to };
     promotionDialog.hidden = false;
+    // We return here; the actual move happens in the promotionDialog click listener
     return;
   }
 
   let playerMoveResult: Move | null = null;
 
   if (state.gameMode === "multiplayer") {
+    // Standard Multiplayer Logic
     socket.emit("game:move", { from, to });
-    // In multiplayer, we can't be 100% sure of the result until the server responds, 
-    // but for "optimistic" analysis, we simulate it:
     const temp = new Chess(chess.fen());
     playerMoveResult = temp.move({ from, to, promotion: "q" });
   } else {
-    // BOT MODE: Process player move
+    // BOT MODE: Process player move locally
     playerMoveResult = chess.move({ from, to, promotion: "q" });
     if (!playerMoveResult) return;
 
@@ -2477,49 +2471,24 @@ function tryMoveFromTo(from: Square, to: Square): void {
     render(); 
     playSoundForSnapshot(state.snapshot);
 
-    // Trigger Bot Response
+    // Trigger Bot Response after a short delay
     if (!state.snapshot.checkmate && !state.snapshot.draw) {
-  setTimeout(async () => {
-    if (!liveAnalyzer) liveAnalyzer = new StockfishBridge(); //
-    
-    const botMoveUci = await liveAnalyzer.getBotMove(chess.fen()); //
-    
-    const bFrom = botMoveUci.substring(0, 2) as Square; //
-    const bTo = botMoveUci.substring(2, 4) as Square; //
-    const bPromo = botMoveUci.length === 5 ? botMoveUci[4] as any : "q"; //
-
-    const bMove = chess.move({ from: bFrom, to: bTo, promotion: bPromo }); //
-    
-    if (bMove) {
-      if (!state.snapshot) return; //
-
-      updateManualSnapshot(bMove); //
-      render(); //
-      playSoundForSnapshot(state.snapshot); //
-
-      // --- EXECUTE PLAYER PREMOVE ---
-      // This immediately plays your queued move after the bot finishes
-      checkAndExecutePremove(); 
-
-      // --- TRIGGER LIVE ANALYSIS ---
-      // Calling this directly ensures move quality badges appear on the board
-      if (state.snapshot.analysis.enabled) {
-        void maybeRunLiveAnalysis(state.snapshot); 
-      }
+      setTimeout(() => triggerBotResponse(), 600);
     }
-  }, 600); 
-}
-    }
-  
+  }
 
-  // Live Analysis logic for YOUR move
+  // Live Analysis logic for the move you just played
   if (state.snapshot?.analysis.enabled && playerMoveResult) {
     state.liveAnalysisSummary = "Analyzing move...";
     renderSession();
     
-    // We use the playerMoveResult we already captured above
     const moveKey = `${state.snapshot.moveCount}:${from}:${to}:${playerMoveResult.san}`;
-    void maybeRunLiveAnalysisForMove(state.snapshot.moves.slice(0, -1), playerMoveResult, state.snapshot.moveCount, moveKey);
+    void maybeRunLiveAnalysisForMove(
+      state.snapshot.moves.slice(0, -1), 
+      playerMoveResult, 
+      state.snapshot.moveCount, 
+      moveKey
+    );
   }
 }
 
@@ -2554,8 +2523,13 @@ function startBotGame() {
 }
 
 /** Updates the snapshot locally after a move in Bot mode */
+// main.ts - Actualiza updateManualSnapshot
 function updateManualSnapshot(move: Move): void {
   if (!state.snapshot) return;
+
+  // Contamos piezas antes del movimiento
+  const countPieces = (f: string) => f.split(" ")[0].replace(/[^a-zA-Z]/g, "").length;
+  const previousPieceCount = countPieces(state.snapshot.fen);
 
   const newSummary: MoveSummary = {
     color: move.color as PlayerRole,
@@ -2571,18 +2545,20 @@ function updateManualSnapshot(move: Move): void {
   state.snapshot.lastMove = newSummary;
   state.snapshot.moves.push(newSummary);
   
-  // Update game state flags
+  // Lógica de Sangre
+  const currentPieceCount = countPieces(state.snapshot.fen);
+  if (state.bloodFxEnabled && currentPieceCount < previousPieceCount) {
+    spawnBloodSplatter(move.to, (move.captured as PieceSymbol) || "p");
+  }
+
   state.snapshot.check = chess.inCheck();
   state.snapshot.checkmate = chess.isCheckmate();
   state.snapshot.draw = chess.isDraw();
   
   if (state.snapshot.checkmate) {
     state.snapshot.winner = move.color as PlayerRole;
-  } else if (state.snapshot.draw) {
-    state.snapshot.status = "Draw";
   }
 }
-
 function isTheoreticallyPossible(from: Square, to: Square, piece: PieceSymbol, color: string): boolean {
   const fromFile = from.charCodeAt(0) - 97; // a=0, b=1...
   const fromRank = parseInt(from[1]); 

@@ -129,6 +129,7 @@
   --radius-xl: 28px;
   --radius-lg: 20px;
   --radius-md: 14px;
+  --move-duration: 600ms;
 }
 * {
   box-sizing: border-box;
@@ -721,6 +722,9 @@ button {
 .square.dragging {
   opacity: 0.55;
 }
+.square.dragging .piece {
+  opacity: 0;
+}
 .square.light {
   background: var(--board-light);
 }
@@ -789,6 +793,8 @@ button {
   align-items: center;
   justify-content: center;
   transition: transform var(--move-duration) cubic-bezier(0.2, 0, 0, 1);
+  will-change: transform;
+  pointer-events: none;
 }
 .piece-image {
   width: 100%;
@@ -797,9 +803,8 @@ button {
   pointer-events: none;
   user-select: none;
   image-rendering: -webkit-optimize-contrast;
-  image-rendering: crisp-edges;
-  transform: translateZ(0);
   backface-visibility: hidden;
+  transform: translateZ(0);
 }
 .piece.piece-b {
   font-size: 0.92em;
@@ -1336,7 +1341,6 @@ body.focus-mode.focus-multiplayer .board-panel {
       rgba(0, 216, 245, 0.4),
       rgba(0, 232, 255, 0.38));
   --cta-random-hue: 320;
-  --move-duration: 250ms;
   --shadow: 0 24px 70px rgba(80, 20, 160, 0.36);
   --radius-xl: 28px;
   --radius-lg: 20px;
@@ -2226,5 +2230,21 @@ body.modal-open {
 [data-theme=purple] #resignButton:hover {
   background: #ff5c5c;
   color: #120d1e;
+}
+.square .piece.animating-target {
+  opacity: 0 !important;
+  visibility: hidden;
+}
+.ghost-piece {
+  pointer-events: none;
+  z-index: 100;
+  will-change: transform;
+}
+.square .piece[style*="opacity: 0"] {
+  pointer-events: none;
+}
+.piece {
+  will-change: transform, opacity;
+  transition: transform var(--move-duration) cubic-bezier(0.2, 0, 0, 1);
 }
 /*# sourceMappingURL=main.css.map */
