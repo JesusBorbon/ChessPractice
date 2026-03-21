@@ -149,6 +149,8 @@ let pendingBoardRefresh = false;
 let focusTimerStartMs: number | null = null;
 let liveAnalyzer: StockfishBridge | null = null;
 let liveAnalysisToken = 0;
+let currentModalAction: "leave" | "resign" | "bot" | null = null;
+
 
 const LIVE_MATE_CP = 100000;
 const PIECE_VALUES: Record<string, number> = {
@@ -465,18 +467,18 @@ app.innerHTML = `
     </div>
   </div>
 
-  <div class="modal-overlay" id="confirmDialog" hidden>
-    <div class="modal-card">
-      <div class="modal-header">
-        <h2 class="modal-title">Leave Match?</h2>
-        <p class="modal-text">You are about to exit to the main menu. Your current game progress will be lost.</p>
-      </div>
-      <div class="modal-actions">
-        <button class="modal-btn cancel" id="confirmNoBtn" type="button">Stay</button>
-        <button class="modal-btn confirm" id="confirmYesBtn" type="button">Leave</button>
-      </div>
+ <div class="modal-overlay" id="confirmDialog" hidden>
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 class="modal-title" id="modalTitle">Leave Match?</h2>
+      <p class="modal-text" id="modalDescription">Your current game progress will be lost.</p>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn cancel" id="confirmNoBtn" type="button">Stay</button>
+      <button class="modal-btn confirm" id="confirmYesBtn" type="button">Confirm</button>
     </div>
   </div>
+</div>
   <div class="toast" id="toast"></div>
 `;
 
@@ -516,6 +518,8 @@ const playBotButton = must<HTMLButtonElement>("#playBotButton");
 const confirmDialog = must<HTMLElement>("#confirmDialog");
 const confirmYesBtn = must<HTMLButtonElement>("#confirmYesBtn");
 const confirmNoBtn = must<HTMLButtonElement>("#confirmNoBtn");
+const modalTitle = must<HTMLElement>("#modalTitle");
+const modalDescription = must<HTMLElement>("#modalDescription");
 
 mountThemeSwitcher();
 
@@ -544,13 +548,14 @@ const arrowAnnotations = new Set<string>();
 
 playBotButton.addEventListener("click", () => {
   if (state.roomId && state.gameMode === "multiplayer") {
-    if (!confirm("¿Salir de la sala actual para jugar contra el bot?")) return;
-    socket.emit("room:leave");
+    toggleConfirmModal(true, "bot");
+  } else {
+    startBotGame();
   }
-  startBotGame();
 });
 
 createRoomButton.addEventListener("click", () => {
+  state.gameMode = "multiplayer"; // forcing the mode to multiplayer to avoid "ghost bot" bugs when switching from bot games
   socket.emit("room:create");
   scrollToInviteJoinCardOnMobile();
 });
@@ -596,19 +601,10 @@ leaveRoomButton.addEventListener("click", () => {
 });
 
 resignButton.addEventListener("click", () => {
-  if (!state.roomId) return;
-  if (!confirm("Are you sure you want to resign?")) return;
-
-  if (state.gameMode === "multiplayer") {
-    socket.emit("game:resign");
-  } else {
-    if (state.snapshot) {
-      state.snapshot.winner = (state.role === "w" ? "b" : "w") as PlayerRole;
-      state.snapshot.status = "Resigned"; 
-      render();
-      showToast("You resigned.");
-    }
-  }
+  const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
+  if (gameEnded) return;
+  
+  toggleConfirmModal(true, "resign");
 });
 
 rematchButton.addEventListener("click", () => {
@@ -645,47 +641,94 @@ liveAnalysisButton.addEventListener("click", () => {
   }
 });
 
- const toggleConfirmModal = (show: boolean) => {
-  confirmDialog.hidden = !show;
-  
-  // This prevents the "blur bugging" by stopping the background from moving
-  if (show) {
+const toggleConfirmModal = (show: boolean, type?: "leave" | "resign" | "bot") => {
+  if (show && type) {
+    currentModalAction = type;
     document.body.classList.add("modal-open");
+    
+    // Set dynamic text for the Bot transition
+    if (type === "bot") {
+      modalTitle.textContent = "Switch to Bot?";
+      modalDescription.textContent = "You are currently in a room. Do you want to leave and start a local game against the AI?";
+    } else if (type === "resign") {
+      modalTitle.textContent = "Resign Game?";
+      modalDescription.textContent = "This will count as a loss. Are you sure you want to give up?";
+    } else {
+      modalTitle.textContent = "Leave Match?";
+      modalDescription.textContent = "Your current game progress will be lost. Return to menu?";
+    }
   } else {
     document.body.classList.remove("modal-open");
   }
+  confirmDialog.hidden = !show;
 };
 
 // Ensure we also clear the lock when the user actually leaves
+// main.ts
+
 confirmYesBtn.addEventListener("click", () => {
-  document.body.classList.remove("modal-open"); // Clean up the scroll lock
+  const action = currentModalAction;
+  document.body.classList.remove("modal-open");
   toggleConfirmModal(false);
-  socket.emit("room:leave");
-  clearLocalRoomState();
-  render();
+
+  if (action === "bot") {
+    // Leave the multiplayer room correctly
+    socket.emit("room:leave");
+    
+    // We don't call clearLocalRoomState here because startBotGame 
+    // will set up its own local state snapshots.
+    startBotGame();
+  } else if (action === "resign") {
+    if (state.gameMode === "multiplayer") {
+      socket.emit("game:resign");
+    } else if (state.snapshot) {
+      state.snapshot.winner = (state.role === "w" ? "b" : "w") as any;
+      state.snapshot.status = "Resigned"; 
+      render();
+    }
+  } else if (action === "leave") {
+    socket.emit("room:leave");
+    clearLocalRoomState();
+    render();
+  }
 });
 
 backToMenuButton.addEventListener("click", () => {
-  const isGameOver = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
-  
-  if (isGameOver) {
-    // Leave instantly if game is already done
+  const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
+  if (gameEnded) {
     socket.emit("room:leave");
     clearLocalRoomState();
     render();
   } else {
-    toggleConfirmModal(true);
+    toggleConfirmModal(true, "leave");
   }
 });
 
 // Modal button listeners
 confirmNoBtn.addEventListener("click", () => toggleConfirmModal(false));
 
+// main.ts - Update inside the confirmYesBtn listener
 confirmYesBtn.addEventListener("click", () => {
+  const action = currentModalAction;
+  document.body.classList.remove("modal-open");
   toggleConfirmModal(false);
-  socket.emit("room:leave");
-  clearLocalRoomState();
-  render();
+
+  if (action === "bot") {
+    // 1. Tell server we are leaving
+    socket.emit("room:leave");
+    
+    // 2. Clear the multiplayer UI/State locally right now
+    clearLocalRoomState();  
+    
+    // 3. Start the bot game immediately (Direct transition)
+    startBotGame();
+  } else if (action === "resign") {
+    // ... existing resign logic ...
+  } else if (action === "leave") {
+    socket.emit("room:leave");
+    clearLocalRoomState();
+    render();
+  }
 });
 
 focusModeButton.addEventListener("click", () => {
@@ -709,6 +752,13 @@ board.addEventListener("click", (event) => {
   const squareButton = (event.target as HTMLElement).closest<HTMLButtonElement>(".square");
   const square = squareButton?.dataset.square as Square | undefined;
   if (!square) {
+    if (state.premoves.length > 0 || state.selectedSquare) {
+      state.premoves = [];
+      state.selectedSquare = null;
+      state.legalTargets = [];
+      requestBoardRefresh(true); // Force a refresh even if animating
+      updateCaption();
+    }
     return;
   }
 
@@ -821,7 +871,7 @@ board.addEventListener("pointermove", (event) => {
 
     const btn = board.querySelector<HTMLButtonElement>(`[data-square="${ptrDragFrom}"]`);
     if (btn && virtualPiece) {
-      // ⚡️ CAMBIO CLAVE: Creamos el nodo de arrastre aunque la pieza física no esté ahí
+   
       const spritePath = PIECES[`${virtualPiece.color}${virtualPiece.type}`];
       
       ptrDragNode = document.createElement("img");
@@ -965,32 +1015,34 @@ board.addEventListener("pointercancel", (event) => {
   endPointerDrag(event, false);
 });
 
+
 promotionDialog.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-promotion]");
-  if (!button) {
-    return;
-  }
+  if (!button || !state.pendingPromotion) return;
 
   const promotion = button.dataset.promotion as PromotionPiece;
-  if (!state.pendingPromotion) {
-    return;
+  const { from, to } = state.pendingPromotion;
+
+  if (state.gameMode === "bot") {
+  
+    const moveResult = chess.move({ from, to, promotion });
+    if (moveResult) {
+      updateManualSnapshot(moveResult);
+     
+      suppressAnimationForMove = { from, to }; 
+      render();
+      playSoundForSnapshot(state.snapshot!);
+
+      // Trigger the Bot's next move response
+      if (!state.snapshot!.checkmate && !state.snapshot!.draw) {
+         // (Your existing bot timeout logic here...)
+      }
+    }
+  } else {
+   
+    socket.emit("game:move", { from, to, promotion });
   }
 
-  socket.emit("game:move", { ...state.pendingPromotion, promotion });
-  
-  // Run live analysis immediately for this promotion (optimistic)
-  if (state.snapshot?.analysis.enabled) {
-    state.liveAnalysisSummary = "Analyzing your move...";
-    renderSession();
-    
-    const tempChess = new Chess(state.snapshot.fen);
-    const moveResult = tempChess.move({ from: state.pendingPromotion.from, to: state.pendingPromotion.to, promotion });
-    if (moveResult) {
-      const moveKey = `${state.snapshot.moveCount + 1}:${state.pendingPromotion.from}:${state.pendingPromotion.to}:${moveResult.san}`;
-      void maybeRunLiveAnalysisForMove(state.snapshot.moves, moveResult, state.snapshot.moveCount + 1, moveKey);
-    }
-  }
-  
   state.pendingPromotion = null;
   promotionDialog.hidden = true;
 });
@@ -1031,7 +1083,11 @@ socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl
   render();
 });
 
+// main.ts - Find and update this listener
 socket.on("session:left", () => {
+  // If we are already playing a bot, ignore the "left" message from the server
+  if (state.gameMode === "bot") return;
+
   clearLocalRoomState();
   render();
 });
@@ -1128,6 +1184,7 @@ function must<TElement extends Element>(selector: string): TElement {
   return element;
 }
 
+// main.ts - Update the render() function
 function render(): void {
   const savedScroll = window.scrollY;
   requestBoardRefresh();
@@ -1135,6 +1192,12 @@ function render(): void {
   renderMoves();
   updateCaption();
   updateFocusHud();
+
+  // FIX: Ensure analysis runs for local bot moves
+  if (state.snapshot?.analysis.enabled) {
+    void maybeRunLiveAnalysis(state.snapshot);
+  }
+
   requestAnimationFrame(() => {
     if (window.scrollY !== savedScroll) {
       window.scrollTo({ top: savedScroll, behavior: "instant" });
@@ -1596,6 +1659,32 @@ function syncBoardInteractionState(): void {
 
     squareButton.classList.toggle("selected", state.selectedSquare === square);
     squareButton.classList.toggle("legal", state.legalTargets.includes(square));
+  }
+}
+
+
+function checkAndExecutePremove(): void {
+  const snapshot = state.snapshot;
+  if (!snapshot || !state.role || state.role === "spectator") return;
+
+  if (snapshot.turn === state.role && state.premoves.length > 0) {
+    const nextMove = state.premoves.shift();
+    if (nextMove) {
+      const isLegal = chess.moves({ verbose: true }).some(m => m.from === nextMove.from && m.to === nextMove.to);
+      
+      if (isLegal && !snapshot.checkmate && !snapshot.draw) {
+        // 1. SUPPRESS ANIMATION: This makes the premove feel "instant"
+        suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
+
+        // 2. Execute the move
+        tryMoveFromTo(nextMove.from, nextMove.to);
+
+        // 3. FORCE REFRESH: Immediately clear the red squares
+        requestBoardRefresh(true); 
+      } else {
+        state.premoves = [];
+      }
+    }
   }
 }
 
@@ -2071,8 +2160,10 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   });
 }
 
-function requestBoardRefresh(): void {
-  if (activeGhostAnimation) {
+
+function requestBoardRefresh(force = false): void {
+  // If we're forcing (like for a premove or cancel), we don't wait for animations
+  if (!force && activeGhostAnimation) {
     pendingBoardRefresh = true;
     return;
   }
@@ -2388,40 +2479,38 @@ function tryMoveFromTo(from: Square, to: Square): void {
 
     // Trigger Bot Response
     if (!state.snapshot.checkmate && !state.snapshot.draw) {
-      setTimeout(async () => {
-        if (!liveAnalyzer) liveAnalyzer = new StockfishBridge();
-        
-        const botMoveUci = await liveAnalyzer.getBotMove(chess.fen());
-        
-        const bFrom = botMoveUci.substring(0, 2) as Square;
-        const bTo = botMoveUci.substring(2, 4) as Square;
-        const bPromo = botMoveUci.length === 5 ? botMoveUci[4] as any : "q";
-
-        const bMove = chess.move({ from: bFrom, to: bTo, promotion: bPromo });
-       if (bMove) {
- 
-          if (!state.snapshot) return;
-
-           updateManualSnapshot(bMove);
-           render();
-           playSoundForSnapshot(state.snapshot);
-  
-
-    if (state.snapshot.analysis.enabled) {
-    const moveKey = `${state.snapshot.moveCount}:${bMove.from}:${bMove.to}:${bMove.san}`;
+  setTimeout(async () => {
+    if (!liveAnalyzer) liveAnalyzer = new StockfishBridge(); //
     
+    const botMoveUci = await liveAnalyzer.getBotMove(chess.fen()); //
+    
+    const bFrom = botMoveUci.substring(0, 2) as Square; //
+    const bTo = botMoveUci.substring(2, 4) as Square; //
+    const bPromo = botMoveUci.length === 5 ? botMoveUci[4] as any : "q"; //
 
-    void maybeRunLiveAnalysisForMove(
-      state.snapshot.moves.slice(0, -1), 
-      bMove, 
-      state.snapshot.moveCount, 
-      moveKey
-    );
-          }
-        }
-      }, 600); 
+    const bMove = chess.move({ from: bFrom, to: bTo, promotion: bPromo }); //
+    
+    if (bMove) {
+      if (!state.snapshot) return; //
+
+      updateManualSnapshot(bMove); //
+      render(); //
+      playSoundForSnapshot(state.snapshot); //
+
+      // --- EXECUTE PLAYER PREMOVE ---
+      // This immediately plays your queued move after the bot finishes
+      checkAndExecutePremove(); 
+
+      // --- TRIGGER LIVE ANALYSIS ---
+      // Calling this directly ensures move quality badges appear on the board
+      if (state.snapshot.analysis.enabled) {
+        void maybeRunLiveAnalysis(state.snapshot); 
+      }
     }
-  }
+  }, 600); 
+}
+    }
+  
 
   // Live Analysis logic for YOUR move
   if (state.snapshot?.analysis.enabled && playerMoveResult) {
@@ -2579,48 +2668,44 @@ function queuePremove(from: Square, to: Square): void {
   updateCaption();
 }
 
+// main.ts - Update the logic inside onPremoveSquarePressed
 function onPremoveSquarePressed(square: Square): void {
   if (!state.role || state.role === "spectator") return;
 
-  const vBoard = getVirtualBoard(); // Miramos el futuro
+  const vBoard = getVirtualBoard(); 
   const clickedPiece = vBoard.get(square);
 
   if (!state.selectedSquare) {
-    // ¿Habrá una pieza mía aquí tras mis premoves anteriores?
+    // If clicking own piece, select it
     if (clickedPiece && clickedPiece.color === state.role) {
       state.selectedSquare = square;
-      // Usamos el tablero virtual para calcular los legales futuros
       state.legalTargets = vBoard.moves({ square, verbose: true }).map(m => m.to);
-      requestBoardRefresh();
-      updateCaption();
     } else {
-      // Si tocas el vacío, cancelamos la cadena (Modo Zen)
-      if (state.premoves.length > 0) {
-        state.premoves = [];
-        requestBoardRefresh();
-        updateCaption();
-      }
+      // FIX: Clicking empty or opponent piece cancels all premoves
+      state.premoves = [];
     }
+    requestBoardRefresh(true); // Force refresh
+    updateCaption();
     return;
   }
 
   if (square === state.selectedSquare) {
     clearSelection();
-    requestBoardRefresh();
+    requestBoardRefresh(true);
     updateCaption();
     return;
   }
 
-  // Si ya tenemos una pieza seleccionada (real o fantasma), intentamos moverla
   const pieceToMove = vBoard.get(state.selectedSquare);
   if (pieceToMove && isTheoreticallyPossible(state.selectedSquare, square, pieceToMove.type, pieceToMove.color)) {
     queuePremove(state.selectedSquare, square);
   } else {
-    state.premoves = []; // Movimiento imposible -> Limpiar todo
+    // FIX: Clicking a random area while a piece is selected now clears everything
+    state.premoves = [];
+    clearSelection();
   }
 
-  clearSelection();
-  requestBoardRefresh();
+  requestBoardRefresh(true);
   updateCaption();
 }
 
@@ -2667,13 +2752,17 @@ function syncUrl(roomId: string | null): void {
   window.history.replaceState({}, "", url);
 }
 
-function clearLocalRoomState(): void {
+function clearLocalRoomState(): void {  
   state.roomId = null;
   state.role = null;
   state.shareUrl = "";
   state.snapshot = null;
   state.pendingPromotion = null;
   state.premoves = [];
+
+  // This line kills the "ghost bot" bug by forcing the mode back to multiplayer
+  state.gameMode = "multiplayer"; 
+
   focusTimerStartMs = null;
   state.liveAnalysisSummary = "Live analysis disabled.";
   state.lastAnalyzedMoveKey = null;

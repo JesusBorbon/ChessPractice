@@ -2151,3 +2151,38 @@ body.modal-open {
 .nav-back-link:active {
   transform: translateX(-2px) scale(0.98);
 }
+
+/* styles.css */
+
+#resignButton {
+  /* A professional 'Destructive' red */
+  background: rgba(217, 31, 31, 0.12);
+  color: #d91f1f;
+  border: 1px solid rgba(217, 31, 31, 0.2);
+  font-weight: 700;
+  transition: all 0.2s ease;
+}
+
+#resignButton:hover {
+  background: #d91f1f;
+  color: #ffffff;
+  border-color: #d91f1f;
+  box-shadow: 0 8px 16px rgba(217, 31, 31, 0.25);
+  transform: translateY(-2px);
+}
+
+#resignButton:active {
+  transform: translateY(0) scale(0.98);
+}
+
+/* Theme adjustments for Dark Themes (Cosmic Purple) */
+[data-theme="purple"] #resignButton {
+  background: rgba(255, 92, 92, 0.1);
+  color: #ff5c5c;
+  border-color: rgba(255, 92, 92, 0.2);
+}
+
+[data-theme="purple"] #resignButton:hover {
+  background: #ff5c5c;
+  color: #120d1e;
+}

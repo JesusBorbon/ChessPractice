@@ -7292,6 +7292,7 @@ var require_main = __commonJS({
     var focusTimerStartMs = null;
     var liveAnalyzer = null;
     var liveAnalysisToken = 0;
+    var currentModalAction = null;
     var LIVE_MATE_CP = 1e5;
     var PIECE_VALUES = {
       p: 100,
@@ -7589,18 +7590,18 @@ var require_main = __commonJS({
     </div>
   </div>
 
-  <div class="modal-overlay" id="confirmDialog" hidden>
-    <div class="modal-card">
-      <div class="modal-header">
-        <h2 class="modal-title">Leave Match?</h2>
-        <p class="modal-text">You are about to exit to the main menu. Your current game progress will be lost.</p>
-      </div>
-      <div class="modal-actions">
-        <button class="modal-btn cancel" id="confirmNoBtn" type="button">Stay</button>
-        <button class="modal-btn confirm" id="confirmYesBtn" type="button">Leave</button>
-      </div>
+ <div class="modal-overlay" id="confirmDialog" hidden>
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 class="modal-title" id="modalTitle">Leave Match?</h2>
+      <p class="modal-text" id="modalDescription">Your current game progress will be lost.</p>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn cancel" id="confirmNoBtn" type="button">Stay</button>
+      <button class="modal-btn confirm" id="confirmYesBtn" type="button">Confirm</button>
     </div>
   </div>
+</div>
   <div class="toast" id="toast"></div>
 `;
     var board = must("#board");
@@ -7637,6 +7638,8 @@ var require_main = __commonJS({
     var confirmDialog = must("#confirmDialog");
     var confirmYesBtn = must("#confirmYesBtn");
     var confirmNoBtn = must("#confirmNoBtn");
+    var modalTitle = must("#modalTitle");
+    var modalDescription = must("#modalDescription");
     mountThemeSwitcher();
     window.addEventListener("animationchange", (event) => {
       const customEvent = event;
@@ -7657,12 +7660,13 @@ var require_main = __commonJS({
     var arrowAnnotations = /* @__PURE__ */ new Set();
     playBotButton.addEventListener("click", () => {
       if (state.roomId && state.gameMode === "multiplayer") {
-        if (!confirm("\xBFSalir de la sala actual para jugar contra el bot?")) return;
-        socket.emit("room:leave");
+        toggleConfirmModal(true, "bot");
+      } else {
+        startBotGame();
       }
-      startBotGame();
     });
     createRoomButton.addEventListener("click", () => {
+      state.gameMode = "multiplayer";
       socket.emit("room:create");
       scrollToInviteJoinCardOnMobile();
     });
@@ -7700,18 +7704,9 @@ var require_main = __commonJS({
       render();
     });
     resignButton.addEventListener("click", () => {
-      if (!state.roomId) return;
-      if (!confirm("Are you sure you want to resign?")) return;
-      if (state.gameMode === "multiplayer") {
-        socket.emit("game:resign");
-      } else {
-        if (state.snapshot) {
-          state.snapshot.winner = state.role === "w" ? "b" : "w";
-          state.snapshot.status = "Resigned";
-          render();
-          showToast("You resigned.");
-        }
-      }
+      const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
+      if (gameEnded) return;
+      toggleConfirmModal(true, "resign");
     });
     rematchButton.addEventListener("click", () => {
       if (state.gameMode === "multiplayer") {
@@ -7736,37 +7731,71 @@ var require_main = __commonJS({
         socket.emit("analysis:toggle");
       }
     });
-    var toggleConfirmModal = (show) => {
-      confirmDialog.hidden = !show;
-      if (show) {
+    var toggleConfirmModal = (show, type) => {
+      if (show && type) {
+        currentModalAction = type;
         document.body.classList.add("modal-open");
+        if (type === "bot") {
+          modalTitle.textContent = "Switch to Bot?";
+          modalDescription.textContent = "You are currently in a room. Do you want to leave and start a local game against the AI?";
+        } else if (type === "resign") {
+          modalTitle.textContent = "Resign Game?";
+          modalDescription.textContent = "This will count as a loss. Are you sure you want to give up?";
+        } else {
+          modalTitle.textContent = "Leave Match?";
+          modalDescription.textContent = "Your current game progress will be lost. Return to menu?";
+        }
       } else {
         document.body.classList.remove("modal-open");
       }
+      confirmDialog.hidden = !show;
     };
     confirmYesBtn.addEventListener("click", () => {
+      const action = currentModalAction;
       document.body.classList.remove("modal-open");
       toggleConfirmModal(false);
-      socket.emit("room:leave");
-      clearLocalRoomState();
-      render();
+      if (action === "bot") {
+        socket.emit("room:leave");
+        startBotGame();
+      } else if (action === "resign") {
+        if (state.gameMode === "multiplayer") {
+          socket.emit("game:resign");
+        } else if (state.snapshot) {
+          state.snapshot.winner = state.role === "w" ? "b" : "w";
+          state.snapshot.status = "Resigned";
+          render();
+        }
+      } else if (action === "leave") {
+        socket.emit("room:leave");
+        clearLocalRoomState();
+        render();
+      }
     });
     backToMenuButton.addEventListener("click", () => {
-      const isGameOver = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
-      if (isGameOver) {
+      const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
+      if (gameEnded) {
         socket.emit("room:leave");
         clearLocalRoomState();
         render();
       } else {
-        toggleConfirmModal(true);
+        toggleConfirmModal(true, "leave");
       }
     });
     confirmNoBtn.addEventListener("click", () => toggleConfirmModal(false));
     confirmYesBtn.addEventListener("click", () => {
+      const action = currentModalAction;
+      document.body.classList.remove("modal-open");
       toggleConfirmModal(false);
-      socket.emit("room:leave");
-      clearLocalRoomState();
-      render();
+      if (action === "bot") {
+        socket.emit("room:leave");
+        clearLocalRoomState();
+        startBotGame();
+      } else if (action === "resign") {
+      } else if (action === "leave") {
+        socket.emit("room:leave");
+        clearLocalRoomState();
+        render();
+      }
     });
     focusModeButton.addEventListener("click", () => {
       void toggleFocusMode();
@@ -7785,6 +7814,13 @@ var require_main = __commonJS({
       const squareButton = event.target.closest(".square");
       const square = squareButton?.dataset.square;
       if (!square) {
+        if (state.premoves.length > 0 || state.selectedSquare) {
+          state.premoves = [];
+          state.selectedSquare = null;
+          state.legalTargets = [];
+          requestBoardRefresh(true);
+          updateCaption();
+        }
         return;
       }
       if (lastPointerTapSquare === square && performance.now() - lastPointerTapAtMs < 250) {
@@ -7983,23 +8019,21 @@ var require_main = __commonJS({
     });
     promotionDialog.addEventListener("click", (event) => {
       const button = event.target.closest("[data-promotion]");
-      if (!button) {
-        return;
-      }
+      if (!button || !state.pendingPromotion) return;
       const promotion = button.dataset.promotion;
-      if (!state.pendingPromotion) {
-        return;
-      }
-      socket.emit("game:move", { ...state.pendingPromotion, promotion });
-      if (state.snapshot?.analysis.enabled) {
-        state.liveAnalysisSummary = "Analyzing your move...";
-        renderSession();
-        const tempChess = new Chess(state.snapshot.fen);
-        const moveResult = tempChess.move({ from: state.pendingPromotion.from, to: state.pendingPromotion.to, promotion });
+      const { from, to } = state.pendingPromotion;
+      if (state.gameMode === "bot") {
+        const moveResult = chess.move({ from, to, promotion });
         if (moveResult) {
-          const moveKey = `${state.snapshot.moveCount + 1}:${state.pendingPromotion.from}:${state.pendingPromotion.to}:${moveResult.san}`;
-          void maybeRunLiveAnalysisForMove(state.snapshot.moves, moveResult, state.snapshot.moveCount + 1, moveKey);
+          updateManualSnapshot(moveResult);
+          suppressAnimationForMove = { from, to };
+          render();
+          playSoundForSnapshot(state.snapshot);
+          if (!state.snapshot.checkmate && !state.snapshot.draw) {
+          }
         }
+      } else {
+        socket.emit("game:move", { from, to, promotion });
       }
       state.pendingPromotion = null;
       promotionDialog.hidden = true;
@@ -8032,6 +8066,7 @@ var require_main = __commonJS({
       render();
     });
     socket.on("session:left", () => {
+      if (state.gameMode === "bot") return;
       clearLocalRoomState();
       render();
     });
@@ -8110,6 +8145,9 @@ var require_main = __commonJS({
       renderMoves();
       updateCaption();
       updateFocusHud();
+      if (state.snapshot?.analysis.enabled) {
+        void maybeRunLiveAnalysis(state.snapshot);
+      }
       requestAnimationFrame(() => {
         if (window.scrollY !== savedScroll) {
           window.scrollTo({ top: savedScroll, behavior: "instant" });
@@ -8455,6 +8493,23 @@ var require_main = __commonJS({
         }
         squareButton.classList.toggle("selected", state.selectedSquare === square);
         squareButton.classList.toggle("legal", state.legalTargets.includes(square));
+      }
+    }
+    function checkAndExecutePremove() {
+      const snapshot = state.snapshot;
+      if (!snapshot || !state.role || state.role === "spectator") return;
+      if (snapshot.turn === state.role && state.premoves.length > 0) {
+        const nextMove = state.premoves.shift();
+        if (nextMove) {
+          const isLegal = chess.moves({ verbose: true }).some((m) => m.from === nextMove.from && m.to === nextMove.to);
+          if (isLegal && !snapshot.checkmate && !snapshot.draw) {
+            suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
+            tryMoveFromTo(nextMove.from, nextMove.to);
+            requestBoardRefresh(true);
+          } else {
+            state.premoves = [];
+          }
+        }
       }
     }
     function renderMoves() {
@@ -8835,8 +8890,8 @@ var require_main = __commonJS({
         }
       });
     }
-    function requestBoardRefresh() {
-      if (activeGhostAnimation) {
+    function requestBoardRefresh(force = false) {
+      if (!force && activeGhostAnimation) {
         pendingBoardRefresh = true;
         return;
       }
@@ -9093,14 +9148,9 @@ var require_main = __commonJS({
               updateManualSnapshot(bMove);
               render();
               playSoundForSnapshot(state.snapshot);
+              checkAndExecutePremove();
               if (state.snapshot.analysis.enabled) {
-                const moveKey = `${state.snapshot.moveCount}:${bMove.from}:${bMove.to}:${bMove.san}`;
-                void maybeRunLiveAnalysisForMove(
-                  state.snapshot.moves.slice(0, -1),
-                  bMove,
-                  state.snapshot.moveCount,
-                  moveKey
-                );
+                void maybeRunLiveAnalysis(state.snapshot);
               }
             }
           }, 600);
@@ -9229,20 +9279,16 @@ var require_main = __commonJS({
         if (clickedPiece && clickedPiece.color === state.role) {
           state.selectedSquare = square;
           state.legalTargets = vBoard.moves({ square, verbose: true }).map((m) => m.to);
-          requestBoardRefresh();
-          updateCaption();
         } else {
-          if (state.premoves.length > 0) {
-            state.premoves = [];
-            requestBoardRefresh();
-            updateCaption();
-          }
+          state.premoves = [];
         }
+        requestBoardRefresh(true);
+        updateCaption();
         return;
       }
       if (square === state.selectedSquare) {
         clearSelection();
-        requestBoardRefresh();
+        requestBoardRefresh(true);
         updateCaption();
         return;
       }
@@ -9251,9 +9297,9 @@ var require_main = __commonJS({
         queuePremove(state.selectedSquare, square);
       } else {
         state.premoves = [];
+        clearSelection();
       }
-      clearSelection();
-      requestBoardRefresh();
+      requestBoardRefresh(true);
       updateCaption();
     }
     function isOwnPiece(color) {
@@ -9296,6 +9342,7 @@ var require_main = __commonJS({
       state.snapshot = null;
       state.pendingPromotion = null;
       state.premoves = [];
+      state.gameMode = "multiplayer";
       focusTimerStartMs = null;
       state.liveAnalysisSummary = "Live analysis disabled.";
       state.lastAnalyzedMoveKey = null;
