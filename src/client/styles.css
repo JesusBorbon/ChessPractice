@@ -354,10 +354,11 @@ button {
 }
 
 .status-card {
-  padding: 24px;
+  padding: 10px;
   display: grid;
-  align-content: space-between;
+  align-content: center;
   gap: 14px;
+  text-align: center;
 }
 
 .status-pill {
@@ -1037,9 +1038,9 @@ button {
 .move-row {
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr) minmax(0, 1fr);
-  gap: 12px;
+  gap: 12px; 
   align-items: center;
-  padding: 10px 12px;
+  padding: 5px 7px; /* when you put 2 values in the padding: the first is for top/bottom, the second is for left/right */
   border-radius: 14px;
   background: var(--move-row-bg);
   border: 1px solid var(--move-row-border);
@@ -1211,7 +1212,6 @@ body.focus-mode.focus-multiplayer .board-panel {
   }
 
   .hero-copy,
-  .status-card,
   .board-panel,
   .side-panel {
     padding: 18px;
@@ -1986,4 +1986,168 @@ body.focus-mode.focus-multiplayer .board-panel {
   -webkit-backdrop-filter: blur(4px);
   opacity: 0.9;
   border-radius: 25px; /* Para que haga juego con el botón y el timer */
+}
+
+/* 1. Scroll-Lock Fix: Prevents background jitter during heavy blur calculations */
+body.modal-open {
+  overflow: hidden;
+  touch-action: none;
+}
+
+/* 2. Premium iOS-style Modal Overlay */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.25);
+  
+  /* Glassmorphism Effect */
+  backdrop-filter: blur(15px) saturate(180%);
+  -webkit-backdrop-filter: blur(15px) saturate(180%);
+  
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  animation: fadeInModal 0.25s ease-out forwards;
+}
+
+.modal-card {
+  background: var(--paper-strong);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 24px;
+  width: min(320px, 100%);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+  animation: popInModal 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 3. Content Layout */
+.modal-header {
+  padding: 28px 24px;
+  text-align: center;
+}
+
+.modal-title {
+  margin: 0 0 10px;
+  font-family: "Fraunces", serif;
+  font-size: 1.3rem;
+  color: var(--ink);
+}
+
+.modal-text {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* 4. Action Buttons & Transitions */
+.modal-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid rgba(25, 35, 32, 0.12);
+}
+
+.modal-btn {
+  border: 0;
+  background: transparent;
+  padding: 18px;
+  font-size: 1.05rem;
+  font-weight: 600;
+  cursor: pointer;
+  
+  /* Smooth, high-performance transitions */
+  transition: 
+    background-color 0.2s ease, 
+    transform 0.1s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.2s ease;
+  outline: none;
+}
+
+/* Professional Tactile Interactions */
+.modal-btn:hover {
+  background: rgba(25, 35, 32, 0.06);
+}
+
+.modal-btn:active {
+  transform: scale(0.95); /* iPhone-style press feedback */
+}
+
+.modal-btn.cancel {
+  border-right: 1px solid rgba(25, 35, 32, 0.12);
+  color: var(--muted);
+}
+
+.modal-btn.cancel:hover {
+  color: var(--ink);
+}
+
+.modal-btn.confirm {
+  color: #d91f1f; /* Warning Red */
+}
+
+/* Destructive warning hover */
+.modal-btn.confirm:hover {
+  background: rgba(217, 31, 31, 0.08);
+  color: #b01a1a;
+}
+
+/* 5. Animations */
+@keyframes fadeInModal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes popInModal {
+  from { 
+    opacity: 0; 
+    transform: scale(0.85) translateY(10px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: scale(1) translateY(0); 
+  }
+}
+
+/* --- Fix for the Back to Menu Button --- */
+
+.game-nav {
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  padding: 0 4px; /* Slight offset from the edge */
+}
+
+.nav-back-link {
+  /* 1. Remove browser defaults */
+  background: none;
+  border: none;
+  padding: 0;
+  outline: none;
+  cursor: pointer;
+  
+  /* 2. Apply theme typography */
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 700;
+  font-size: 1rem;
+  
+  /* 3. Theme-aware colors */
+  color: var(--accent); /* This will be green in Forest, purple in Cosmic */
+  
+  /* 4. Smooth interaction */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+}
+
+/* 5. Professional Hover & Active states */
+.nav-back-link:hover {
+  color: var(--accent-strong);
+  transform: translateX(-4px); /* Subtle "moving back" animation */
+  text-decoration: underline;
+}
+
+.nav-back-link:active {
+  transform: translateX(-2px) scale(0.98);
 }

@@ -76,6 +76,7 @@ type AppState = {
   liveMoveGrades: Record<number, { label: string; cpl: number; category: "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder" }>;
   animationStyle: "smooth" | "epic";
   bloodFxEnabled: boolean;
+  gameMode: "multiplayer" | "bot";
 };
 
 type EngineEval = {
@@ -133,6 +134,7 @@ const state: AppState = {
   liveMoveGrades: {},
     animationStyle: (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth",
   bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on",
+  gameMode: "multiplayer",
 };
 
 (window as any).state = state;
@@ -199,56 +201,63 @@ class StockfishBridge {
       this.initResolve = resolve;
       this.initReject = reject;
     });
+
     this.worker.onmessage = (event) => this.onMessage(String(event.data ?? ""));
     this.worker.onerror = () => {
-      if (!this.ready) {
-        this.initReject(new Error("Could not initialize Stockfish."));
-      }
-      this.activeEval?.reject(new Error("Stockfish worker error."));
+      if (!this.ready) this.initReject(new Error("Stockfish init failed."));
+      this.activeEval?.reject(new Error("Worker error."));
       this.activeEval = null;
     };
+
+    // --- INITIAL CONFIGURATION ---
     this.send("uci");
+    
+    // Set engine strength to approximately 800 ELO
+    this.send("setoption name UCI_LimitStrength value true");
+    this.send("setoption name UCI_Elo value 800"); 
+
     this.send("isready");
   }
 
+  /** Gets the best move from the engine for the Bot player */
+  async getBotMove(fen: string, timeLimitMs = 1000): Promise<string> {
+    await this.initPromise;
+    const botPromise = this.queue.then(() => {
+      return new Promise<string>((resolve, reject) => {
+        this.activeEval = {
+          resolve: (res) => resolve(res.bestMove),
+          reject,
+          lastCp: 0, mate: null, pv: "", bestMove: "",
+        };
+        this.send(`position fen ${fen}`);
+        this.send(`go movetime ${timeLimitMs}`);
+      });
+    });
+    this.queue = botPromise.then(() => undefined).catch(() => undefined);
+    return botPromise;
+  }
+
+  /** Standard analysis evaluation */
   async evaluateFen(fen: string, depth: number): Promise<EngineEval> {
     await this.initPromise;
     const evalPromise = this.queue.then(() => {
       return new Promise<EngineEval>((resolve, reject) => {
-        this.activeEval = {
-          resolve,
-          reject,
-          lastCp: 0,
-          mate: null,
-          pv: "",
-          bestMove: "",
-        };
+        this.activeEval = { resolve, reject, lastCp: 0, mate: null, pv: "", bestMove: "", };
         this.send(`position fen ${fen}`);
         this.send(`go depth ${depth}`);
       });
     });
-
     this.queue = evalPromise.then(() => undefined).catch(() => undefined);
     return evalPromise;
   }
 
-  terminate(): void {
-    this.worker.terminate();
-  }
-
   private onMessage(line: string): void {
-    if (!line) return;
-
     if (line === "readyok" && !this.ready) {
       this.ready = true;
       this.initResolve();
       return;
     }
-
-    if (!this.activeEval) {
-      return;
-    }
-
+    if (!this.activeEval) return;
     if (line.startsWith("info ")) {
       const parsed = parseInfoLine(line);
       if (parsed) {
@@ -256,12 +265,8 @@ class StockfishBridge {
         this.activeEval.mate = parsed.mate;
         this.activeEval.pv = parsed.pv;
       }
-      return;
-    }
-
-    if (line.startsWith("bestmove ")) {
-      const bestMove = line.split(" ")[1] ?? "";
-      this.activeEval.bestMove = bestMove;
+    } else if (line.startsWith("bestmove ")) {
+      this.activeEval.bestMove = line.split(" ")[1] ?? "";
       this.activeEval.resolve({
         cp: this.activeEval.lastCp,
         mate: this.activeEval.mate,
@@ -272,9 +277,8 @@ class StockfishBridge {
     }
   }
 
-  private send(command: string): void {
-    this.worker.postMessage(command);
-  }
+  private send(cmd: string): void { this.worker.postMessage(cmd); }
+  terminate(): void { this.worker.terminate(); }
 }
 
 function parseInfoLine(line: string): { cp: number; mate: number | null; pv: string } | null {
@@ -325,6 +329,10 @@ function playSoundForSnapshot(snapshot: RoomSnapshot): void {
 
 app.innerHTML = `
   <div class="app-shell">
+    <nav class="game-nav" id="gameNav" hidden>
+      <button class="nav-back-link" id="backToMenuButton" type="button">← Back to menu</button>
+    </nav>
+
     <header class="hero">
       <section class="hero-card hero-copy">
         <h1>Multiplayer Chess</h1>
@@ -340,7 +348,7 @@ app.innerHTML = `
           <div>
             <strong>Your seat</strong>
             <div class="muted" id="roleBadge">Not seated</div>
-          </div>
+          </div>  
           <div>
             <strong>Match state</strong>
             <div class="muted" id="matchStatus">Create a room to start.</div>
@@ -353,6 +361,7 @@ app.innerHTML = `
       <section class="panel board-panel">
         <div class="board-toolbar">
           <button class="action cta-turquoise" id="createRoomButton" type="button">Create room</button>
+          <button class="action cta-rainbow" id="playBotButton" type="button">Play vs Bot (800 ELO)</button>
           <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
           <button class="ghost" id="flipBoardButton" type="button" hidden>Flip board</button>
           <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
@@ -456,8 +465,22 @@ app.innerHTML = `
     </div>
   </div>
 
+  <div class="modal-overlay" id="confirmDialog" hidden>
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 class="modal-title">Leave Match?</h2>
+        <p class="modal-text">You are about to exit to the main menu. Your current game progress will be lost.</p>
+      </div>
+      <div class="modal-actions">
+        <button class="modal-btn cancel" id="confirmNoBtn" type="button">Stay</button>
+        <button class="modal-btn confirm" id="confirmYesBtn" type="button">Leave</button>
+      </div>
+    </div>
+  </div>
   <div class="toast" id="toast"></div>
 `;
+
+
 
 const board = must<HTMLDivElement>("#board");
 const pregamePlaceholder = must<HTMLDivElement>("#pregamePlaceholder");
@@ -482,12 +505,17 @@ const moveList = must<HTMLDivElement>("#moveList");
 const toast = must<HTMLDivElement>("#toast");
 const promotionDialog = must<HTMLDivElement>("#promotionDialog");
 const createRoomButton = must<HTMLButtonElement>("#createRoomButton");
+const backToMenuButton = must<HTMLButtonElement>("#backToMenuButton");
 const focusHud = must<HTMLDivElement>("#focusHud");
 const focusTimer = must<HTMLSpanElement>("#focusTimer");
 const focusModeButton = must<HTMLButtonElement>("#focusModeBtn");
 const focusMaterialHud = must<HTMLDivElement>("#focusMaterialHud");
 const focusMaterialScore = must<HTMLSpanElement>("#focusMaterialScore");
 const focusMaterialIcons = must<HTMLSpanElement>("#focusMaterialIcons");
+const playBotButton = must<HTMLButtonElement>("#playBotButton");
+const confirmDialog = must<HTMLElement>("#confirmDialog");
+const confirmYesBtn = must<HTMLButtonElement>("#confirmYesBtn");
+const confirmNoBtn = must<HTMLButtonElement>("#confirmNoBtn");
 
 mountThemeSwitcher();
 
@@ -514,6 +542,13 @@ const resignButton = must<HTMLButtonElement>("#resignButton");
 const arrowAnnotations = new Set<string>();
 
 
+playBotButton.addEventListener("click", () => {
+  if (state.roomId && state.gameMode === "multiplayer") {
+    if (!confirm("¿Salir de la sala actual para jugar contra el bot?")) return;
+    socket.emit("room:leave");
+  }
+  startBotGame();
+});
 
 createRoomButton.addEventListener("click", () => {
   socket.emit("room:create");
@@ -562,11 +597,25 @@ leaveRoomButton.addEventListener("click", () => {
 
 resignButton.addEventListener("click", () => {
   if (!state.roomId) return;
+  if (!confirm("Are you sure you want to resign?")) return;
 
-  // Confirmación para evitar abandonos accidentales
-  const confirmResign = confirm("¿Estás seguro de que quieres abandonar la partida?");
-  if (confirmResign) {
+  if (state.gameMode === "multiplayer") {
     socket.emit("game:resign");
+  } else {
+    if (state.snapshot) {
+      state.snapshot.winner = (state.role === "w" ? "b" : "w") as PlayerRole;
+      state.snapshot.status = "Resigned"; 
+      render();
+      showToast("You resigned.");
+    }
+  }
+});
+
+rematchButton.addEventListener("click", () => {
+  if (state.gameMode === "multiplayer") {
+    socket.emit("game:rematch");
+  } else {
+    startBotGame(); // Just restart the local game
   }
 });
 
@@ -576,17 +625,67 @@ flipBoardButton.addEventListener("click", () => {
   updateCaption();
 });
 
-rematchButton.addEventListener("click", () => {
-  if (!state.roomId) {
-    showToast("Join a room first.");
-    return;
-  }
 
-  socket.emit("game:rematch");
-});
+
 
 liveAnalysisButton.addEventListener("click", () => {
-  socket.emit("analysis:toggle");
+  if (state.gameMode === "bot" && state.snapshot) {
+    // Toggle instantly for Bot mode
+    state.snapshot.analysis.enabled = !state.snapshot.analysis.enabled;
+    
+    if (state.snapshot.analysis.enabled) {
+      // showToast("Live analysis enabled");
+      // Run analysis on the current position immediately
+      void maybeRunLiveAnalysis(state.snapshot);
+    }
+    render();
+  } else {
+    // Standard multiplayer voting logic
+    socket.emit("analysis:toggle");
+  }
+});
+
+ const toggleConfirmModal = (show: boolean) => {
+  confirmDialog.hidden = !show;
+  
+  // This prevents the "blur bugging" by stopping the background from moving
+  if (show) {
+    document.body.classList.add("modal-open");
+  } else {
+    document.body.classList.remove("modal-open");
+  }
+};
+
+// Ensure we also clear the lock when the user actually leaves
+confirmYesBtn.addEventListener("click", () => {
+  document.body.classList.remove("modal-open"); // Clean up the scroll lock
+  toggleConfirmModal(false);
+  socket.emit("room:leave");
+  clearLocalRoomState();
+  render();
+});
+
+backToMenuButton.addEventListener("click", () => {
+  const isGameOver = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
+  
+  if (isGameOver) {
+    // Leave instantly if game is already done
+    socket.emit("room:leave");
+    clearLocalRoomState();
+    render();
+  } else {
+    toggleConfirmModal(true);
+  }
+});
+
+// Modal button listeners
+confirmNoBtn.addEventListener("click", () => toggleConfirmModal(false));
+
+confirmYesBtn.addEventListener("click", () => {
+  toggleConfirmModal(false);
+  socket.emit("room:leave");
+  clearLocalRoomState();
+  render();
 });
 
 focusModeButton.addEventListener("click", () => {
@@ -827,6 +926,8 @@ function endArrowDrag(event: PointerEvent, commit: boolean): void {
     currentPremoveHoverSquare = null;
   }
 
+ 
+
   const fromSquare = arrowDragFrom;
   const previewTo = arrowDragTo;
   arrowDragFrom = null;
@@ -1044,41 +1145,51 @@ function render(): void {
 function renderSession(): void {
   const snapshot = state.snapshot;
   const hasRoom = Boolean(state.roomId);
-  const isMatchReady = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
+  const isMultiplayerReady = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
+  const isGameActive = (state.gameMode === "multiplayer" && isMultiplayerReady) || 
+                       (state.gameMode === "bot" && snapshot !== null);
+  
   const canVote = state.role === "w" || state.role === "b";
   const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
 
-  // 1. Información básica de la sesión
+  // 1. Session labels
   roomBadge.textContent = state.roomId ? `Room ${state.roomId}` : "No active room";
   roleBadge.textContent = humanRole(state.role);
   shareLink.textContent = state.shareUrl || "Create or join a room to get a live invite link.";
 
-  // 2. Control de visibilidad de botones y paneles
-  // Mostramos controles solo cuando son accionables para la etapa actual.
+  // 2. Hide Setup UI (Hero section and Setup buttons)
+  // This hides the title and the "Open Analysis Board" button at the top
+  const heroCopy = document.querySelector<HTMLElement>(".hero-copy");
+  if (heroCopy) heroCopy.hidden = isGameActive;
+
+  // Hide the invite card and setup buttons while playing
+  inviteJoinCard.hidden = isGameActive;
+  createRoomButton.hidden = isGameActive;
+  playBotButton.hidden = isGameActive;
+
+  // 3. Action Button Visibility
   leaveRoomButton.hidden = !hasRoom;
-  copyLinkButton.hidden = !state.shareUrl;
-  flipBoardButton.hidden = !isMatchReady;
-  focusModeButton.hidden = !isMatchReady;
+  copyLinkButton.hidden = !state.shareUrl || isGameActive;
+  flipBoardButton.hidden = !isGameActive;
+  focusModeButton.hidden = !isGameActive;
+  gameNav.hidden = !isGameActive;
   
-  // Paneles laterales
+  // Side Panels
   seatCard.hidden = !hasRoom;
-  summaryCard.hidden = !isMatchReady;
-  movesCard.hidden = !isMatchReady;
+  summaryCard.hidden = !isGameActive;
+  movesCard.hidden = !isGameActive;
 
-  // Lógica específica para botones de juego
-  liveAnalysisButton.hidden = !isMatchReady || !canVote;
-  rematchButton.hidden = !gameEnded || !canVote;
-  
-  // RESIGN: Solo se muestra si la partida empezó, NO ha terminado y eres jugador.
-  resignButton.hidden = !isMatchReady || gameEnded || !canVote;
+  // Specific gameplay buttons
+  liveAnalysisButton.hidden = !isGameActive || !canVote;
+  rematchButton.hidden = !gameEnded || !canVote || !hasRoom;
+  resignButton.hidden = !isGameActive || gameEnded || !canVote;
 
-  // Si se pierde la conexión o alguien sale, desactivamos el modo focus automáticamente
-  if (!isMatchReady && state.focusMode) {
+  if (!isGameActive && state.focusMode) {
     state.focusMode = false;
     applyFocusMode();
   }
   
-  // 3. Estado inicial (Sin partida o esperando jugadores)
+  // 4. Initial State or Pregame
   if (!snapshot) {
     pregamePlaceholder.hidden = false;
     matchStatus.textContent = "Create a room to start.";
@@ -1092,10 +1203,9 @@ function renderSession(): void {
     return;
   }
 
-  // Ocultar el placeholder si ya hay 2 jugadores
-  pregamePlaceholder.hidden = isMatchReady;
+  pregamePlaceholder.hidden = isGameActive;
 
-  // 4. Actualización de datos en vivo de la partida
+  // 5. Live Game Data
   matchStatus.textContent = snapshot.status;
   whiteSeat.textContent = snapshot.players.whiteConnected ? seatLabel("w") : "Waiting for player";
   blackSeat.textContent = snapshot.players.blackConnected ? seatLabel("b") : "Waiting for player";
@@ -1103,38 +1213,37 @@ function renderSession(): void {
   movesMeta.textContent = String(snapshot.moveCount);
   spectatorMeta.textContent = String(snapshot.players.spectatorCount);
 
-  // 5. Construcción del resumen textual
+  // 6. Text Summary
   const roleDescription = state.role === "spectator"
     ? "Spectating."
-    : state.role
-      ? `Playing ${state.role === "w" ? "White" : "Black"}.`
-      : "Not seated.";
+    : state.role ? `Playing ${state.role === "w" ? "White" : "Black"}.` : "Not seated.";
       
   const lastMoveDescription = snapshot.lastMove
     ? ` Last move: ${snapshot.lastMove.san} (${snapshot.lastMove.from} to ${snapshot.lastMove.to}).`
     : "";
     
-  const rematchDescription = snapshot.rematchVotes > 0 
+  const rematchDescription = (state.gameMode === "multiplayer" && snapshot.rematchVotes > 0)
     ? ` Rematch votes: ${snapshot.rematchVotes}/2.` 
     : "";
 
   summaryText.textContent = `${roleDescription} ${snapshot.status}${lastMoveDescription}${rematchDescription}`.trim();
 
-  // 6. Configuración de botones de Análisis y Rematch
-  const seatedPlayers = Number(snapshot.players.whiteConnected) + Number(snapshot.players.blackConnected);
-  
-  liveAnalysisButton.disabled = seatedPlayers < 2 || !canVote;
-  liveAnalysisButton.textContent = snapshot.analysis.enabled
-    ? "Disable analysis"
-    : `Enable analysis (${snapshot.analysis.votes}/2)`;
+  // 7. Analysis Button State
+  if (state.gameMode === "bot") {
+    liveAnalysisButton.disabled = false;
+    liveAnalysisButton.textContent = snapshot.analysis.enabled ? "Disable analysis" : "Enable analysis";
+  } else {
+    const seatedPlayers = Number(snapshot.players.whiteConnected) + Number(snapshot.players.blackConnected);
+    liveAnalysisButton.disabled = seatedPlayers < 2 || !canVote;
+    liveAnalysisButton.textContent = snapshot.analysis.enabled ? "Disable analysis" : `Enable analysis (${snapshot.analysis.votes}/2)`;
+  }
 
-  // La revancha solo es posible si la partida terminó
   rematchButton.disabled = !gameEnded;
 
-  // 7. Texto del Análisis en vivo
+  // 8. Live Analysis Text
   if (snapshot.analysis.enabled) {
     liveAnalysisText.textContent = state.liveAnalysisSummary;
-  } else if (snapshot.analysis.votes > 0) {
+  } else if (state.gameMode === "multiplayer" && snapshot.analysis.votes > 0) {
     liveAnalysisText.textContent = `Waiting for both players: ${snapshot.analysis.votes}/2 ready.`;
   } else {
     liveAnalysisText.textContent = "Live analysis disabled.";
@@ -1230,29 +1339,33 @@ function renderBoard(): void {
   const snapshot = state.snapshot;
   const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
 
-  if (gameEnded && snapshot) {
+ // Inside renderBoard(), find the gameEnded block
+if (gameEnded && snapshot) {
     const overlay = document.createElement("div");
     overlay.className = "game-over-overlay";
     
     const title = document.createElement("h2");
     title.className = "game-over-title";
-    
-    if (snapshot.checkmate) {
-      title.textContent = snapshot.winner === state.role ? "Victory!" : "Checkmate";
-    } else if (snapshot.winner !== null) {
-      // Caso de abandono (Resign)
-      title.textContent = snapshot.winner === state.role ? "You won!" : "You lost!";
-    } else {
-      title.textContent = "Draw";
-    }
+    // ... (keep your existing title logic)
 
     const reason = document.createElement("p");
     reason.className = "game-over-reason";
-    reason.textContent = snapshot.status; // "White resigned", "Draw by stalemate", etc.
+    reason.textContent = snapshot.status;
 
-    overlay.append(title, reason);
+    // NEW: Action button inside the overlay
+    const overlayRematchBtn = document.createElement("button");
+    overlayRematchBtn.className = "action cta-turquoise";
+    overlayRematchBtn.style.marginTop = "20px";
+    overlayRematchBtn.textContent = state.gameMode === "bot" ? "Play Again" : "Request Rematch";
+    
+    overlayRematchBtn.onclick = () => {
+      if (state.gameMode === "bot") startBotGame();
+      else socket.emit("game:rematch");
+    };
+
+    overlay.append(title, reason, overlayRematchBtn);
     board.append(overlay);
-  }
+}
 }
 
 function buildArrowPath(
@@ -2239,13 +2352,10 @@ function canStartMoveFrom(square: Square): boolean {
 }
 
 function tryMoveFromTo(from: Square, to: Square): void {
-
   const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
   if (gameEnded) return;
   
-  if (!state.snapshot || !state.role || state.role === "spectator") {
-    return;
-  }
+  if (!state.snapshot || !state.role || state.role === "spectator") return;
 
   if (state.snapshot.turn !== state.role) {
     queuePremove(from, to);
@@ -2259,25 +2369,134 @@ function tryMoveFromTo(from: Square, to: Square): void {
     return;
   }
 
-  socket.emit("game:move", { from, to });
+  let playerMoveResult: Move | null = null;
 
-  // Run live analysis immediately for this move (optimistic)
-  if (state.snapshot?.analysis.enabled) {
-    state.liveAnalysisSummary = "Analyzing your move...";
+  if (state.gameMode === "multiplayer") {
+    socket.emit("game:move", { from, to });
+    // In multiplayer, we can't be 100% sure of the result until the server responds, 
+    // but for "optimistic" analysis, we simulate it:
+    const temp = new Chess(chess.fen());
+    playerMoveResult = temp.move({ from, to, promotion: "q" });
+  } else {
+    // BOT MODE: Process player move
+    playerMoveResult = chess.move({ from, to, promotion: "q" });
+    if (!playerMoveResult) return;
+
+    updateManualSnapshot(playerMoveResult);
+    render(); 
+    playSoundForSnapshot(state.snapshot);
+
+    // Trigger Bot Response
+    if (!state.snapshot.checkmate && !state.snapshot.draw) {
+      setTimeout(async () => {
+        if (!liveAnalyzer) liveAnalyzer = new StockfishBridge();
+        
+        const botMoveUci = await liveAnalyzer.getBotMove(chess.fen());
+        
+        const bFrom = botMoveUci.substring(0, 2) as Square;
+        const bTo = botMoveUci.substring(2, 4) as Square;
+        const bPromo = botMoveUci.length === 5 ? botMoveUci[4] as any : "q";
+
+        const bMove = chess.move({ from: bFrom, to: bTo, promotion: bPromo });
+       if (bMove) {
+ 
+          if (!state.snapshot) return;
+
+           updateManualSnapshot(bMove);
+           render();
+           playSoundForSnapshot(state.snapshot);
+  
+
+    if (state.snapshot.analysis.enabled) {
+    const moveKey = `${state.snapshot.moveCount}:${bMove.from}:${bMove.to}:${bMove.san}`;
+    
+
+    void maybeRunLiveAnalysisForMove(
+      state.snapshot.moves.slice(0, -1), 
+      bMove, 
+      state.snapshot.moveCount, 
+      moveKey
+    );
+          }
+        }
+      }, 600); 
+    }
+  }
+
+  // Live Analysis logic for YOUR move
+  if (state.snapshot?.analysis.enabled && playerMoveResult) {
+    state.liveAnalysisSummary = "Analyzing move...";
     renderSession();
     
-    const tempChess = new Chess(state.snapshot.fen);
-    const moveResult = tempChess.move({ from, to });
-    if (moveResult) {
-      const moveKey = `${state.snapshot.moveCount + 1}:${from}:${to}:${moveResult.san}`;
-      void maybeRunLiveAnalysisForMove(state.snapshot.moves, moveResult, state.snapshot.moveCount + 1, moveKey);
-    }
+    // We use the playerMoveResult we already captured above
+    const moveKey = `${state.snapshot.moveCount}:${from}:${to}:${playerMoveResult.san}`;
+    void maybeRunLiveAnalysisForMove(state.snapshot.moves.slice(0, -1), playerMoveResult, state.snapshot.moveCount, moveKey);
+  }
+}
+
+/** Starts a local game against the AI */
+function startBotGame() {
+  state.gameMode = "bot";
+  state.role = "w"; // Player is White
+  state.roomId = "LOCAL_BOT";
+  
+  chess.reset();
+  
+  // Initialize snapshot manually to bypass server socket
+  state.snapshot = {
+    roomId: "LOCAL",
+    fen: chess.fen(),
+    turn: "w",
+    status: "Playing vs Stockfish (800 ELO)",
+    winner: null,
+    check: false,
+    checkmate: false,
+    draw: false,
+    moveCount: 0,
+    moves: [],
+    lastMove: null,
+    players: { whiteConnected: true, blackConnected: true, spectatorCount: 0 },
+    rematchVotes: 0,
+    analysis: { enabled: false, votes: 0 }
+  };
+
+  showToast("Bot mode active. You are White!");
+  render();
+}
+
+/** Updates the snapshot locally after a move in Bot mode */
+function updateManualSnapshot(move: Move): void {
+  if (!state.snapshot) return;
+
+  const newSummary: MoveSummary = {
+    color: move.color as PlayerRole,
+    from: move.from,
+    to: move.to,
+    san: move.san,
+    piece: move.piece
+  };
+
+  state.snapshot.fen = chess.fen();
+  state.snapshot.turn = chess.turn() as PlayerRole;
+  state.snapshot.moveCount++;
+  state.snapshot.lastMove = newSummary;
+  state.snapshot.moves.push(newSummary);
+  
+  // Update game state flags
+  state.snapshot.check = chess.inCheck();
+  state.snapshot.checkmate = chess.isCheckmate();
+  state.snapshot.draw = chess.isDraw();
+  
+  if (state.snapshot.checkmate) {
+    state.snapshot.winner = move.color as PlayerRole;
+  } else if (state.snapshot.draw) {
+    state.snapshot.status = "Draw";
   }
 }
 
 function isTheoreticallyPossible(from: Square, to: Square, piece: PieceSymbol, color: string): boolean {
   const fromFile = from.charCodeAt(0) - 97; // a=0, b=1...
-  const fromRank = parseInt(from[1]);
+  const fromRank = parseInt(from[1]); 
   const toFile = to.charCodeAt(0) - 97;
   const toRank = parseInt(to[1]);
   

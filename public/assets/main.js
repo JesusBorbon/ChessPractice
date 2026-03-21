@@ -7278,7 +7278,8 @@ var require_main = __commonJS({
       lastAnalyzedMoveKey: null,
       liveMoveGrades: {},
       animationStyle: localStorage.getItem("chess-animation-style") || "smooth",
-      bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on"
+      bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on",
+      gameMode: "multiplayer"
     };
     window.state = state;
     var lastAnimatedMoveKey = null;
@@ -7334,21 +7335,22 @@ var require_main = __commonJS({
         });
         this.worker.onmessage = (event) => this.onMessage(String(event.data ?? ""));
         this.worker.onerror = () => {
-          if (!this.ready) {
-            this.initReject(new Error("Could not initialize Stockfish."));
-          }
-          this.activeEval?.reject(new Error("Stockfish worker error."));
+          if (!this.ready) this.initReject(new Error("Stockfish init failed."));
+          this.activeEval?.reject(new Error("Worker error."));
           this.activeEval = null;
         };
         this.send("uci");
+        this.send("setoption name UCI_LimitStrength value true");
+        this.send("setoption name UCI_Elo value 800");
         this.send("isready");
       }
-      async evaluateFen(fen, depth) {
+      /** Gets the best move from the engine for the Bot player */
+      async getBotMove(fen, timeLimitMs = 1e3) {
         await this.initPromise;
-        const evalPromise = this.queue.then(() => {
+        const botPromise = this.queue.then(() => {
           return new Promise((resolve, reject) => {
             this.activeEval = {
-              resolve,
+              resolve: (res) => resolve(res.bestMove),
               reject,
               lastCp: 0,
               mate: null,
@@ -7356,25 +7358,32 @@ var require_main = __commonJS({
               bestMove: ""
             };
             this.send(`position fen ${fen}`);
+            this.send(`go movetime ${timeLimitMs}`);
+          });
+        });
+        this.queue = botPromise.then(() => void 0).catch(() => void 0);
+        return botPromise;
+      }
+      /** Standard analysis evaluation */
+      async evaluateFen(fen, depth) {
+        await this.initPromise;
+        const evalPromise = this.queue.then(() => {
+          return new Promise((resolve, reject) => {
+            this.activeEval = { resolve, reject, lastCp: 0, mate: null, pv: "", bestMove: "" };
+            this.send(`position fen ${fen}`);
             this.send(`go depth ${depth}`);
           });
         });
         this.queue = evalPromise.then(() => void 0).catch(() => void 0);
         return evalPromise;
       }
-      terminate() {
-        this.worker.terminate();
-      }
       onMessage(line) {
-        if (!line) return;
         if (line === "readyok" && !this.ready) {
           this.ready = true;
           this.initResolve();
           return;
         }
-        if (!this.activeEval) {
-          return;
-        }
+        if (!this.activeEval) return;
         if (line.startsWith("info ")) {
           const parsed = parseInfoLine(line);
           if (parsed) {
@@ -7382,11 +7391,8 @@ var require_main = __commonJS({
             this.activeEval.mate = parsed.mate;
             this.activeEval.pv = parsed.pv;
           }
-          return;
-        }
-        if (line.startsWith("bestmove ")) {
-          const bestMove = line.split(" ")[1] ?? "";
-          this.activeEval.bestMove = bestMove;
+        } else if (line.startsWith("bestmove ")) {
+          this.activeEval.bestMove = line.split(" ")[1] ?? "";
           this.activeEval.resolve({
             cp: this.activeEval.lastCp,
             mate: this.activeEval.mate,
@@ -7396,8 +7402,11 @@ var require_main = __commonJS({
           this.activeEval = null;
         }
       }
-      send(command) {
-        this.worker.postMessage(command);
+      send(cmd) {
+        this.worker.postMessage(cmd);
+      }
+      terminate() {
+        this.worker.terminate();
       }
     };
     function parseInfoLine(line) {
@@ -7444,6 +7453,10 @@ var require_main = __commonJS({
     }
     app.innerHTML = `
   <div class="app-shell">
+    <nav class="game-nav" id="gameNav" hidden>
+      <button class="nav-back-link" id="backToMenuButton" type="button">\u2190 Back to menu</button>
+    </nav>
+
     <header class="hero">
       <section class="hero-card hero-copy">
         <h1>Multiplayer Chess</h1>
@@ -7459,7 +7472,7 @@ var require_main = __commonJS({
           <div>
             <strong>Your seat</strong>
             <div class="muted" id="roleBadge">Not seated</div>
-          </div>
+          </div>  
           <div>
             <strong>Match state</strong>
             <div class="muted" id="matchStatus">Create a room to start.</div>
@@ -7472,6 +7485,7 @@ var require_main = __commonJS({
       <section class="panel board-panel">
         <div class="board-toolbar">
           <button class="action cta-turquoise" id="createRoomButton" type="button">Create room</button>
+          <button class="action cta-rainbow" id="playBotButton" type="button">Play vs Bot (800 ELO)</button>
           <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
           <button class="ghost" id="flipBoardButton" type="button" hidden>Flip board</button>
           <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
@@ -7575,6 +7589,18 @@ var require_main = __commonJS({
     </div>
   </div>
 
+  <div class="modal-overlay" id="confirmDialog" hidden>
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 class="modal-title">Leave Match?</h2>
+        <p class="modal-text">You are about to exit to the main menu. Your current game progress will be lost.</p>
+      </div>
+      <div class="modal-actions">
+        <button class="modal-btn cancel" id="confirmNoBtn" type="button">Stay</button>
+        <button class="modal-btn confirm" id="confirmYesBtn" type="button">Leave</button>
+      </div>
+    </div>
+  </div>
   <div class="toast" id="toast"></div>
 `;
     var board = must("#board");
@@ -7600,12 +7626,17 @@ var require_main = __commonJS({
     var toast = must("#toast");
     var promotionDialog = must("#promotionDialog");
     var createRoomButton = must("#createRoomButton");
+    var backToMenuButton = must("#backToMenuButton");
     var focusHud = must("#focusHud");
     var focusTimer = must("#focusTimer");
     var focusModeButton = must("#focusModeBtn");
     var focusMaterialHud = must("#focusMaterialHud");
     var focusMaterialScore = must("#focusMaterialScore");
     var focusMaterialIcons = must("#focusMaterialIcons");
+    var playBotButton = must("#playBotButton");
+    var confirmDialog = must("#confirmDialog");
+    var confirmYesBtn = must("#confirmYesBtn");
+    var confirmNoBtn = must("#confirmNoBtn");
     mountThemeSwitcher();
     window.addEventListener("animationchange", (event) => {
       const customEvent = event;
@@ -7624,6 +7655,13 @@ var require_main = __commonJS({
     var arrowLayer = must("#arrowLayer");
     var resignButton = must("#resignButton");
     var arrowAnnotations = /* @__PURE__ */ new Set();
+    playBotButton.addEventListener("click", () => {
+      if (state.roomId && state.gameMode === "multiplayer") {
+        if (!confirm("\xBFSalir de la sala actual para jugar contra el bot?")) return;
+        socket.emit("room:leave");
+      }
+      startBotGame();
+    });
     createRoomButton.addEventListener("click", () => {
       socket.emit("room:create");
       scrollToInviteJoinCardOnMobile();
@@ -7663,9 +7701,23 @@ var require_main = __commonJS({
     });
     resignButton.addEventListener("click", () => {
       if (!state.roomId) return;
-      const confirmResign = confirm("\xBFEst\xE1s seguro de que quieres abandonar la partida?");
-      if (confirmResign) {
+      if (!confirm("Are you sure you want to resign?")) return;
+      if (state.gameMode === "multiplayer") {
         socket.emit("game:resign");
+      } else {
+        if (state.snapshot) {
+          state.snapshot.winner = state.role === "w" ? "b" : "w";
+          state.snapshot.status = "Resigned";
+          render();
+          showToast("You resigned.");
+        }
+      }
+    });
+    rematchButton.addEventListener("click", () => {
+      if (state.gameMode === "multiplayer") {
+        socket.emit("game:rematch");
+      } else {
+        startBotGame();
       }
     });
     flipBoardButton.addEventListener("click", () => {
@@ -7673,15 +7725,48 @@ var require_main = __commonJS({
       requestBoardRefresh();
       updateCaption();
     });
-    rematchButton.addEventListener("click", () => {
-      if (!state.roomId) {
-        showToast("Join a room first.");
-        return;
-      }
-      socket.emit("game:rematch");
-    });
     liveAnalysisButton.addEventListener("click", () => {
-      socket.emit("analysis:toggle");
+      if (state.gameMode === "bot" && state.snapshot) {
+        state.snapshot.analysis.enabled = !state.snapshot.analysis.enabled;
+        if (state.snapshot.analysis.enabled) {
+          void maybeRunLiveAnalysis(state.snapshot);
+        }
+        render();
+      } else {
+        socket.emit("analysis:toggle");
+      }
+    });
+    var toggleConfirmModal = (show) => {
+      confirmDialog.hidden = !show;
+      if (show) {
+        document.body.classList.add("modal-open");
+      } else {
+        document.body.classList.remove("modal-open");
+      }
+    };
+    confirmYesBtn.addEventListener("click", () => {
+      document.body.classList.remove("modal-open");
+      toggleConfirmModal(false);
+      socket.emit("room:leave");
+      clearLocalRoomState();
+      render();
+    });
+    backToMenuButton.addEventListener("click", () => {
+      const isGameOver = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
+      if (isGameOver) {
+        socket.emit("room:leave");
+        clearLocalRoomState();
+        render();
+      } else {
+        toggleConfirmModal(true);
+      }
+    });
+    confirmNoBtn.addEventListener("click", () => toggleConfirmModal(false));
+    confirmYesBtn.addEventListener("click", () => {
+      toggleConfirmModal(false);
+      socket.emit("room:leave");
+      clearLocalRoomState();
+      render();
     });
     focusModeButton.addEventListener("click", () => {
       void toggleFocusMode();
@@ -8034,23 +8119,30 @@ var require_main = __commonJS({
     function renderSession() {
       const snapshot = state.snapshot;
       const hasRoom = Boolean(state.roomId);
-      const isMatchReady = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
+      const isMultiplayerReady = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
+      const isGameActive = state.gameMode === "multiplayer" && isMultiplayerReady || state.gameMode === "bot" && snapshot !== null;
       const canVote = state.role === "w" || state.role === "b";
       const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
       roomBadge.textContent = state.roomId ? `Room ${state.roomId}` : "No active room";
       roleBadge.textContent = humanRole(state.role);
       shareLink.textContent = state.shareUrl || "Create or join a room to get a live invite link.";
+      const heroCopy = document.querySelector(".hero-copy");
+      if (heroCopy) heroCopy.hidden = isGameActive;
+      inviteJoinCard.hidden = isGameActive;
+      createRoomButton.hidden = isGameActive;
+      playBotButton.hidden = isGameActive;
       leaveRoomButton.hidden = !hasRoom;
-      copyLinkButton.hidden = !state.shareUrl;
-      flipBoardButton.hidden = !isMatchReady;
-      focusModeButton.hidden = !isMatchReady;
+      copyLinkButton.hidden = !state.shareUrl || isGameActive;
+      flipBoardButton.hidden = !isGameActive;
+      focusModeButton.hidden = !isGameActive;
+      gameNav.hidden = !isGameActive;
       seatCard.hidden = !hasRoom;
-      summaryCard.hidden = !isMatchReady;
-      movesCard.hidden = !isMatchReady;
-      liveAnalysisButton.hidden = !isMatchReady || !canVote;
-      rematchButton.hidden = !gameEnded || !canVote;
-      resignButton.hidden = !isMatchReady || gameEnded || !canVote;
-      if (!isMatchReady && state.focusMode) {
+      summaryCard.hidden = !isGameActive;
+      movesCard.hidden = !isGameActive;
+      liveAnalysisButton.hidden = !isGameActive || !canVote;
+      rematchButton.hidden = !gameEnded || !canVote || !hasRoom;
+      resignButton.hidden = !isGameActive || gameEnded || !canVote;
+      if (!isGameActive && state.focusMode) {
         state.focusMode = false;
         applyFocusMode();
       }
@@ -8066,7 +8158,7 @@ var require_main = __commonJS({
         liveAnalysisText.textContent = "Live analysis disabled.";
         return;
       }
-      pregamePlaceholder.hidden = isMatchReady;
+      pregamePlaceholder.hidden = isGameActive;
       matchStatus.textContent = snapshot.status;
       whiteSeat.textContent = snapshot.players.whiteConnected ? seatLabel("w") : "Waiting for player";
       blackSeat.textContent = snapshot.players.blackConnected ? seatLabel("b") : "Waiting for player";
@@ -8075,15 +8167,20 @@ var require_main = __commonJS({
       spectatorMeta.textContent = String(snapshot.players.spectatorCount);
       const roleDescription = state.role === "spectator" ? "Spectating." : state.role ? `Playing ${state.role === "w" ? "White" : "Black"}.` : "Not seated.";
       const lastMoveDescription = snapshot.lastMove ? ` Last move: ${snapshot.lastMove.san} (${snapshot.lastMove.from} to ${snapshot.lastMove.to}).` : "";
-      const rematchDescription = snapshot.rematchVotes > 0 ? ` Rematch votes: ${snapshot.rematchVotes}/2.` : "";
+      const rematchDescription = state.gameMode === "multiplayer" && snapshot.rematchVotes > 0 ? ` Rematch votes: ${snapshot.rematchVotes}/2.` : "";
       summaryText.textContent = `${roleDescription} ${snapshot.status}${lastMoveDescription}${rematchDescription}`.trim();
-      const seatedPlayers = Number(snapshot.players.whiteConnected) + Number(snapshot.players.blackConnected);
-      liveAnalysisButton.disabled = seatedPlayers < 2 || !canVote;
-      liveAnalysisButton.textContent = snapshot.analysis.enabled ? "Disable analysis" : `Enable analysis (${snapshot.analysis.votes}/2)`;
+      if (state.gameMode === "bot") {
+        liveAnalysisButton.disabled = false;
+        liveAnalysisButton.textContent = snapshot.analysis.enabled ? "Disable analysis" : "Enable analysis";
+      } else {
+        const seatedPlayers = Number(snapshot.players.whiteConnected) + Number(snapshot.players.blackConnected);
+        liveAnalysisButton.disabled = seatedPlayers < 2 || !canVote;
+        liveAnalysisButton.textContent = snapshot.analysis.enabled ? "Disable analysis" : `Enable analysis (${snapshot.analysis.votes}/2)`;
+      }
       rematchButton.disabled = !gameEnded;
       if (snapshot.analysis.enabled) {
         liveAnalysisText.textContent = state.liveAnalysisSummary;
-      } else if (snapshot.analysis.votes > 0) {
+      } else if (state.gameMode === "multiplayer" && snapshot.analysis.votes > 0) {
         liveAnalysisText.textContent = `Waiting for both players: ${snapshot.analysis.votes}/2 ready.`;
       } else {
         liveAnalysisText.textContent = "Live analysis disabled.";
@@ -8157,17 +8254,18 @@ var require_main = __commonJS({
         overlay.className = "game-over-overlay";
         const title = document.createElement("h2");
         title.className = "game-over-title";
-        if (snapshot.checkmate) {
-          title.textContent = snapshot.winner === state.role ? "Victory!" : "Checkmate";
-        } else if (snapshot.winner !== null) {
-          title.textContent = snapshot.winner === state.role ? "You won!" : "You lost!";
-        } else {
-          title.textContent = "Draw";
-        }
         const reason = document.createElement("p");
         reason.className = "game-over-reason";
         reason.textContent = snapshot.status;
-        overlay.append(title, reason);
+        const overlayRematchBtn = document.createElement("button");
+        overlayRematchBtn.className = "action cta-turquoise";
+        overlayRematchBtn.style.marginTop = "20px";
+        overlayRematchBtn.textContent = state.gameMode === "bot" ? "Play Again" : "Request Rematch";
+        overlayRematchBtn.onclick = () => {
+          if (state.gameMode === "bot") startBotGame();
+          else socket.emit("game:rematch");
+        };
+        overlay.append(title, reason, overlayRematchBtn);
         board.append(overlay);
       }
     }
@@ -8960,9 +9058,7 @@ var require_main = __commonJS({
     function tryMoveFromTo(from, to) {
       const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
       if (gameEnded) return;
-      if (!state.snapshot || !state.role || state.role === "spectator") {
-        return;
-      }
+      if (!state.snapshot || !state.role || state.role === "spectator") return;
       if (state.snapshot.turn !== state.role) {
         queuePremove(from, to);
         return;
@@ -8973,16 +9069,95 @@ var require_main = __commonJS({
         promotionDialog.hidden = false;
         return;
       }
-      socket.emit("game:move", { from, to });
-      if (state.snapshot?.analysis.enabled) {
-        state.liveAnalysisSummary = "Analyzing your move...";
-        renderSession();
-        const tempChess = new Chess(state.snapshot.fen);
-        const moveResult = tempChess.move({ from, to });
-        if (moveResult) {
-          const moveKey = `${state.snapshot.moveCount + 1}:${from}:${to}:${moveResult.san}`;
-          void maybeRunLiveAnalysisForMove(state.snapshot.moves, moveResult, state.snapshot.moveCount + 1, moveKey);
+      let playerMoveResult = null;
+      if (state.gameMode === "multiplayer") {
+        socket.emit("game:move", { from, to });
+        const temp = new Chess(chess.fen());
+        playerMoveResult = temp.move({ from, to, promotion: "q" });
+      } else {
+        playerMoveResult = chess.move({ from, to, promotion: "q" });
+        if (!playerMoveResult) return;
+        updateManualSnapshot(playerMoveResult);
+        render();
+        playSoundForSnapshot(state.snapshot);
+        if (!state.snapshot.checkmate && !state.snapshot.draw) {
+          setTimeout(async () => {
+            if (!liveAnalyzer) liveAnalyzer = new StockfishBridge();
+            const botMoveUci = await liveAnalyzer.getBotMove(chess.fen());
+            const bFrom = botMoveUci.substring(0, 2);
+            const bTo = botMoveUci.substring(2, 4);
+            const bPromo = botMoveUci.length === 5 ? botMoveUci[4] : "q";
+            const bMove = chess.move({ from: bFrom, to: bTo, promotion: bPromo });
+            if (bMove) {
+              if (!state.snapshot) return;
+              updateManualSnapshot(bMove);
+              render();
+              playSoundForSnapshot(state.snapshot);
+              if (state.snapshot.analysis.enabled) {
+                const moveKey = `${state.snapshot.moveCount}:${bMove.from}:${bMove.to}:${bMove.san}`;
+                void maybeRunLiveAnalysisForMove(
+                  state.snapshot.moves.slice(0, -1),
+                  bMove,
+                  state.snapshot.moveCount,
+                  moveKey
+                );
+              }
+            }
+          }, 600);
         }
+      }
+      if (state.snapshot?.analysis.enabled && playerMoveResult) {
+        state.liveAnalysisSummary = "Analyzing move...";
+        renderSession();
+        const moveKey = `${state.snapshot.moveCount}:${from}:${to}:${playerMoveResult.san}`;
+        void maybeRunLiveAnalysisForMove(state.snapshot.moves.slice(0, -1), playerMoveResult, state.snapshot.moveCount, moveKey);
+      }
+    }
+    function startBotGame() {
+      state.gameMode = "bot";
+      state.role = "w";
+      state.roomId = "LOCAL_BOT";
+      chess.reset();
+      state.snapshot = {
+        roomId: "LOCAL",
+        fen: chess.fen(),
+        turn: "w",
+        status: "Playing vs Stockfish (800 ELO)",
+        winner: null,
+        check: false,
+        checkmate: false,
+        draw: false,
+        moveCount: 0,
+        moves: [],
+        lastMove: null,
+        players: { whiteConnected: true, blackConnected: true, spectatorCount: 0 },
+        rematchVotes: 0,
+        analysis: { enabled: false, votes: 0 }
+      };
+      showToast("Bot mode active. You are White!");
+      render();
+    }
+    function updateManualSnapshot(move) {
+      if (!state.snapshot) return;
+      const newSummary = {
+        color: move.color,
+        from: move.from,
+        to: move.to,
+        san: move.san,
+        piece: move.piece
+      };
+      state.snapshot.fen = chess.fen();
+      state.snapshot.turn = chess.turn();
+      state.snapshot.moveCount++;
+      state.snapshot.lastMove = newSummary;
+      state.snapshot.moves.push(newSummary);
+      state.snapshot.check = chess.inCheck();
+      state.snapshot.checkmate = chess.isCheckmate();
+      state.snapshot.draw = chess.isDraw();
+      if (state.snapshot.checkmate) {
+        state.snapshot.winner = move.color;
+      } else if (state.snapshot.draw) {
+        state.snapshot.status = "Draw";
       }
     }
     function isTheoreticallyPossible(from, to, piece, color) {
