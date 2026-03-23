@@ -7284,7 +7284,6 @@ var require_main = __commonJS({
     window.state = state;
     var lastAnimatedMoveKey = null;
     var suppressAnimationForMove = null;
-    var currentPremoveHoverSquare = null;
     var activeGhostAnimation = null;
     var activeGhostNode = null;
     var activeGhostDestinationPiece = null;
@@ -7912,12 +7911,13 @@ var require_main = __commonJS({
               position: "fixed",
               pointerEvents: "none",
               zIndex: "9999",
-              width: `${btn.offsetWidth * 0.8}px`,
-              // Ajustamos al tamaño de la casilla
-              height: `${btn.offsetHeight * 0.8}px`,
+              // CHANGE: Removed the * 0.8 multiplier to keep it at 100% square size
+              width: `${btn.offsetWidth}px`,
+              height: `${btn.offsetHeight}px`,
               transform: "translate(-50%, -50%)",
               transition: "none",
-              opacity: "0.9"
+              opacity: "1"
+              // Optional: Increased from 0.9 to 1 for a solid feel
             });
             document.body.append(ptrDragNode);
             btn.classList.add("dragging");
@@ -7926,25 +7926,6 @@ var require_main = __commonJS({
         if (ptrDragNode) {
           ptrDragNode.style.left = `${event.clientX}px`;
           ptrDragNode.style.top = `${event.clientY}px`;
-          const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
-          if (hoverSquare !== currentPremoveHoverSquare) {
-            if (currentPremoveHoverSquare) {
-              const oldSq = board.querySelector(`[data-square="${currentPremoveHoverSquare}"]`);
-              oldSq?.classList.remove("premove-hover");
-              currentPremoveHoverSquare = null;
-            }
-            if (hoverSquare && state.selectedSquare && hoverSquare !== state.selectedSquare) {
-              const vBoard = getVirtualBoard();
-              const movingPiece = vBoard.get(state.selectedSquare);
-              if (movingPiece && isTheoreticallyPossible(state.selectedSquare, hoverSquare, movingPiece.type, movingPiece.color)) {
-                const sqEl = board.querySelector(`[data-square="${hoverSquare}"]`);
-                const spritePath = PIECES[`${movingPiece.color}${movingPiece.type}`];
-                sqEl?.style.setProperty("--ghost-piece-image", `url(${spritePath})`);
-                sqEl?.classList.add("premove-hover");
-                currentPremoveHoverSquare = hoverSquare;
-              }
-            }
-          }
         }
       }
     );
@@ -7983,12 +7964,6 @@ var require_main = __commonJS({
     }
     function endArrowDrag(event, commit) {
       if (!arrowDragFrom) return;
-      if (currentPremoveHoverSquare) {
-        const oldSquareEl = board.querySelector(`[data-square="${currentPremoveHoverSquare}"]`);
-        oldSquareEl?.classList.remove("premove-hover");
-        oldSquareEl?.style.removeProperty("--ghost-piece-image");
-        currentPremoveHoverSquare = null;
-      }
       const fromSquare = arrowDragFrom;
       const previewTo = arrowDragTo;
       arrowDragFrom = null;
@@ -8264,6 +8239,8 @@ var require_main = __commonJS({
       const lastMoveSquares = /* @__PURE__ */ new Set();
       const checkedKingSquare = getCheckedKingSquare();
       const lastMove = state.snapshot?.lastMove ?? null;
+      const lastPremove = state.premoves.length > 0 ? state.premoves[state.premoves.length - 1] : null;
+      const vBoard = lastPremove ? getVirtualBoard() : null;
       const liveGrade = state.snapshot?.analysis.enabled && state.snapshot.lastMove ? state.liveMoveGrades[state.snapshot.moveCount] : void 0;
       const liveMarkerSquare = liveGrade && state.snapshot?.lastMove ? state.snapshot.lastMove.to : null;
       if (lastMove) {
@@ -8311,6 +8288,27 @@ var require_main = __commonJS({
             marker.className = `piece-quality-marker ${liveGrade.category}`;
             marker.textContent = symbolForLiveCategory(liveGrade.category);
             button.append(marker);
+          }
+        }
+        if (lastPremove && square === lastPremove.to && vBoard) {
+          const ghostPieceData = vBoard.get(square);
+          if (ghostPieceData) {
+            const ghostElement = document.createElement("span");
+            ghostElement.className = `piece piece-${ghostPieceData.type} ${ghostPieceData.color === "w" ? "white" : "black"} ghost-piece`;
+            Object.assign(ghostElement.style, {
+              opacity: "0.45",
+              position: "absolute",
+              inset: "0",
+              zIndex: "2",
+              pointerEvents: "none",
+              transition: "none"
+            });
+            const ghostImage = document.createElement("img");
+            ghostImage.className = "piece-image";
+            ghostImage.src = PIECES[`${ghostPieceData.color}${ghostPieceData.type}`];
+            ghostImage.draggable = false;
+            ghostElement.append(ghostImage);
+            button.append(ghostElement);
           }
         }
         fragment.append(button);

@@ -857,21 +857,6 @@ button {
   }
 }
 
-/*  Estilo para la Pieza Fantasma (Ghost Piece) */
-.square.premove-hover::after {
-  content: "";
-  position: absolute;
-  inset: 5%; /* Un poco más pequeña que la casilla */
-  background-image: var(--ghost-piece-image); /* Definiremos esto por JS */
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
-  opacity: 0.35; /* El efecto "medio invisible" (35% de opacidad) */
-  pointer-events: none; /* No interfiere con los clicks */
-  z-index: 2; /* Por encima de la casilla, por debajo de la pieza real */
-  filter: grayscale(50%); /* Opcional: un tono grisáceo para diferenciarla más */
-}
-
 .board-caption {
   margin-top: 14px;
   padding: 14px 16px;
@@ -1853,20 +1838,6 @@ body.focus-mode.focus-multiplayer .board-panel {
       font-size: 0.72rem;
     }
   }
-
-  .square.premove-hover::after {
-  content: "";
-  position: absolute;
-  inset: 8%;
-  background-image: var(--ghost-piece-image);
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
-  opacity: 0.35;
-  pointer-events: none;
-  z-index: 2;
-  filter: grayscale(30%);
-}
 
 .game-over-overlay {
   position: absolute;

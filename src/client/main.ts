@@ -141,7 +141,6 @@ const state: AppState = {
 
 let lastAnimatedMoveKey: string | null = null;
 let suppressAnimationForMove: { from: Square; to: Square } | null = null;
-let currentPremoveHoverSquare: Square | null = null;
 let activeGhostAnimation: Animation | null = null;
 let activeGhostNode: HTMLElement | null = null;
 let activeGhostDestinationPiece: HTMLElement | null = null;
@@ -864,74 +863,48 @@ board.addEventListener("pointermove", (event) => {
   if (!ptrDragFrom) return;
   if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 5) return;
 
-  // Si apenas comienza el movimiento real
-  if (!ptrDragMoved) {
-    ptrDragMoved = true;
-    state.selectedSquare = ptrDragFrom;
-    
-    const vBoard = getVirtualBoard(); // ⚡️ Miramos el futuro
-    const virtualPiece = vBoard.get(ptrDragFrom);
-    
-    state.legalTargets = vBoard.moves({ square: ptrDragFrom, verbose: true }).map(m => m.to);
-    syncBoardInteractionState();
-    updateCaption();
 
-    const btn = board.querySelector<HTMLButtonElement>(`[data-square="${ptrDragFrom}"]`);
-    if (btn && virtualPiece) {
-   
-      const spritePath = PIECES[`${virtualPiece.color}${virtualPiece.type}`];
-      
-      ptrDragNode = document.createElement("img");
-      ptrDragNode.src = spritePath;
-      Object.assign(ptrDragNode.style, {
-        position: "fixed",
-        pointerEvents: "none",
-        zIndex: "9999",
-        width: `${btn.offsetWidth * 0.8}px`, // Ajustamos al tamaño de la casilla
-        height: `${btn.offsetHeight * 0.8}px`,
-        transform: "translate(-50%, -50%)",
-        transition: "none",
-        opacity: "0.9"
-      });
-      
-      document.body.append(ptrDragNode);
-      btn.classList.add("dragging");
-    }
+if (!ptrDragMoved) {
+  ptrDragMoved = true;
+  state.selectedSquare = ptrDragFrom;
+  
+  const vBoard = getVirtualBoard();
+  const virtualPiece = vBoard.get(ptrDragFrom);
+  
+  state.legalTargets = vBoard.moves({ square: ptrDragFrom, verbose: true }).map(m => m.to);
+  syncBoardInteractionState();
+  updateCaption();
+
+  const btn = board.querySelector<HTMLButtonElement>(`[data-square="${ptrDragFrom}"]`);
+  if (btn && virtualPiece) {
+    const spritePath = PIECES[`${virtualPiece.color}${virtualPiece.type}`];
+    
+    ptrDragNode = document.createElement("img");
+    ptrDragNode.src = spritePath;
+    Object.assign(ptrDragNode.style, {
+      position: "fixed",
+      pointerEvents: "none",
+      zIndex: "9999",
+      // CHANGE: Removed the * 0.8 multiplier to keep it at 100% square size
+      width: `${btn.offsetWidth}px`, 
+      height: `${btn.offsetHeight}px`,
+      transform: "translate(-50%, -50%)",
+      transition: "none",
+      opacity: "1" // Optional: Increased from 0.9 to 1 for a solid feel
+    });
+    
+    document.body.append(ptrDragNode);
+    btn.classList.add("dragging");
   }
+}
 
-  // 1. Mover la pieza que arrastras
-  // 1. Mover la pieza que llevas en el dedo/ratón
   if (ptrDragNode) {
-    ptrDragNode.style.left = `${event.clientX}px`;
-    ptrDragNode.style.top  = `${event.clientY}px`;
+ 
+  ptrDragNode.style.left = `${event.clientX}px`;
+  ptrDragNode.style.top  = `${event.clientY}px`;
 
-    // 2. Lógica de la PIEZA FANTASMA (Silueta)
-    const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
-    
-    if (hoverSquare !== currentPremoveHoverSquare) {
-      // Limpiar anterior
-      if (currentPremoveHoverSquare) {
-        const oldSq = board.querySelector<HTMLElement>(`[data-square="${currentPremoveHoverSquare}"]`);
-        oldSq?.classList.remove("premove-hover");
-        currentPremoveHoverSquare = null;
-      }
 
-      // Dibujar nueva silueta
-      if (hoverSquare && state.selectedSquare && hoverSquare !== state.selectedSquare) {
-        const vBoard = getVirtualBoard();
-        const movingPiece = vBoard.get(state.selectedSquare);
-
-        if (movingPiece && isTheoreticallyPossible(state.selectedSquare, hoverSquare, movingPiece.type, movingPiece.color)) {
-          const sqEl = board.querySelector<HTMLElement>(`[data-square="${hoverSquare}"]`);
-          const spritePath = PIECES[`${movingPiece.color}${movingPiece.type}`];
-          
-          sqEl?.style.setProperty("--ghost-piece-image", `url(${spritePath})`);
-          sqEl?.classList.add("premove-hover");
-          currentPremoveHoverSquare = hoverSquare;
-        }
-      }
-    }
-  }
+}
 }
 );
 
@@ -974,16 +947,6 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
 
 function endArrowDrag(event: PointerEvent, commit: boolean): void {
   if (!arrowDragFrom) return;
-
-  // LIMPIEZA DE PIEZA FANTASMA
-  if (currentPremoveHoverSquare) {
-    const oldSquareEl = board.querySelector<HTMLElement>(`[data-square="${currentPremoveHoverSquare}"]`);
-    oldSquareEl?.classList.remove("premove-hover");
-    oldSquareEl?.style.removeProperty("--ghost-piece-image");
-    currentPremoveHoverSquare = null;
-  }
-
- 
 
   const fromSquare = arrowDragFrom;
   const previewTo = arrowDragTo;
@@ -1375,6 +1338,12 @@ function renderBoard(): void {
   const checkedKingSquare = getCheckedKingSquare();
   const lastMove = state.snapshot?.lastMove ?? null;
   
+  // 1. Identify the FINAL destination of the premove chain
+  const lastPremove = state.premoves.length > 0 ? state.premoves[state.premoves.length - 1] : null;
+  
+  // 2. Get the virtual board state only if we need to render a ghost
+  const vBoard = lastPremove ? getVirtualBoard() : null;
+
   const liveGrade = state.snapshot?.analysis.enabled && state.snapshot.lastMove
     ? state.liveMoveGrades[state.snapshot.moveCount]
     : undefined;
@@ -1399,32 +1368,27 @@ function renderBoard(): void {
     if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
     if (checkedKingSquare === squareName) button.classList.add("in-check");
 
+    // This handles the red highlights for all moves in the premove chain
     state.premoves.forEach((p) => {
       if (p.from === square) button.classList.add("premove-from");
       if (p.to === square) button.classList.add("premove-to");
     });
 
-if (piece) {
+    // 3. Render the AUTHORITATIVE (real) piece
+    if (piece) {
       const spritePath = PIECES[`${piece.color}${piece.type}`];
       const pieceElement = document.createElement("span");
       pieceElement.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
       
-      // 1. ¿Es esta mi respuesta instantánea (premove)?
       const isMyPremove = suppressAnimationForMove && square === suppressAnimationForMove.to;
-
-      // 2. ¿Esta casilla es el destino de una animación activa (fantasma)?
-      // Usamos animatingToSquare porque es independiente del snapshot actual.
       const isTargetOfActiveAnimation = square === animatingToSquare && !animationFinished;
 
-      // REGLA DE ORO: Si hay un fantasma viajando a esta casilla, ocultamos la pieza REAL.
-      // Pero si yo acabo de hacer un premove a esta misma casilla, la mostramos siempre.
       if (isTargetOfActiveAnimation && !isMyPremove) {
         pieceElement.style.opacity = "0";
         pieceElement.style.visibility = "hidden";
         pieceElement.style.pointerEvents = "none";
       }
 
-      // Desactivamos la transición CSS si el movimiento debe ser atómico (instantáneo)
       if (isMyPremove) {
         pieceElement.style.transition = "none";
       }
@@ -1436,12 +1400,40 @@ if (piece) {
       pieceElement.append(pieceImage);
       button.append(pieceElement);
 
-      // Marcadores de calidad de la jugada (Análisis en vivo)
       if (liveGrade && liveMarkerSquare === squareName) {
         const marker = document.createElement("span");
         marker.className = `piece-quality-marker ${liveGrade.category}`;
         marker.textContent = symbolForLiveCategory(liveGrade.category);
         button.append(marker);
+      }
+    }
+
+    // 4. Render the GHOST piece only on the final destination
+    if (lastPremove && square === lastPremove.to && vBoard) {
+      const ghostPieceData = vBoard.get(square);
+      
+      if (ghostPieceData) {
+        const ghostElement = document.createElement("span");
+        // We add a 'ghost-piece' class for any specific CSS styling
+        ghostElement.className = `piece piece-${ghostPieceData.type} ${ghostPieceData.color === "w" ? "white" : "black"} ghost-piece`;
+        
+        // Inline styles to ensure it overlays perfectly and looks translucent
+        Object.assign(ghostElement.style, {
+          opacity: "0.45",
+          position: "absolute",
+          inset: "0",
+          zIndex: "2",
+          pointerEvents: "none",
+          transition: "none"
+        });
+
+        const ghostImage = document.createElement("img");
+        ghostImage.className = "piece-image";
+        ghostImage.src = PIECES[`${ghostPieceData.color}${ghostPieceData.type}`];
+        ghostImage.draggable = false;
+
+        ghostElement.append(ghostImage);
+        button.append(ghostElement);
       }
     }
 
@@ -1456,16 +1448,14 @@ if (piece) {
                              lastMove.from === suppressAnimationForMove.from && 
                              lastMove.to === suppressAnimationForMove.to;
 
-  // ... resto del bucle de piezas
   if (isPremoveExecution) {
     lastAnimatedMoveKey = `${state.snapshot!.moveCount}:${lastMove!.from}:${lastMove!.to}:${lastMove!.san}`;
     suppressAnimationForMove = null; 
-    animationFinished = true; // Forzamos fin para que el premove no intente ocultar piezas
+    animationFinished = true;
     requestAnimationFrame(() => renderBoard());
   } else if (lastMove) {
     const moveKey = `${state.snapshot!.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
     if (lastAnimatedMoveKey !== moveKey) {
-      // Si no es un premove, activamos la animación elegida
       if (state.animationStyle === "epic") animateLastMoveEpic(lastMove);
       else animateLastMove(lastMove);
     }
