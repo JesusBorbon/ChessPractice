@@ -2717,28 +2717,26 @@ function isTheoreticallyPossible(from: Square, to: Square, piece: PieceSymbol, c
 
 
 function getVirtualBoard(): Chess {
-  // 1. Creamos el tablero virtual
   const vBoard = new Chess(chess.fen());
   
-  const currentFenParts = vBoard.fen().split(" ");
-  currentFenParts[1] = state.role as string;
-  currentFenParts[3] = "-"; 
-  vBoard.load(currentFenParts.join(" "));
-
   for (const p of state.premoves) {
-    try {
-      vBoard.move({ from: p.from, to: p.to, promotion: p.promotion || "q" });
-      
-      // Volver a forzar el turno después de cada premove en la cadena
-      const nextFenParts = vBoard.fen().split(" ");
-      nextFenParts[1] = state.role as string;
-      nextFenParts[3] = "-";  
-      vBoard.load(nextFenParts.join(" "));
-    } catch (e) {
-      // Si un movimiento de la cadena es físicamente imposible, paramos.
-      break; 
+    const piece = vBoard.get(p.from);
+    if (piece) {
+      // Physically relocate the piece, ignoring strict chess validation 
+      // (which allows diagonal pawn premoves on empty squares)
+      vBoard.remove(p.from);
+      if (p.promotion) piece.type = p.promotion as PieceSymbol; // Fixed strict type
+      vBoard.put(piece, p.to);
     }
   }
+
+  // Force the turn to your role so the board can calculate legal target dots 
+  // if you decide to click-click from a premoved square.
+  const fenParts = vBoard.fen().split(" ");
+  fenParts[1] = state.role as string; 
+  fenParts[3] = "-"; // clear en passant
+  vBoard.load(fenParts.join(" "));
+
   return vBoard;
 }
 
