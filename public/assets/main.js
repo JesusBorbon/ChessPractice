@@ -7880,55 +7880,51 @@ var require_main = __commonJS({
       ptrStartY = event.clientY;
       board.setPointerCapture(event.pointerId);
     });
-    board.addEventListener(
-      "pointermove",
-      (event) => {
-        if (arrowDragFrom) {
-          const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
-          arrowDragTo = hoverSquare && hoverSquare !== arrowDragFrom ? hoverSquare : null;
-          arrowDragPointer = boardPointFromClient(event.clientX, event.clientY);
-          renderArrows();
-        }
-        if (arrowDragFrom && !arrowDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) >= 5) {
-          arrowDragMoved = true;
-        }
-        if (!ptrDragFrom) return;
-        if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 5) return;
-        if (!ptrDragMoved) {
-          ptrDragMoved = true;
-          state.selectedSquare = ptrDragFrom;
-          const vBoard = getVirtualBoard();
-          const virtualPiece = vBoard.get(ptrDragFrom);
-          state.legalTargets = vBoard.moves({ square: ptrDragFrom, verbose: true }).map((m) => m.to);
-          syncBoardInteractionState();
-          updateCaption();
-          const btn = board.querySelector(`[data-square="${ptrDragFrom}"]`);
-          if (btn && virtualPiece) {
-            const spritePath = PIECES[`${virtualPiece.color}${virtualPiece.type}`];
-            ptrDragNode = document.createElement("img");
-            ptrDragNode.src = spritePath;
-            Object.assign(ptrDragNode.style, {
-              position: "fixed",
-              pointerEvents: "none",
-              zIndex: "9999",
-              // CHANGE: Removed the * 0.8 multiplier to keep it at 100% square size
-              width: `${btn.offsetWidth}px`,
-              height: `${btn.offsetHeight}px`,
-              transform: "translate(-50%, -50%)",
-              transition: "none",
-              opacity: "1"
-              // Optional: Increased from 0.9 to 1 for a solid feel
-            });
-            document.body.append(ptrDragNode);
-            btn.classList.add("dragging");
-          }
-        }
-        if (ptrDragNode) {
-          ptrDragNode.style.left = `${event.clientX}px`;
-          ptrDragNode.style.top = `${event.clientY}px`;
+    board.addEventListener("pointermove", (event) => {
+      if (arrowDragFrom) {
+        const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
+        arrowDragTo = hoverSquare && hoverSquare !== arrowDragFrom ? hoverSquare : null;
+        arrowDragPointer = boardPointFromClient(event.clientX, event.clientY);
+        renderArrows();
+      }
+      if (arrowDragFrom && !arrowDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) >= 5) {
+        arrowDragMoved = true;
+      }
+      if (!ptrDragFrom) return;
+      if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 5) return;
+      if (!ptrDragMoved) {
+        ptrDragMoved = true;
+        state.selectedSquare = ptrDragFrom;
+        const vBoard = getVirtualBoard();
+        const virtualPiece = vBoard.get(ptrDragFrom);
+        state.legalTargets = vBoard.moves({ square: ptrDragFrom, verbose: true }).map((m) => m.to);
+        syncBoardInteractionState();
+        updateCaption();
+        const btn = board.querySelector(`[data-square="${ptrDragFrom}"]`);
+        if (btn && virtualPiece) {
+          const spritePath = PIECES[`${virtualPiece.color}${virtualPiece.type}`];
+          ptrDragNode = document.createElement("img");
+          ptrDragNode.src = spritePath;
+          Object.assign(ptrDragNode.style, {
+            position: "fixed",
+            pointerEvents: "none",
+            zIndex: "9999",
+            // Keep piece at 100% square size
+            width: `${btn.offsetWidth}px`,
+            height: `${btn.offsetHeight}px`,
+            transform: "translate(-50%, -50%)",
+            transition: "none",
+            opacity: "1"
+          });
+          document.body.append(ptrDragNode);
+          btn.classList.add("dragging");
         }
       }
-    );
+      if (ptrDragNode) {
+        ptrDragNode.style.left = `${event.clientX}px`;
+        ptrDragNode.style.top = `${event.clientY}px`;
+      }
+    });
     function endPointerDrag(event, commit) {
       if (!ptrDragFrom) return;
       const fromSquare = ptrDragFrom;
@@ -8233,7 +8229,27 @@ var require_main = __commonJS({
       }
       updateFocusHud();
     }
+    function cancelCurrentDrag() {
+      if (ptrDragNode) {
+        ptrDragNode.remove();
+        ptrDragNode = null;
+      }
+      if (ptrDragFrom) {
+        const draggedSquareEl = board.querySelector(`[data-square="${ptrDragFrom}"]`);
+        draggedSquareEl?.classList.remove("dragging");
+        ptrDragFrom = null;
+      }
+      ptrDragMoved = false;
+      state.selectedSquare = null;
+      state.legalTargets = [];
+    }
     function renderBoard() {
+      if (ptrDragFrom) {
+        const pieceAtSource = chess.get(ptrDragFrom);
+        if (!pieceAtSource || pieceAtSource.color !== state.role) {
+          cancelCurrentDrag();
+        }
+      }
       const fragment = document.createDocumentFragment();
       const squares = buildSquareList(state.orientation);
       const lastMoveSquares = /* @__PURE__ */ new Set();
@@ -8269,14 +8285,14 @@ var require_main = __commonJS({
           pieceElement.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
           const isMyPremove = suppressAnimationForMove && square === suppressAnimationForMove.to;
           const isTargetOfActiveAnimation = square === animatingToSquare && !animationFinished;
-          if (isTargetOfActiveAnimation && !isMyPremove) {
+          const isBeingDragged = square === ptrDragFrom;
+          const isTargetOfQueuedPremove = state.premoves.some((p) => p.to === square);
+          if (isTargetOfActiveAnimation && !isMyPremove || isBeingDragged || isTargetOfQueuedPremove) {
             pieceElement.style.opacity = "0";
             pieceElement.style.visibility = "hidden";
             pieceElement.style.pointerEvents = "none";
           }
-          if (isMyPremove) {
-            pieceElement.style.transition = "none";
-          }
+          if (isMyPremove) pieceElement.style.transition = "none";
           const pieceImage = document.createElement("img");
           pieceImage.className = "piece-image";
           pieceImage.src = spritePath;
@@ -8300,8 +8316,7 @@ var require_main = __commonJS({
               position: "absolute",
               inset: "0",
               zIndex: "2",
-              pointerEvents: "none",
-              transition: "none"
+              pointerEvents: "none"
             });
             const ghostImage = document.createElement("img");
             ghostImage.className = "piece-image";
@@ -8335,13 +8350,9 @@ var require_main = __commonJS({
         overlay.className = "game-over-overlay";
         const title = document.createElement("h2");
         title.className = "game-over-title";
-        if (snapshot.checkmate) {
-          title.textContent = snapshot.winner === "w" ? "White Wins!" : "Black Wins!";
-        } else if (snapshot.draw) {
-          title.textContent = "Draw";
-        } else if (snapshot.winner) {
-          title.textContent = snapshot.winner === "w" ? "White Wins (Resignation)" : "Black Wins (Resignation)";
-        }
+        if (snapshot.checkmate) title.textContent = snapshot.winner === "w" ? "White Wins!" : "Black Wins!";
+        else if (snapshot.draw) title.textContent = "Draw";
+        else if (snapshot.winner) title.textContent = snapshot.winner === "w" ? "White Wins (Resignation)" : "Black Wins (Resignation)";
         const reason = document.createElement("p");
         reason.className = "game-over-reason";
         reason.textContent = snapshot.status;
@@ -8865,12 +8876,13 @@ var require_main = __commonJS({
       const deltaX = fromRect.left + fromRect.width / 2 - (toRect.left + toRect.width / 2);
       const deltaY = fromRect.top + fromRect.height / 2 - (toRect.top + toRect.height / 2);
       const ghostPiece = destinationPiece.cloneNode(true);
+      const pieceRect = destinationPiece.getBoundingClientRect();
       Object.assign(ghostPiece.style, {
         position: "absolute",
         left: `${toRect.left + toRect.width / 2 + window.scrollX}px`,
         top: `${toRect.top + toRect.height / 2 + window.scrollY}px`,
-        width: `${destinationPiece.getBoundingClientRect().width}px`,
-        height: `${destinationPiece.getBoundingClientRect().height}px`,
+        width: `${pieceRect.width}px`,
+        height: `${pieceRect.height}px`,
         transform: "translate3d(-50%, -50%, 0)",
         zIndex: "9999",
         pointerEvents: "none"
@@ -8903,6 +8915,9 @@ var require_main = __commonJS({
       animation.addEventListener("cancel", onEnd);
     }
     function requestBoardRefresh(force = false) {
+      if (force && activeGhostAnimation) {
+        activeGhostAnimation.cancel();
+      }
       if (!force && activeGhostAnimation) {
         pendingBoardRefresh = true;
         return;
@@ -8916,12 +8931,18 @@ var require_main = __commonJS({
       }
       const moveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
       if (lastAnimatedMoveKey === moveKey) return;
-      lastAnimatedMoveKey = moveKey;
-      if (suppressAnimationForMove) {
-        const matchesSuppressedDrag = suppressAnimationForMove.from === lastMove.from && suppressAnimationForMove.to === lastMove.to;
+      if (state.premoves.length > 0 || suppressAnimationForMove) {
+        lastAnimatedMoveKey = moveKey;
         suppressAnimationForMove = null;
-        if (matchesSuppressedDrag) return;
+        if (activeGhostAnimation) activeGhostAnimation.cancel();
+        activeGhostAnimation = null;
+        animationFinished = true;
+        animatingToSquare = null;
+        return;
       }
+      lastAnimatedMoveKey = moveKey;
+      animationFinished = false;
+      animatingToSquare = lastMove.to;
       if (activeGhostAnimation) activeGhostAnimation.cancel();
       if (activeGhostNode) {
         activeGhostNode.remove();
@@ -8935,7 +8956,6 @@ var require_main = __commonJS({
       const toSquareButton = board.querySelector(`[data-square="${lastMove.to}"]`);
       const destinationPiece = toSquareButton?.querySelector(".piece");
       if (!fromSquareButton || !toSquareButton || !destinationPiece) return;
-      animationFinished = false;
       const fromRect = fromSquareButton.getBoundingClientRect();
       const toRect = toSquareButton.getBoundingClientRect();
       const startX = fromRect.left + fromRect.width / 2 + window.scrollX;
@@ -8954,8 +8974,6 @@ var require_main = __commonJS({
       const motionProfile = profileRoll < 0.38 ? "spin" : profileRoll < 0.76 ? "inertia" : "tilt";
       const hasFlip = motionProfile === "spin" ? Math.random() > 0.45 : motionProfile === "inertia" ? Math.random() > 0.92 : false;
       const spinStart = motionProfile === "spin" ? randomRotation * 0.22 * spinDirection : settleWobble * spinDirection;
-      const spinMid = motionProfile === "spin" ? randomRotation * 0.46 * spinDirection : -settleWobble * spinDirection;
-      const spinPeak = motionProfile === "spin" ? randomRotation * 0.68 * spinDirection : settleWobble * 0.55 * spinDirection;
       const jumpA = 62 + Math.random() * 36;
       const jumpB = 100 + Math.random() * 32;
       const duration = 900 + Math.floor(Math.random() * 170);
@@ -8966,46 +8984,17 @@ var require_main = __commonJS({
         width: `${pieceRect.width}px`,
         height: `${pieceRect.height}px`,
         transform: "translate3d(-50%, -50%, 0)",
-        margin: "0",
         zIndex: "9999",
-        pointerEvents: "none",
-        fontSize: computed.fontSize,
-        fontFamily: computed.fontFamily,
-        color: computed.color,
-        filter: computed.filter,
-        textShadow: computed.textShadow,
-        lineHeight: "1",
-        animation: "none",
-        opacity: "1",
-        willChange: "transform",
-        perspective: "1000px"
+        pointerEvents: "none"
       });
       destinationPiece.style.visibility = "hidden";
       activeGhostNode = ghostPiece;
       activeGhostDestinationPiece = destinationPiece;
       document.body.append(ghostPiece);
       const keyframes = [
-        {
-          transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) rotateX(0deg) scale(1)`,
-          filter: "brightness(1)",
-          offset: 0
-        },
-        {
-          transform: `translate3d(calc(-50% + ${deltaX * 0.58}px), calc(-50% + ${deltaY * 0.58 - jumpA}px), 0) rotateZ(${spinStart}deg) rotateX(${hasFlip ? 180 : 0}deg) scale(1.1)`,
-          filter: "brightness(1.1)",
-          offset: 0.4
-        },
-        {
-          transform: `translate3d(calc(-50% + ${deltaX * 0.84}px), calc(-50% + ${deltaY * 0.84 - jumpB}px), 0) rotateZ(${spinMid}deg) rotateX(${hasFlip ? 360 : 0}deg) scale(0.9)`,
-          filter: "brightness(1.2)",
-          offset: 0.65
-        },
-        {
-          // FIX: Cambiado de translate3d(0,0,0) a (-50%, -50%, 0) para evitar el salto final
-          transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) rotateX(0deg) scale(1)",
-          filter: "brightness(1)",
-          offset: 1
-        }
+        { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg)`, offset: 0 },
+        { transform: `translate3d(calc(-50% + ${deltaX * 0.5}px), calc(-50% + ${deltaY * 0.5 - jumpA}px), 0) rotateZ(${spinStart}deg)`, offset: 0.4 },
+        { transform: "translate3d(-50%, -50%, 0) rotateZ(0deg)", offset: 1 }
       ];
       const animation = ghostPiece.animate(keyframes, {
         duration,
@@ -9016,6 +9005,7 @@ var require_main = __commonJS({
         ghostPiece.remove();
         destinationPiece.style.visibility = "";
         animationFinished = true;
+        animatingToSquare = null;
         if (activeGhostAnimation === animation) {
           activeGhostAnimation = null;
           activeGhostNode = null;
@@ -9321,8 +9311,8 @@ var require_main = __commonJS({
       state.liveMoveGrades = {};
       liveAnalysisToken += 1;
       localStorage.removeItem("chess_roomId");
+      cancelCurrentDrag();
       clearArrows();
-      clearSelection();
       chess.reset();
       syncUrl(null);
     }

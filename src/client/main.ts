@@ -799,7 +799,6 @@ board.addEventListener("contextmenu", (event) => {
 });
 
 
-// ── Pointer drag ───────────────────────────────────────────────────────────────
 
 let ptrDragFrom: Square | null = null;
 let ptrDragNode: HTMLElement | null = null;
@@ -848,7 +847,6 @@ board.addEventListener("pointerdown", (event) => {
 });
 
 board.addEventListener("pointermove", (event) => {
-  // Lógica existente para flechas
   if (arrowDragFrom) {
     const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
     arrowDragTo = hoverSquare && hoverSquare !== arrowDragFrom ? hoverSquare : null;
@@ -863,50 +861,46 @@ board.addEventListener("pointermove", (event) => {
   if (!ptrDragFrom) return;
   if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 5) return;
 
-
-if (!ptrDragMoved) {
-  ptrDragMoved = true;
-  state.selectedSquare = ptrDragFrom;
-  
-  const vBoard = getVirtualBoard();
-  const virtualPiece = vBoard.get(ptrDragFrom);
-  
-  state.legalTargets = vBoard.moves({ square: ptrDragFrom, verbose: true }).map(m => m.to);
-  syncBoardInteractionState();
-  updateCaption();
-
-  const btn = board.querySelector<HTMLButtonElement>(`[data-square="${ptrDragFrom}"]`);
-  if (btn && virtualPiece) {
-    const spritePath = PIECES[`${virtualPiece.color}${virtualPiece.type}`];
+  if (!ptrDragMoved) {
+    ptrDragMoved = true;
+    state.selectedSquare = ptrDragFrom;
     
-    ptrDragNode = document.createElement("img");
-    ptrDragNode.src = spritePath;
-    Object.assign(ptrDragNode.style, {
-      position: "fixed",
-      pointerEvents: "none",
-      zIndex: "9999",
-      // CHANGE: Removed the * 0.8 multiplier to keep it at 100% square size
-      width: `${btn.offsetWidth}px`, 
-      height: `${btn.offsetHeight}px`,
-      transform: "translate(-50%, -50%)",
-      transition: "none",
-      opacity: "1" // Optional: Increased from 0.9 to 1 for a solid feel
-    });
+    const vBoard = getVirtualBoard();
+    const virtualPiece = vBoard.get(ptrDragFrom);
     
-    document.body.append(ptrDragNode);
-    btn.classList.add("dragging");
+    state.legalTargets = vBoard.moves({ square: ptrDragFrom, verbose: true }).map(m => m.to);
+    syncBoardInteractionState();
+    updateCaption();
+
+    const btn = board.querySelector<HTMLButtonElement>(`[data-square="${ptrDragFrom}"]`);
+    if (btn && virtualPiece) {
+      const spritePath = PIECES[`${virtualPiece.color}${virtualPiece.type}`];
+      
+      ptrDragNode = document.createElement("img");
+      ptrDragNode.src = spritePath;
+      Object.assign(ptrDragNode.style, {
+        position: "fixed",
+        pointerEvents: "none",
+        zIndex: "9999",
+        // Keep piece at 100% square size
+        width: `${btn.offsetWidth}px`, 
+        height: `${btn.offsetHeight}px`,
+        transform: "translate(-50%, -50%)",
+        transition: "none",
+        opacity: "1" 
+      });
+      
+      document.body.append(ptrDragNode);
+      btn.classList.add("dragging");
+    }
   }
-}
 
   if (ptrDragNode) {
- 
-  ptrDragNode.style.left = `${event.clientX}px`;
-  ptrDragNode.style.top  = `${event.clientY}px`;
-
-
-}
-}
-);
+    ptrDragNode.style.left = `${event.clientX}px`;
+    ptrDragNode.style.top  = `${event.clientY}px`;
+  
+  }
+});
 
 function endPointerDrag(event: PointerEvent, commit: boolean): void {
   if (!ptrDragFrom) return;
@@ -1051,6 +1045,8 @@ promotionDialog.addEventListener("click", (event) => {
   }
 });
 
+// --- SOCKET.IO LISTENERS ---
+
 socket.on("connect", () => {
   state.connected = true;
 
@@ -1076,7 +1072,6 @@ socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl
   state.shareUrl = payload.shareUrl || `${window.location.origin}/?room=${payload.roomId}`;
   roomInput.value = payload.roomId;
 
-  // Guardar roomId en localStorage para reconexión automática
   localStorage.setItem("chess_roomId", payload.roomId);
 
   if (payload.role === "w" || payload.role === "b") {
@@ -1087,9 +1082,7 @@ socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl
   render();
 });
 
-// main.ts - Find and update this listener
 socket.on("session:left", () => {
-  // If we are already playing a bot, ignore the "left" message from the server
   if (state.gameMode === "bot") return;
 
   clearLocalRoomState();
@@ -1100,22 +1093,21 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
   const previousMoveCount = state.snapshot?.moveCount ?? 0;
   const previousFen = chess.fen();
   
-  // 1. ANIMATION FIX: Detect if a new move arrived and interrupt any lingering player animation
+  // Animation fix: Interrupt ghost if a new move arrives
   const isNewMove = snapshot.moveCount > previousMoveCount;
   if (isNewMove && activeGhostAnimation) {
     activeGhostAnimation.cancel();
   }
 
-  state.snapshot = snapshot; //
+  state.snapshot = snapshot;
   
-  // 2. Timer Logic
   if (!focusTimerStartMs || snapshot.moveCount < previousMoveCount) {
     focusTimerStartMs = Date.now();
   }
   
-  chess.load(snapshot.fen); //
+  chess.load(snapshot.fen);
 
-  // 3. Sound & Visual Effects
+  // Sound & Visual Effects
   const isActuallyNewMove = _lastPlayedMoveCount !== -1 && snapshot.moveCount > _lastPlayedMoveCount;
   _lastPlayedMoveCount = snapshot.moveCount;
   
@@ -1134,7 +1126,7 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
     clearArrows();
   }
 
-  // 4. Interaction State Update
+  // Sync selection
   if (state.selectedSquare) {
     const currentPiece = chess.get(state.selectedSquare);
     if (!currentPiece || !isOwnPiece(currentPiece.color)) {
@@ -1146,21 +1138,20 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
     }
   }
 
-  // 5. Analysis Cleanup
   if (!snapshot.analysis.enabled) {
     state.lastAnalyzedMoveKey = null;
     state.liveMoveGrades = {};
     liveAnalysisToken += 1;
   }
 
-  // 6. PREMOVE EXECUTION
+  // PREMOVE EXECUTION
   if (state.role && state.role !== "spectator" && snapshot.turn === state.role && state.premoves.length > 0) {
     const nextMove = state.premoves.shift();
     if (nextMove) {
       const isLegal = chess.moves({ verbose: true }).some(m => m.from === nextMove.from && m.to === nextMove.to);
       
       if (isLegal && !snapshot.checkmate && !snapshot.draw) {
-        suppressAnimationForMove = { from: nextMove.from, to: nextMove.to }; //
+        suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
         socket.emit("game:move", nextMove.promotion ? nextMove : { from: nextMove.from, to: nextMove.to });
         void maybeRunLiveAnalysis(snapshot);
         return; 
@@ -1170,19 +1161,18 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
     }
   }
 
-  // 7. FINAL RENDER: Use requestBoardRefresh with the 'force' flag for new moves
+  // Optimized refresh: only force if it's a real board change
   requestBoardRefresh(isNewMove); 
-  renderSession(); // Update UI text and buttons
-  renderMoves(); // Update the move list
-  updateCaption(); // Update material count
-  updateFocusHud(); // Update timers
+  renderSession();
+  renderMoves();
+  updateCaption();
+  updateFocusHud();
 
-  void maybeRunLiveAnalysis(snapshot); //
+  void maybeRunLiveAnalysis(snapshot);
 });
 
 socket.on("room:error", (payload: { message: string }) => {
   suppressAnimationForMove = null;
-  // If this was an auto-join attempt, clear the URL and don't show error
   if (state.autoJoinCode) {
     state.autoJoinCode = null;
     syncUrl(null);
@@ -1331,17 +1321,45 @@ function renderSession(): void {
   updateFocusHud();
 }
 
+/** * Cancels the current drag interaction and cleans up UI elements.
+ * This ensures that if a piece is captured while being held, it disappears from the cursor.
+ */
+function cancelCurrentDrag(): void {
+  if (ptrDragNode) {
+    ptrDragNode.remove();
+    ptrDragNode = null;
+  }
+  
+  if (ptrDragFrom) {
+    const draggedSquareEl = board.querySelector<HTMLElement>(`[data-square="${ptrDragFrom}"]`);
+    draggedSquareEl?.classList.remove("dragging");
+    ptrDragFrom = null;
+  }
+  
+  ptrDragMoved = false;
+  
+  // Clear the internal selection state to prevent "ghost" highlight rings
+  state.selectedSquare = null;
+  state.legalTargets = [];
+}
+
+
 function renderBoard(): void {
+  // --- 1. UI DRAG SYNCHRONIZATION ---
+  if (ptrDragFrom) {
+    const pieceAtSource = chess.get(ptrDragFrom);
+    if (!pieceAtSource || pieceAtSource.color !== state.role) {
+      cancelCurrentDrag();
+    }
+  }
+
   const fragment = document.createDocumentFragment();
   const squares = buildSquareList(state.orientation);
   const lastMoveSquares = new Set<string>();
   const checkedKingSquare = getCheckedKingSquare();
   const lastMove = state.snapshot?.lastMove ?? null;
   
-  // 1. Identify the FINAL destination of the premove chain
   const lastPremove = state.premoves.length > 0 ? state.premoves[state.premoves.length - 1] : null;
-  
-  // 2. Get the virtual board state only if we need to render a ghost
   const vBoard = lastPremove ? getVirtualBoard() : null;
 
   const liveGrade = state.snapshot?.analysis.enabled && state.snapshot.lastMove
@@ -1368,13 +1386,12 @@ function renderBoard(): void {
     if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
     if (checkedKingSquare === squareName) button.classList.add("in-check");
 
-    // This handles the red highlights for all moves in the premove chain
     state.premoves.forEach((p) => {
       if (p.from === square) button.classList.add("premove-from");
       if (p.to === square) button.classList.add("premove-to");
     });
 
-    // 3. Render the AUTHORITATIVE (real) piece
+    // --- 2. RENDER REAL PIECE ---
     if (piece) {
       const spritePath = PIECES[`${piece.color}${piece.type}`];
       const pieceElement = document.createElement("span");
@@ -1382,16 +1399,20 @@ function renderBoard(): void {
       
       const isMyPremove = suppressAnimationForMove && square === suppressAnimationForMove.to;
       const isTargetOfActiveAnimation = square === animatingToSquare && !animationFinished;
+      const isBeingDragged = square === ptrDragFrom;
 
-      if (isTargetOfActiveAnimation && !isMyPremove) {
+      // UPDATED: Hide the piece if any queued premove targets this square. 
+      // This handles both capturing opponents and moving to your own occupied squares (anticipating capture).
+      const isTargetOfQueuedPremove = state.premoves.some(p => p.to === square);
+
+      // If any of these conditions are true, we hide the static piece on the board
+      if ((isTargetOfActiveAnimation && !isMyPremove) || isBeingDragged || isTargetOfQueuedPremove) {
         pieceElement.style.opacity = "0";
         pieceElement.style.visibility = "hidden";
         pieceElement.style.pointerEvents = "none";
       }
 
-      if (isMyPremove) {
-        pieceElement.style.transition = "none";
-      }
+      if (isMyPremove) pieceElement.style.transition = "none";
 
       const pieceImage = document.createElement("img");
       pieceImage.className = "piece-image";
@@ -1408,30 +1429,24 @@ function renderBoard(): void {
       }
     }
 
-    // 4. Render the GHOST piece only on the final destination
+    // --- 3. RENDER PREMOVE GHOST ---
     if (lastPremove && square === lastPremove.to && vBoard) {
       const ghostPieceData = vBoard.get(square);
-      
       if (ghostPieceData) {
         const ghostElement = document.createElement("span");
-        // We add a 'ghost-piece' class for any specific CSS styling
         ghostElement.className = `piece piece-${ghostPieceData.type} ${ghostPieceData.color === "w" ? "white" : "black"} ghost-piece`;
-        
-        // Inline styles to ensure it overlays perfectly and looks translucent
         Object.assign(ghostElement.style, {
           opacity: "0.45",
           position: "absolute",
           inset: "0",
           zIndex: "2",
-          pointerEvents: "none",
-          transition: "none"
+          pointerEvents: "none"
         });
 
         const ghostImage = document.createElement("img");
         ghostImage.className = "piece-image";
         ghostImage.src = PIECES[`${ghostPieceData.color}${ghostPieceData.type}`];
         ghostImage.draggable = false;
-
         ghostElement.append(ghostImage);
         button.append(ghostElement);
       }
@@ -1442,7 +1457,7 @@ function renderBoard(): void {
 
   board.replaceChildren(fragment);
 
-  // --- ANIMATION SCHEDULING ---
+  // --- 4. ANIMATION SCHEDULING ---
   const isPremoveExecution = suppressAnimationForMove && 
                              lastMove && 
                              lastMove.from === suppressAnimationForMove.from && 
@@ -1463,7 +1478,6 @@ function renderBoard(): void {
 
   renderArrows();
 
-  // --- GAME OVER OVERLAY ---
   const snapshot = state.snapshot;
   const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
 
@@ -1473,13 +1487,9 @@ function renderBoard(): void {
     const title = document.createElement("h2");
     title.className = "game-over-title";
     
-    if (snapshot.checkmate) {
-      title.textContent = snapshot.winner === "w" ? "White Wins!" : "Black Wins!";
-    } else if (snapshot.draw) {
-      title.textContent = "Draw";
-    } else if (snapshot.winner) {
-      title.textContent = snapshot.winner === "w" ? "White Wins (Resignation)" : "Black Wins (Resignation)";
-    }
+    if (snapshot.checkmate) title.textContent = snapshot.winner === "w" ? "White Wins!" : "Black Wins!";
+    else if (snapshot.draw) title.textContent = "Draw";
+    else if (snapshot.winner) title.textContent = snapshot.winner === "w" ? "White Wins (Resignation)" : "Black Wins (Resignation)";
 
     const reason = document.createElement("p");
     reason.className = "game-over-reason";
@@ -2109,7 +2119,7 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   const moveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
   if (lastAnimatedMoveKey === moveKey) return;
 
-  // BLOQUEO DE ANIMACIÓN: Si el jugador tiene premoves, el movimiento del rival es instantáneo
+  // 1. Reset all flags if a premove or manual drag is happening
   if (state.premoves.length > 0 || suppressAnimationForMove) {
     lastAnimatedMoveKey = moveKey;
     suppressAnimationForMove = null; 
@@ -2124,6 +2134,7 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   animationFinished = false;
   animatingToSquare = lastMove.to;
 
+  // 2. Cleanup any previous ghost animations
   if (activeGhostAnimation) activeGhostAnimation.cancel();
   if (activeGhostNode) {
     activeGhostNode.remove();
@@ -2137,30 +2148,37 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   const fromSquareButton = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.from}"]`);
   const toSquareButton   = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.to}"]`);
   const destinationPiece = toSquareButton?.querySelector<HTMLElement>(".piece");
+  
   if (!fromSquareButton || !toSquareButton || !destinationPiece) return;
 
+  // 3. Calculate the distance (delta) for the animation
   const fromRect = fromSquareButton.getBoundingClientRect();
   const toRect = toSquareButton.getBoundingClientRect();
   const deltaX = (fromRect.left + fromRect.width / 2) - (toRect.left + toRect.width / 2);
   const deltaY = (fromRect.top + fromRect.height / 2) - (toRect.top + toRect.height / 2);
 
+  // 4. Create the ghostPiece (the one that actually moves)
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
+  const pieceRect = destinationPiece.getBoundingClientRect();
+  
   Object.assign(ghostPiece.style, {
     position: "absolute",
     left: `${toRect.left + toRect.width / 2 + window.scrollX}px`,
     top: `${toRect.top + toRect.height / 2 + window.scrollY}px`,
-    width: `${destinationPiece.getBoundingClientRect().width}px`,
-    height: `${destinationPiece.getBoundingClientRect().height}px`,
+    width: `${pieceRect.width}px`,
+    height: `${pieceRect.height}px`,
     transform: "translate3d(-50%, -50%, 0)",
     zIndex: "9999",
     pointerEvents: "none",
   });
 
+  // Hide the real piece at the destination until the ghost arrives
   destinationPiece.style.visibility = "hidden";
   activeGhostNode = ghostPiece;
   activeGhostDestinationPiece = destinationPiece;
   document.body.append(ghostPiece);
 
+  // 5. Trigger the animation
   const animation = ghostPiece.animate(
     [
       { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0)` },
@@ -2174,6 +2192,8 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   const onEnd = () => {
     ghostPiece.remove();
     destinationPiece.style.visibility = "";
+    
+    // Reset flags so renderBoard knows the animation is over
     animationFinished = true;
     animatingToSquare = null;
     
@@ -2190,7 +2210,11 @@ function animateLastMove(lastMove: MoveSummary | null): void {
 }
 
 function requestBoardRefresh(force = false): void {
-  // If we're forcing (like for a premove or cancel), we don't wait for animations
+  // Force flag allows immediate updates during rapid play
+  if (force && activeGhostAnimation) {
+    activeGhostAnimation.cancel();
+  }
+
   if (!force && activeGhostAnimation) {
     pendingBoardRefresh = true;
     return;
@@ -2198,6 +2222,7 @@ function requestBoardRefresh(force = false): void {
 
   renderBoard();
 }
+
 
 function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   if (!state.snapshot || !lastMove) {
@@ -2208,17 +2233,21 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   const moveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
   if (lastAnimatedMoveKey === moveKey) return;
 
-  lastAnimatedMoveKey = moveKey;
-
-  if (suppressAnimationForMove) {
-    const matchesSuppressedDrag =
-      suppressAnimationForMove.from === lastMove.from &&
-      suppressAnimationForMove.to === lastMove.to;
-    suppressAnimationForMove = null;
-    if (matchesSuppressedDrag) return;
+  // 1. Reset all flags if a premove or manual drag is happening
+  if (state.premoves.length > 0 || suppressAnimationForMove) {
+    lastAnimatedMoveKey = moveKey;
+    suppressAnimationForMove = null; 
+    if (activeGhostAnimation) activeGhostAnimation.cancel();
+    activeGhostAnimation = null;
+    animationFinished = true;
+    animatingToSquare = null;
+    return; 
   }
 
-  // Cancel any in-flight ghost first.
+  lastAnimatedMoveKey = moveKey;
+  animationFinished = false;
+  animatingToSquare = lastMove.to; // ADDED: Prevents "double piece" flicker
+
   if (activeGhostAnimation) activeGhostAnimation.cancel();
   if (activeGhostNode) {
     activeGhostNode.remove();
@@ -2234,9 +2263,6 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   const destinationPiece = toSquareButton?.querySelector<HTMLElement>(".piece");
   if (!fromSquareButton || !toSquareButton || !destinationPiece) return;
 
-  // FIX: Mark animation as active
-  animationFinished = false;
-
   const fromRect = fromSquareButton.getBoundingClientRect();
   const toRect = toSquareButton.getBoundingClientRect();
   const startX = fromRect.left + fromRect.width / 2 + window.scrollX;
@@ -2250,17 +2276,14 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   const pieceRect = destinationPiece.getBoundingClientRect();
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
   
-  // Random Epic profile logic...
+  // (Your Epic animation math remains the same...)
   const randomRotation = Math.random() * 300 + 220;
   const spinDirection = Math.random() > 0.5 ? 1 : -1;
   const settleWobble = Math.random() * 14 + 8;
   const profileRoll = Math.random();
   const motionProfile = profileRoll < 0.38 ? "spin" : profileRoll < 0.76 ? "inertia" : "tilt";
   const hasFlip = motionProfile === "spin" ? Math.random() > 0.45 : motionProfile === "inertia" ? Math.random() > 0.92 : false;
-  
   const spinStart = motionProfile === "spin" ? randomRotation * 0.22 * spinDirection : settleWobble * spinDirection;
-  const spinMid = motionProfile === "spin" ? randomRotation * 0.46 * spinDirection : -settleWobble * spinDirection;
-  const spinPeak = motionProfile === "spin" ? randomRotation * 0.68 * spinDirection : settleWobble * 0.55 * spinDirection;
   const jumpA = 62 + Math.random() * 36;
   const jumpB = 100 + Math.random() * 32;
   const duration = 900 + Math.floor(Math.random() * 170);
@@ -2272,19 +2295,8 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
     width: `${pieceRect.width}px`,
     height: `${pieceRect.height}px`,
     transform: "translate3d(-50%, -50%, 0)",
-    margin: "0",
     zIndex: "9999",
     pointerEvents: "none",
-    fontSize: computed.fontSize,
-    fontFamily: computed.fontFamily,
-    color: computed.color,
-    filter: computed.filter,
-    textShadow: computed.textShadow,
-    lineHeight: "1",
-    animation: "none",
-    opacity: "1",
-    willChange: "transform",
-    perspective: "1000px",
   });
 
   destinationPiece.style.visibility = "hidden";
@@ -2292,30 +2304,11 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   activeGhostDestinationPiece = destinationPiece;
   document.body.append(ghostPiece);
 
- // main.ts - Dentro de animateLastMoveEpic
-const keyframes = [
-  { 
-    transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) rotateX(0deg) scale(1)`, 
-    filter: "brightness(1)", 
-    offset: 0 
-  },
-  { 
-    transform: `translate3d(calc(-50% + ${deltaX * 0.58}px), calc(-50% + ${deltaY * 0.58 - jumpA}px), 0) rotateZ(${spinStart}deg) rotateX(${hasFlip ? 180 : 0}deg) scale(1.1)`, 
-    filter: "brightness(1.1)", 
-    offset: 0.4 
-  },
-  { 
-    transform: `translate3d(calc(-50% + ${deltaX * 0.84}px), calc(-50% + ${deltaY * 0.84 - jumpB}px), 0) rotateZ(${spinMid}deg) rotateX(${hasFlip ? 360 : 0}deg) scale(0.9)`, 
-    filter: "brightness(1.2)", 
-    offset: 0.65 
-  },
-  { 
-    // FIX: Cambiado de translate3d(0,0,0) a (-50%, -50%, 0) para evitar el salto final
-    transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) rotateX(0deg) scale(1)", 
-    filter: "brightness(1)", 
-    offset: 1 
-  },
-];
+  const keyframes = [
+    { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg)`, offset: 0 },
+    { transform: `translate3d(calc(-50% + ${deltaX * 0.5}px), calc(-50% + ${deltaY * 0.5 - jumpA}px), 0) rotateZ(${spinStart}deg)`, offset: 0.4 },
+    { transform: "translate3d(-50%, -50%, 0) rotateZ(0deg)", offset: 1 }
+  ];
 
   const animation = ghostPiece.animate(keyframes, {
     duration,
@@ -2327,8 +2320,8 @@ const keyframes = [
   const onEnd = () => {
     ghostPiece.remove();
     destinationPiece.style.visibility = "";
-    // FIX: Mark as finished and trigger a clean render
     animationFinished = true;
+    animatingToSquare = null; // ADDED: Cleanup
 
     if (activeGhostAnimation === animation) {
       activeGhostAnimation = null;
@@ -2726,7 +2719,6 @@ function clearLocalRoomState(): void {
   state.pendingPromotion = null;
   state.premoves = [];
 
-  // This line kills the "ghost bot" bug by forcing the mode back to multiplayer
   state.gameMode = "multiplayer"; 
 
   focusTimerStartMs = null;
@@ -2735,11 +2727,12 @@ function clearLocalRoomState(): void {
   state.liveMoveGrades = {};
   liveAnalysisToken += 1;
   
-  // Limpiar localStorage cuando se abandona la sala
   localStorage.removeItem("chess_roomId");
   
+  // NEW: Ensure any active drag is killed when leaving or resetting
+  cancelCurrentDrag();
+  
   clearArrows();
-  clearSelection();
   chess.reset();
   syncUrl(null);
 }

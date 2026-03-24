@@ -666,6 +666,8 @@ button {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  transform: translateZ(0);
+  
 }
 
 .app-shell .square {
@@ -772,6 +774,7 @@ button {
   image-rendering: -webkit-optimize-contrast;
   backface-visibility: hidden; /* Evita parpadeos en Chrome/Safari */
   transform: translateZ(0); /* Fuerza aceleración por GPU */
+  contain: strict; 
 }
 
 .piece.piece-b {
