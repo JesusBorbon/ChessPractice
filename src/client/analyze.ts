@@ -1830,11 +1830,29 @@ function renderEngineFeedback(): void {
     const blackMoves = all.filter(m => m.ply % 2 === 0);
 
     // Accuracy Calculation Formula
-    const calculateAccuracy = (moves: MoveAnalysis[]) => {
+   const calculateAccuracy = (moves: MoveAnalysis[]) => {
       if (moves.length === 0) return 100;
-      const avgCpl = moves.reduce((sum, item) => sum + item.cpl, 0) / moves.length;
-      // Exponential decay: e^(-0.004 * CPL). CPL of 20 = ~92%. CPL of 100 = ~67%.
-      return Math.max(0, Math.min(100, Math.round(100 * Math.exp(-0.004 * avgCpl))));
+      
+      const winProbability = (cp: number) => {
+        // Clamp CP to prevent extreme Math.exp values
+        const clampedCp = Math.max(-4000, Math.min(4000, cp));
+        return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * clampedCp)) - 1);
+      };
+
+      let totalAccuracy = 0;
+      for (const m of moves) {
+        const wpBefore = winProbability(m.beforeCp);
+        const wpAfter = winProbability(m.afterCp);
+        const loss = Math.max(0, wpBefore - wpAfter); // Never negative
+        
+        // Convert WP loss to move accuracy (Exponential curve)
+        const moveAcc = 103.1668 * Math.exp(-0.04354 * loss) - 3.1669;
+        
+        // Clamp move accuracy between 0 and 100 and add to total
+        totalAccuracy += Math.max(0, Math.min(100, moveAcc));
+      }
+      
+      return Math.round(totalAccuracy / moves.length);
     };
 
     const whiteAcc = calculateAccuracy(whiteMoves);

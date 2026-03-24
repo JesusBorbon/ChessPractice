@@ -393,13 +393,15 @@ app.innerHTML = `
         </div>
 
         <div class="focus-hud" id="focusHud" hidden>
-          <span class="focus-chip" id="focusTimer">00:00</span>
+            <span class="focus-chip" id="focusTimer">00:00</span>
+
+          <div id="focusMaterialHud" class="focus-material-hud" hidden>
+            <span class="focus-chip" id="focusMaterialScore"></span>
+            <span class="focus-chip" id="focusMaterialIcons"></span>
+          </div>
         </div>
 
-        <div id="focusMaterialHud" class="focus-material-hud" hidden>
-          <span class="focus-chip" id="focusMaterialScore"></span>
-          <span class="focus-chip" id="focusMaterialIcons"></span>
-        </div>
+      
 
         <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
       </section>
@@ -937,13 +939,23 @@ board.addEventListener("pointermove", (event) => {
 
 function endPointerDrag(event: PointerEvent, commit: boolean): void {
   if (!ptrDragFrom) return;
+  
   const fromSquare = ptrDragFrom;
   const wasDrag = ptrDragMoved;
+  
   ptrDragFrom = null;
   ptrDragMoved = false;
-  ptrDragNode?.remove();
-  ptrDragNode = null;
+  
+  if (ptrDragNode) {
+    ptrDragNode.remove();
+    ptrDragNode = null;
+  }
   board.querySelector<HTMLElement>(".square.dragging")?.classList.remove("dragging");
+
+  // Clean up old animations BEFORE the new move
+  clearSelection();
+  requestBoardRefresh(true); 
+  updateCaption();
 
   if (!wasDrag) {
     if (commit) {
@@ -956,20 +968,20 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
   }
 
   if (commit) {
+    // Dynamically calculate where the piece was dropped
     const el = document.elementFromPoint(event.clientX, event.clientY);
     const squareButton = el?.closest<HTMLButtonElement>(".square");
     const targetSquare = squareButton?.dataset.square as Square | undefined;
+    
     if (targetSquare && targetSquare !== fromSquare) {
       lastDragCommitSquare = targetSquare;
       lastDragCommitAtMs = performance.now();
-      suppressAnimationForMove = { from: fromSquare, to: targetSquare };
+      
+      // Explicitly suppress the animation for drag-and-drop so it snaps instantly
+      suppressAnimationForMove = { from: fromSquare, to: targetSquare }; 
       tryMoveFromTo(fromSquare, targetSquare);
     }
   }
-
-  clearSelection();
-  requestBoardRefresh(true);
-  updateCaption();
 }
 
 function endArrowDrag(event: PointerEvent, commit: boolean): void {
@@ -1372,15 +1384,14 @@ function cancelCurrentDrag(): void {
 }
 
 function getDisplayBoard(): Chess {
-  // If we are live, or have no history, show the real board
   if (state.viewCursor === null || !state.snapshot) {
     return state.premoves.length > 0 ? getVirtualBoard() : chess;
   }
 
-  // Replay moves up to the cursor to get the historical FEN
   const historyBoard = new Chess();
   for (let i = 0; i < state.viewCursor; i++) {
-    historyBoard.move(state.snapshot.moves[i]!.san);
+    const move = state.snapshot.moves[i];
+    if (move) historyBoard.move(move.san); // FIX: Safe check
   }
   return historyBoard;
 }
@@ -2461,28 +2472,18 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
 
 function onSquarePressed(square: Square): void {
   if (state.viewCursor !== null) {
-    // Optional: Snap back to live view if they click the board
-    state.viewCursor = null; 
+    state.viewCursor = null;
     render();
     return;
   }
+  
   const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
   if (gameEnded) return;
 
-  if (!state.snapshot || !state.role || state.role === "spectator") {
-    return;
-  }
+  if (!state.snapshot || !state.role || state.role === "spectator") return;
 
   if (state.snapshot.turn !== state.role) {
     onPremoveSquarePressed(square);
-    return;
-  }
-
-  const clickedPiece = chess.get(square);
-  if (!state.selectedSquare) {
-    if (clickedPiece && isOwnPiece(clickedPiece.color)) {
-      selectSquare(square);
-    }
     return;
   }
 
@@ -2494,15 +2495,24 @@ function onSquarePressed(square: Square): void {
   }
 
   if (state.legalTargets.includes(square)) {
-    tryMoveFromTo(state.selectedSquare, square);
+    const from = state.selectedSquare;
     clearSelection();
     requestBoardRefresh(true);
+    
+    if (from) {
+      // Explicitly allow the animation for click-to-move
+      suppressAnimationForMove = null; 
+      tryMoveFromTo(from, square);
+    }
+    
     updateCaption();
     return;
   }
 
+  const clickedPiece = chess.get(square);
   if (clickedPiece && isOwnPiece(clickedPiece.color)) {
-    selectSquare(square);
+    // FIX: Using the correct function to highlight legal targets
+    selectSquare(square); 
     return;
   }
 
@@ -2510,7 +2520,6 @@ function onSquarePressed(square: Square): void {
   requestBoardRefresh(true);
   updateCaption();
 }
-
 function selectSquare(square: Square): void {
   state.selectedSquare = square;
   state.legalTargets = legalTargetsFor(square);
@@ -2586,7 +2595,7 @@ function tryMoveFromTo(from: Square, to: Square): void {
     if (!playerMoveResult) return;
 
     updateManualSnapshot(playerMoveResult);
-    requestBoardRefresh(true);
+   
     render(); 
     playSoundForSnapshot(state.snapshot);
 
@@ -2722,17 +2731,13 @@ function getVirtualBoard(): Chess {
   for (const p of state.premoves) {
     const piece = vBoard.get(p.from);
     if (piece) {
-      // Physically relocate the piece, ignoring strict chess validation 
-      // (which allows diagonal pawn premoves on empty squares)
       vBoard.remove(p.from);
       if (p.promotion) piece.type = p.promotion as PieceSymbol; // Fixed strict type
       vBoard.put(piece, p.to);
     }
   }
 
-  // Force the turn to your role so the board can calculate legal target dots 
-  // if you decide to click-click from a premoved square.
-  const fenParts = vBoard.fen().split(" ");
+  const fenParts = vBoard.fen().split(" "); 
   fenParts[1] = state.role as string; 
   fenParts[3] = "-"; // clear en passant
   vBoard.load(fenParts.join(" "));

@@ -7507,13 +7507,15 @@ var require_main = __commonJS({
         </div>
 
         <div class="focus-hud" id="focusHud" hidden>
-          <span class="focus-chip" id="focusTimer">00:00</span>
+            <span class="focus-chip" id="focusTimer">00:00</span>
+
+          <div id="focusMaterialHud" class="focus-material-hud" hidden>
+            <span class="focus-chip" id="focusMaterialScore"></span>
+            <span class="focus-chip" id="focusMaterialIcons"></span>
+          </div>
         </div>
 
-        <div id="focusMaterialHud" class="focus-material-hud" hidden>
-          <span class="focus-chip" id="focusMaterialScore"></span>
-          <span class="focus-chip" id="focusMaterialIcons"></span>
-        </div>
+      
 
         <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
       </section>
@@ -7955,9 +7957,14 @@ var require_main = __commonJS({
       const wasDrag = ptrDragMoved;
       ptrDragFrom = null;
       ptrDragMoved = false;
-      ptrDragNode?.remove();
-      ptrDragNode = null;
+      if (ptrDragNode) {
+        ptrDragNode.remove();
+        ptrDragNode = null;
+      }
       board.querySelector(".square.dragging")?.classList.remove("dragging");
+      clearSelection();
+      requestBoardRefresh(true);
+      updateCaption();
       if (!wasDrag) {
         if (commit) {
           lastPointerTapSquare = fromSquare;
@@ -7978,9 +7985,6 @@ var require_main = __commonJS({
           tryMoveFromTo(fromSquare, targetSquare);
         }
       }
-      clearSelection();
-      requestBoardRefresh(true);
-      updateCaption();
     }
     function endArrowDrag(event, commit) {
       if (!arrowDragFrom) return;
@@ -8279,7 +8283,8 @@ var require_main = __commonJS({
       }
       const historyBoard = new Chess();
       for (let i = 0; i < state.viewCursor; i++) {
-        historyBoard.move(state.snapshot.moves[i].san);
+        const move = state.snapshot.moves[i];
+        if (move) historyBoard.move(move.san);
       }
       return historyBoard;
     }
@@ -9100,18 +9105,9 @@ var require_main = __commonJS({
       }
       const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
       if (gameEnded) return;
-      if (!state.snapshot || !state.role || state.role === "spectator") {
-        return;
-      }
+      if (!state.snapshot || !state.role || state.role === "spectator") return;
       if (state.snapshot.turn !== state.role) {
         onPremoveSquarePressed(square);
-        return;
-      }
-      const clickedPiece = chess.get(square);
-      if (!state.selectedSquare) {
-        if (clickedPiece && isOwnPiece(clickedPiece.color)) {
-          selectSquare(square);
-        }
         return;
       }
       if (square === state.selectedSquare) {
@@ -9121,12 +9117,17 @@ var require_main = __commonJS({
         return;
       }
       if (state.legalTargets.includes(square)) {
-        tryMoveFromTo(state.selectedSquare, square);
+        const from = state.selectedSquare;
         clearSelection();
         requestBoardRefresh(true);
+        if (from) {
+          suppressAnimationForMove = null;
+          tryMoveFromTo(from, square);
+        }
         updateCaption();
         return;
       }
+      const clickedPiece = chess.get(square);
       if (clickedPiece && isOwnPiece(clickedPiece.color)) {
         selectSquare(square);
         return;
@@ -9187,7 +9188,6 @@ var require_main = __commonJS({
         playerMoveResult = chess.move({ from, to, promotion: "q" });
         if (!playerMoveResult) return;
         updateManualSnapshot(playerMoveResult);
-        requestBoardRefresh(true);
         render();
         playSoundForSnapshot(state.snapshot);
         if (!state.snapshot.checkmate && !state.snapshot.draw) {

@@ -5101,8 +5101,19 @@ var require_analyze = __commonJS({
         const blackMoves = all.filter((m) => m.ply % 2 === 0);
         const calculateAccuracy = (moves) => {
           if (moves.length === 0) return 100;
-          const avgCpl = moves.reduce((sum, item) => sum + item.cpl, 0) / moves.length;
-          return Math.max(0, Math.min(100, Math.round(100 * Math.exp(-4e-3 * avgCpl))));
+          const winProbability = (cp) => {
+            const clampedCp = Math.max(-4e3, Math.min(4e3, cp));
+            return 50 + 50 * (2 / (1 + Math.exp(-368208e-8 * clampedCp)) - 1);
+          };
+          let totalAccuracy = 0;
+          for (const m of moves) {
+            const wpBefore = winProbability(m.beforeCp);
+            const wpAfter = winProbability(m.afterCp);
+            const loss = Math.max(0, wpBefore - wpAfter);
+            const moveAcc = 103.1668 * Math.exp(-0.04354 * loss) - 3.1669;
+            totalAccuracy += Math.max(0, Math.min(100, moveAcc));
+          }
+          return Math.round(totalAccuracy / moves.length);
         };
         const whiteAcc = calculateAccuracy(whiteMoves);
         const blackAcc = calculateAccuracy(blackMoves);
