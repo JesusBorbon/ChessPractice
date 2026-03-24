@@ -7279,7 +7279,8 @@ var require_main = __commonJS({
       liveMoveGrades: {},
       animationStyle: localStorage.getItem("chess-animation-style") || "smooth",
       bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on",
-      gameMode: "multiplayer"
+      gameMode: "multiplayer",
+      viewCursor: null
     };
     window.state = state;
     var lastAnimatedMoveKey = null;
@@ -7641,6 +7642,7 @@ var require_main = __commonJS({
     var confirmNoBtn = must("#confirmNoBtn");
     var modalTitle = must("#modalTitle");
     var modalDescription = must("#modalDescription");
+    var gameNav = must("#gameNav");
     mountThemeSwitcher();
     window.addEventListener("animationchange", (event) => {
       const customEvent = event;
@@ -7801,6 +7803,28 @@ var require_main = __commonJS({
     focusModeButton.addEventListener("click", () => {
       void toggleFocusMode();
     });
+    window.addEventListener("keydown", (e) => {
+      if (isTypingTarget(e.target)) return;
+      if (!state.snapshot || state.snapshot.moves.length === 0) return;
+      const maxMoves = state.snapshot.moves.length;
+      let currentPos = state.viewCursor !== null ? state.viewCursor : maxMoves;
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        if (currentPos > 0) {
+          state.viewCursor = currentPos - 1;
+          render();
+        }
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        if (currentPos < maxMoves) {
+          state.viewCursor = currentPos + 1;
+          if (state.viewCursor === maxMoves) {
+            state.viewCursor = null;
+          }
+          render();
+        }
+      }
+    });
     window.addEventListener("keydown", (event) => {
       if (event.key.toLowerCase() !== "z" || isTypingTarget(event.target)) {
         return;
@@ -7955,7 +7979,7 @@ var require_main = __commonJS({
         }
       }
       clearSelection();
-      requestBoardRefresh();
+      requestBoardRefresh(true);
       updateCaption();
     }
     function endArrowDrag(event, commit) {
@@ -8003,8 +8027,7 @@ var require_main = __commonJS({
         if (state.premoves.length > 0) {
           checkAndExecutePremove();
         }
-        if (activeGhostAnimation) activeGhostAnimation.cancel();
-        renderBoard();
+        requestBoardRefresh(true);
         if (state.snapshot.analysis.enabled) {
           void maybeRunLiveAnalysis(state.snapshot);
         }
@@ -8250,6 +8273,16 @@ var require_main = __commonJS({
       state.selectedSquare = null;
       state.legalTargets = [];
     }
+    function getDisplayBoard() {
+      if (state.viewCursor === null || !state.snapshot) {
+        return state.premoves.length > 0 ? getVirtualBoard() : chess;
+      }
+      const historyBoard = new Chess();
+      for (let i = 0; i < state.viewCursor; i++) {
+        historyBoard.move(state.snapshot.moves[i].san);
+      }
+      return historyBoard;
+    }
     function renderBoard() {
       if (ptrDragFrom) {
         const pieceAtSource = chess.get(ptrDragFrom);
@@ -8259,33 +8292,50 @@ var require_main = __commonJS({
       }
       const fragment = document.createDocumentFragment();
       const squares = buildSquareList(state.orientation);
+      const isHistoryView = state.viewCursor !== null;
+      const displayBoard = getDisplayBoard();
+      let lastMove = state.snapshot?.lastMove ?? null;
+      if (isHistoryView && state.snapshot && state.viewCursor !== null && state.viewCursor > 0) {
+        lastMove = state.snapshot.moves[state.viewCursor - 1] ?? null;
+      } else if (isHistoryView && state.viewCursor === 0) {
+        lastMove = null;
+      }
       const lastMoveSquares = /* @__PURE__ */ new Set();
-      const checkedKingSquare = getCheckedKingSquare();
-      const lastMove = state.snapshot?.lastMove ?? null;
-      const lastPremove = state.premoves.length > 0 ? state.premoves[state.premoves.length - 1] : null;
-      const vBoard = lastPremove ? getVirtualBoard() : null;
-      const liveGrade = state.snapshot?.analysis.enabled && state.snapshot.lastMove ? state.liveMoveGrades[state.snapshot.moveCount] : void 0;
-      const liveMarkerSquare = liveGrade && state.snapshot?.lastMove ? state.snapshot.lastMove.to : null;
       if (lastMove) {
         lastMoveSquares.add(lastMove.from);
         lastMoveSquares.add(lastMove.to);
       }
+      let checkedKingSquare = null;
+      if (displayBoard.isCheck()) {
+        const checkedColor = displayBoard.turn();
+        for (const sqName of squares) {
+          const p = displayBoard.get(sqName);
+          if (p?.type === "k" && p.color === checkedColor) {
+            checkedKingSquare = sqName;
+            break;
+          }
+        }
+      }
+      const liveGrade = state.snapshot?.analysis.enabled && state.snapshot.lastMove ? state.liveMoveGrades[state.snapshot.moveCount] : void 0;
+      const liveMarkerSquare = !isHistoryView && liveGrade && state.snapshot?.lastMove ? state.snapshot.lastMove.to : null;
       for (const squareName of squares) {
         const square = squareName;
-        const piece = chess.get(square);
+        const piece = displayBoard.get(square);
         const button = document.createElement("button");
         button.type = "button";
         button.tabIndex = -1;
         button.className = `square ${isLightSquare(squareName) ? "light" : "dark"}`;
         button.dataset.square = squareName;
-        if (state.selectedSquare === square) button.classList.add("selected");
-        if (state.legalTargets.includes(square)) button.classList.add("legal");
+        if (!isHistoryView && state.selectedSquare === square) button.classList.add("selected");
+        if (!isHistoryView && state.legalTargets.includes(square)) button.classList.add("legal");
         if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
         if (checkedKingSquare === squareName) button.classList.add("in-check");
-        state.premoves.forEach((p) => {
-          if (p.from === square) button.classList.add("premove-from");
-          if (p.to === square) button.classList.add("premove-to");
-        });
+        if (!isHistoryView) {
+          state.premoves.forEach((p) => {
+            if (p.from === square) button.classList.add("premove-from");
+            if (p.to === square) button.classList.add("premove-to");
+          });
+        }
         if (piece) {
           const spritePath = PIECES[`${piece.color}${piece.type}`];
           const pieceElement = document.createElement("span");
@@ -8293,8 +8343,7 @@ var require_main = __commonJS({
           const isMyPremove = suppressAnimationForMove && square === suppressAnimationForMove.to;
           const isTargetOfActiveAnimation = square === animatingToSquare && !animationFinished;
           const isBeingDragged = square === ptrDragFrom;
-          const isTargetOfQueuedPremove = state.premoves.some((p) => p.to === square);
-          if (isTargetOfActiveAnimation && !isMyPremove || isBeingDragged || isTargetOfQueuedPremove) {
+          if (isTargetOfActiveAnimation && !isMyPremove && !isHistoryView || isBeingDragged) {
             pieceElement.style.opacity = "0";
             pieceElement.style.visibility = "hidden";
             pieceElement.style.pointerEvents = "none";
@@ -8313,46 +8362,48 @@ var require_main = __commonJS({
             button.append(marker);
           }
         }
-        if (lastPremove && square === lastPremove.to && vBoard) {
-          const ghostPieceData = vBoard.get(square);
-          if (ghostPieceData) {
-            const ghostElement = document.createElement("span");
-            ghostElement.className = `piece piece-${ghostPieceData.type} ${ghostPieceData.color === "w" ? "white" : "black"} ghost-piece`;
-            Object.assign(ghostElement.style, {
-              opacity: "0.45",
-              position: "absolute",
-              inset: "0",
-              zIndex: "2",
-              pointerEvents: "none"
-            });
-            const ghostImage = document.createElement("img");
-            ghostImage.className = "piece-image";
-            ghostImage.src = PIECES[`${ghostPieceData.color}${ghostPieceData.type}`];
-            ghostImage.draggable = false;
-            ghostElement.append(ghostImage);
-            button.append(ghostElement);
-          }
-        }
         fragment.append(button);
       }
       board.replaceChildren(fragment);
-      const isPremoveExecution = suppressAnimationForMove && lastMove && lastMove.from === suppressAnimationForMove.from && lastMove.to === suppressAnimationForMove.to;
-      if (isPremoveExecution) {
-        lastAnimatedMoveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
-        suppressAnimationForMove = null;
-        animationFinished = true;
-        requestAnimationFrame(() => renderBoard());
-      } else if (lastMove) {
-        const moveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
-        if (lastAnimatedMoveKey !== moveKey) {
-          if (state.animationStyle === "epic") animateLastMoveEpic(lastMove);
-          else animateLastMove(lastMove);
+      if (!isHistoryView) {
+        const isPremoveExecution = suppressAnimationForMove && lastMove && lastMove.from === suppressAnimationForMove.from && lastMove.to === suppressAnimationForMove.to;
+        if (isPremoveExecution) {
+          lastAnimatedMoveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
+          suppressAnimationForMove = null;
+          animationFinished = true;
+          requestAnimationFrame(() => renderBoard());
+        } else if (lastMove) {
+          const moveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
+          if (lastAnimatedMoveKey !== moveKey) {
+            if (state.animationStyle === "epic") animateLastMoveEpic(lastMove);
+            else animateLastMove(lastMove);
+          }
+        }
+      } else {
+        if (activeGhostAnimation) {
+          const tempAnim = activeGhostAnimation;
+          activeGhostAnimation = null;
+          tempAnim.cancel();
         }
       }
+      const boardWrap = board.parentElement;
+      const existingLiveBtn = boardWrap?.querySelector(".snap-live-btn");
+      if (existingLiveBtn) existingLiveBtn.remove();
+      if (isHistoryView) {
+        const liveBtn = document.createElement("button");
+        liveBtn.className = "action cta-turquoise snap-live-btn";
+        liveBtn.innerHTML = "\u25B6 Resume Live Game";
+        liveBtn.onclick = () => {
+          state.viewCursor = null;
+          render();
+        };
+        boardWrap?.appendChild(liveBtn);
+      }
+      renderArrows();
       renderArrows();
       const snapshot = state.snapshot;
       const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
-      if (gameEnded && snapshot) {
+      if (gameEnded && snapshot && !isHistoryView) {
         const overlay = document.createElement("div");
         overlay.className = "game-over-overlay";
         const title = document.createElement("h2");
@@ -8371,7 +8422,16 @@ var require_main = __commonJS({
           if (state.gameMode === "bot") startBotGame();
           else socket.emit("game:rematch");
         };
-        overlay.append(title, reason, overlayRematchBtn);
+        const overlayAnalyzeBtn = document.createElement("a");
+        overlayAnalyzeBtn.className = "action cta-rainbow";
+        overlayAnalyzeBtn.style.marginTop = "10px";
+        overlayAnalyzeBtn.style.textDecoration = "none";
+        overlayAnalyzeBtn.onclick = () => {
+          localStorage.setItem("postGameMoves", JSON.stringify(snapshot.moves.map((m) => m.san)));
+          window.location.href = "/analyze";
+        };
+        overlayAnalyzeBtn.textContent = "Analyze Game";
+        overlay.append(title, reason, overlayRematchBtn, overlayAnalyzeBtn);
         board.append(overlay);
       }
     }
@@ -8460,11 +8520,9 @@ var require_main = __commonJS({
       const promotion = promotionMatch?.[1]?.toLowerCase();
       let move = null;
       try {
-        move = replay.move({
-          from: lastMove.from,
-          to: lastMove.to,
-          promotion
-        });
+        move = replay.move(
+          promotion ? { from: lastMove.from, to: lastMove.to, promotion } : { from: lastMove.from, to: lastMove.to }
+        );
       } catch {
         return null;
       }
@@ -8598,16 +8656,33 @@ var require_main = __commonJS({
         const whiteBadge = whiteMove && whiteGrade ? ` <span class="move-quality-tag ${whiteGrade.category}">${whiteGrade.label}</span>` : "";
         const blackBadge = blackMove && blackGrade ? ` <span class="move-quality-tag ${blackGrade.category}">${blackGrade.label}</span>` : "";
         const moveNumber = Math.floor(index / 2) + 1;
+        const wActiveStyle = state.viewCursor === whitePly ? "background: var(--accent); color: #fffdf8;" : "";
+        const bActiveStyle = state.viewCursor === blackPly ? "background: var(--accent); color: #fffdf8;" : "";
         rows.push(`
       <div class="move-row">
         <strong>${moveNumber}.</strong>
-        <span>${whiteMove ? whiteMove.san : ""}${whiteBadge}</span>
-        <span>${blackMove ? blackMove.san : ""}${blackBadge}</span>
+        <span class="move-clickable" data-index="${whitePly}" style="cursor: pointer; padding: 2px 6px; border-radius: 4px; transition: background 0.2s ease, color 0.2s ease; ${wActiveStyle}">
+          ${whiteMove ? whiteMove.san : ""}${whiteBadge}
+        </span>
+        <span class="move-clickable" data-index="${blackPly}" style="cursor: pointer; padding: 2px 6px; border-radius: 4px; transition: background 0.2s ease, color 0.2s ease; ${bActiveStyle}">
+          ${blackMove ? blackMove.san : ""}${blackBadge}
+        </span>
       </div>
     `);
       }
       moveList.innerHTML = rows.join("");
     }
+    moveList.addEventListener("click", (e) => {
+      const target = e.target.closest(".move-clickable");
+      if (!target || !state.snapshot) return;
+      const index = parseInt(target.dataset.index, 10);
+      if (index === state.snapshot.moves.length) {
+        state.viewCursor = null;
+      } else {
+        state.viewCursor = index;
+      }
+      render();
+    });
     function updateCaption() {
       const snapshot = state.snapshot;
       if (!snapshot || !state.role || state.role === "spectator") {
@@ -8832,20 +8907,6 @@ var require_main = __commonJS({
         console.error("Live analysis error:", e);
       }
     }
-    function getCheckedKingSquare() {
-      if (!chess.isCheck()) {
-        return null;
-      }
-      const checkedColor = chess.turn();
-      for (const squareName of buildSquareList("w")) {
-        const square = squareName;
-        const piece = chess.get(square);
-        if (piece?.type === "k" && piece.color === checkedColor) {
-          return square;
-        }
-      }
-      return null;
-    }
     function animateLastMove(lastMove) {
       if (!state.snapshot || !lastMove) {
         lastAnimatedMoveKey = null;
@@ -8923,7 +8984,15 @@ var require_main = __commonJS({
     }
     function requestBoardRefresh(force = false) {
       if (force && activeGhostAnimation) {
-        activeGhostAnimation.cancel();
+        const tempAnim = activeGhostAnimation;
+        activeGhostAnimation = null;
+        if (activeGhostNode) activeGhostNode.remove();
+        if (activeGhostDestinationPiece) activeGhostDestinationPiece.style.visibility = "";
+        activeGhostNode = null;
+        activeGhostDestinationPiece = null;
+        animationFinished = true;
+        animatingToSquare = null;
+        tempAnim.cancel();
       }
       if (!force && activeGhostAnimation) {
         pendingBoardRefresh = true;
@@ -9024,6 +9093,11 @@ var require_main = __commonJS({
       animation.addEventListener("cancel", onEnd);
     }
     function onSquarePressed(square) {
+      if (state.viewCursor !== null) {
+        state.viewCursor = null;
+        render();
+        return;
+      }
       const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
       if (gameEnded) return;
       if (!state.snapshot || !state.role || state.role === "spectator") {
@@ -9042,14 +9116,14 @@ var require_main = __commonJS({
       }
       if (square === state.selectedSquare) {
         clearSelection();
-        requestBoardRefresh();
+        requestBoardRefresh(true);
         updateCaption();
         return;
       }
       if (state.legalTargets.includes(square)) {
         tryMoveFromTo(state.selectedSquare, square);
         clearSelection();
-        requestBoardRefresh();
+        requestBoardRefresh(true);
         updateCaption();
         return;
       }
@@ -9058,7 +9132,7 @@ var require_main = __commonJS({
         return;
       }
       clearSelection();
-      requestBoardRefresh();
+      requestBoardRefresh(true);
       updateCaption();
     }
     function selectSquare(square) {
@@ -9081,6 +9155,7 @@ var require_main = __commonJS({
       return roleChess.moves({ square, verbose: true }).map((move) => move.to);
     }
     function canStartMoveFrom(square) {
+      if (state.viewCursor !== null) return false;
       if (!state.snapshot || !state.role || state.role === "spectator") return false;
       const vBoard = getVirtualBoard();
       const piece = vBoard.get(square);
@@ -9112,6 +9187,7 @@ var require_main = __commonJS({
         playerMoveResult = chess.move({ from, to, promotion: "q" });
         if (!playerMoveResult) return;
         updateManualSnapshot(playerMoveResult);
+        requestBoardRefresh(true);
         render();
         playSoundForSnapshot(state.snapshot);
         if (!state.snapshot.checkmate && !state.snapshot.draw) {

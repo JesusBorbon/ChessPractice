@@ -5062,17 +5062,6 @@ var require_analyze = __commonJS({
       }
       return color === "w" ? white - black : black - white;
     }
-    function formatCp(cp) {
-      if (cp >= MATE_CP - 1e4) {
-        return "+M";
-      }
-      if (cp <= -MATE_CP + 1e4) {
-        return "-M";
-      }
-      const pawns = cp / 100;
-      const signed = pawns >= 0 ? `+${pawns.toFixed(2)}` : pawns.toFixed(2);
-      return signed;
-    }
     function buildMoveNote(category, cpl, before, playedMove, move, materialDelta, evalGain) {
       if (category === "brilliant") {
         return `Intentional sacrifice (${materialDelta}) with strong compensation (+${Math.max(0, evalGain)} cp).`;
@@ -5108,28 +5097,33 @@ var require_analyze = __commonJS({
       }
       if (cursor === 0) {
         const all = analysisByPly.filter((entry) => Boolean(entry));
-        const avgCpl = all.length > 0 ? Math.round(all.reduce((sum, item) => sum + item.cpl, 0) / all.length) : 0;
+        const whiteMoves = all.filter((m) => m.ply % 2 !== 0);
+        const blackMoves = all.filter((m) => m.ply % 2 === 0);
+        const calculateAccuracy = (moves) => {
+          if (moves.length === 0) return 100;
+          const avgCpl = moves.reduce((sum, item) => sum + item.cpl, 0) / moves.length;
+          return Math.max(0, Math.min(100, Math.round(100 * Math.exp(-4e-3 * avgCpl))));
+        };
+        const whiteAcc = calculateAccuracy(whiteMoves);
+        const blackAcc = calculateAccuracy(blackMoves);
         const blunders = all.filter((item) => item.category === "blunder").length;
         const brilliants = all.filter((item) => item.category === "brilliant").length;
         engineFeedback.innerHTML = `
-      <p class="engine-inline"><strong>Game summary</strong></p>
-      <p class="engine-inline">Average CPL: <strong>${avgCpl}</strong></p>
+      <div style="display: flex; justify-content: space-between; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.1);">
+        <div style="text-align: center;">
+          <div style="font-size: 2rem; font-weight: 700; color: var(--ink);">${whiteAcc}%</div>
+          <div style="font-size: 0.8rem; color: var(--muted); text-transform: uppercase;">White Accuracy</div>
+        </div>
+        <div style="text-align: center;">
+          <div style="font-size: 2rem; font-weight: 700; color: var(--ink);">${blackAcc}%</div>
+          <div style="font-size: 0.8rem; color: var(--muted); text-transform: uppercase;">Black Accuracy</div>
+        </div>
+      </div>
       <p class="engine-inline">Brilliants: <strong>${brilliants}</strong> \xB7 Blunders: <strong>${blunders}</strong></p>
-      <p class="engine-inline">Select a move in the list to see detailed feedback.</p>
+      <p class="engine-inline" style="margin-top: 10px;">Select a move in the list to see detailed feedback.</p>
     `;
         return;
       }
-      const details = analysisByPly[cursor];
-      if (!details) {
-        engineFeedback.innerHTML = "This move has no analysis yet.";
-        return;
-      }
-      engineFeedback.innerHTML = `
-    <p class="engine-inline"><strong>${details.label}</strong> \xB7 Move ${details.ply}</p>
-    <p class="engine-inline">Played: <strong>${details.playedMove}</strong> \xB7 Best: <strong>${details.bestMove || "(none)"}</strong></p>
-    <p class="engine-inline">Eval: <strong>${formatCp(details.beforeCp)}</strong> \u2192 <strong>${formatCp(details.afterCp)}</strong> (${details.cpl} CPL)</p>
-    <p class="engine-inline">${details.note}</p>
-  `;
     }
     function getLastMove() {
       if (cursor === 0) return void 0;
@@ -5150,6 +5144,28 @@ var require_analyze = __commonJS({
     window.addEventListener("beforeunload", () => {
       stockfish?.terminate();
     });
+    var postGameMovesStr = localStorage.getItem("postGameMoves");
+    if (postGameMovesStr) {
+      try {
+        const movesToLoad = JSON.parse(postGameMovesStr);
+        localStorage.removeItem("postGameMoves");
+        if (movesToLoad.length > 0) {
+          for (const san of movesToLoad) {
+            const move = chess.move(san);
+            if (move) {
+              moveHistory.push(move);
+              fenHistory.push(chess.fen());
+            }
+          }
+          cursor = fenHistory.length - 1;
+          setTimeout(() => {
+            void runGameAnalysis();
+          }, 100);
+        }
+      } catch (e) {
+        console.error("Failed to parse postGameMoves", e);
+      }
+    }
     render();
   }
 });

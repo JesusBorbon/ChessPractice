@@ -849,6 +849,8 @@ function renderBoard(): void {
   } else {
     animateLastMove(lastMove);
   }
+
+  
   renderArrows();
 }
 
@@ -1822,30 +1824,41 @@ function renderEngineFeedback(): void {
 
   if (cursor === 0) {
     const all = analysisByPly.filter((entry): entry is MoveAnalysis => Boolean(entry));
-    const avgCpl = all.length > 0 ? Math.round(all.reduce((sum, item) => sum + item.cpl, 0) / all.length) : 0;
+    
+    // Separate moves by color
+    const whiteMoves = all.filter(m => m.ply % 2 !== 0);
+    const blackMoves = all.filter(m => m.ply % 2 === 0);
+
+    // Accuracy Calculation Formula
+    const calculateAccuracy = (moves: MoveAnalysis[]) => {
+      if (moves.length === 0) return 100;
+      const avgCpl = moves.reduce((sum, item) => sum + item.cpl, 0) / moves.length;
+      // Exponential decay: e^(-0.004 * CPL). CPL of 20 = ~92%. CPL of 100 = ~67%.
+      return Math.max(0, Math.min(100, Math.round(100 * Math.exp(-0.004 * avgCpl))));
+    };
+
+    const whiteAcc = calculateAccuracy(whiteMoves);
+    const blackAcc = calculateAccuracy(blackMoves);
+
     const blunders = all.filter((item) => item.category === "blunder").length;
     const brilliants = all.filter((item) => item.category === "brilliant").length;
+
     engineFeedback.innerHTML = `
-      <p class="engine-inline"><strong>Game summary</strong></p>
-      <p class="engine-inline">Average CPL: <strong>${avgCpl}</strong></p>
+      <div style="display: flex; justify-content: space-between; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.1);">
+        <div style="text-align: center;">
+          <div style="font-size: 2rem; font-weight: 700; color: var(--ink);">${whiteAcc}%</div>
+          <div style="font-size: 0.8rem; color: var(--muted); text-transform: uppercase;">White Accuracy</div>
+        </div>
+        <div style="text-align: center;">
+          <div style="font-size: 2rem; font-weight: 700; color: var(--ink);">${blackAcc}%</div>
+          <div style="font-size: 0.8rem; color: var(--muted); text-transform: uppercase;">Black Accuracy</div>
+        </div>
+      </div>
       <p class="engine-inline">Brilliants: <strong>${brilliants}</strong> · Blunders: <strong>${blunders}</strong></p>
-      <p class="engine-inline">Select a move in the list to see detailed feedback.</p>
+      <p class="engine-inline" style="margin-top: 10px;">Select a move in the list to see detailed feedback.</p>
     `;
     return;
   }
-
-  const details = analysisByPly[cursor];
-  if (!details) {
-    engineFeedback.innerHTML = "This move has no analysis yet.";
-    return;
-  }
-
-  engineFeedback.innerHTML = `
-    <p class="engine-inline"><strong>${details.label}</strong> · Move ${details.ply}</p>
-    <p class="engine-inline">Played: <strong>${details.playedMove}</strong> · Best: <strong>${details.bestMove || "(none)"}</strong></p>
-    <p class="engine-inline">Eval: <strong>${formatCp(details.beforeCp)}</strong> → <strong>${formatCp(details.afterCp)}</strong> (${details.cpl} CPL)</p>
-    <p class="engine-inline">${details.note}</p>
-  `;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -1873,4 +1886,30 @@ window.addEventListener("beforeunload", () => {
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────────
+const postGameMovesStr = localStorage.getItem("postGameMoves");
+if (postGameMovesStr) {
+  try {
+    const movesToLoad = JSON.parse(postGameMovesStr) as string[];
+    localStorage.removeItem("postGameMoves"); // clear it immediately
+    
+    if (movesToLoad.length > 0) {
+      for (const san of movesToLoad) {
+        const move = chess.move(san);
+        if (move) {
+          moveHistory.push(move);
+          fenHistory.push(chess.fen());
+        }
+      }
+      // Snap the board to the end of the game
+      cursor = fenHistory.length - 1; 
+      
+      // Auto-start the Stockfish analysis engine
+      setTimeout(() => {
+        void runGameAnalysis();
+      }, 100);
+    }
+  } catch (e) {
+    console.error("Failed to parse postGameMoves", e);
+  }
+}
 render();

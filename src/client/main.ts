@@ -4,6 +4,7 @@ import { io } from "socket.io-client";
 import { BoardOrientation, SquareName, buildSquareList, isLightSquare } from "../../engine";
 import "./styles.css";
 import { mountThemeSwitcher } from "./theme";
+import { request } from "node:http";
 
 type PlayerRole = "w" | "b";
 type RoomRole = PlayerRole | "spectator";
@@ -57,6 +58,8 @@ type Premove = {
   promotion?: PromotionPiece;
 };
 
+
+
 type AppState = {
   connected: boolean;
   roomId: string | null;
@@ -77,6 +80,7 @@ type AppState = {
   animationStyle: "smooth" | "epic";
   bloodFxEnabled: boolean;
   gameMode: "multiplayer" | "bot";
+  viewCursor: number | null;
 };
 
 type EngineEval = {
@@ -135,6 +139,7 @@ const state: AppState = {
     animationStyle: (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth",
   bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on",
   gameMode: "multiplayer",
+  viewCursor: null,
 };
 
 (window as any).state = state;
@@ -526,6 +531,7 @@ const confirmYesBtn = must<HTMLButtonElement>("#confirmYesBtn");
 const confirmNoBtn = must<HTMLButtonElement>("#confirmNoBtn");
 const modalTitle = must<HTMLElement>("#modalTitle");
 const modalDescription = must<HTMLElement>("#modalDescription");
+const gameNav = must<HTMLElement>("#gameNav");
 
 mountThemeSwitcher();
 
@@ -741,6 +747,33 @@ focusModeButton.addEventListener("click", () => {
   void toggleFocusMode();
 });
 
+window.addEventListener("keydown", (e) => {
+  if (isTypingTarget(e.target)) return;
+  if (!state.snapshot || state.snapshot.moves.length === 0) return;
+
+  const maxMoves = state.snapshot.moves.length;
+  // If we aren't viewing history, our "current" position is the very end of the game
+  let currentPos = state.viewCursor !== null ? state.viewCursor : maxMoves;
+
+  if (e.key === "ArrowLeft") {
+    e.preventDefault();
+    if (currentPos > 0) {
+      state.viewCursor = currentPos - 1;
+      render();
+    }
+  } else if (e.key === "ArrowRight") {
+    e.preventDefault();
+    if (currentPos < maxMoves) {
+      state.viewCursor = currentPos + 1;
+      // If we reach the end of the history, snap back into live mode
+      if (state.viewCursor === maxMoves) {
+        state.viewCursor = null;
+      }
+      render();
+    }
+  }
+});
+
 window.addEventListener("keydown", (event) => {
   if (event.key.toLowerCase() !== "z" || isTypingTarget(event.target)) {
     return;
@@ -801,7 +834,7 @@ board.addEventListener("contextmenu", (event) => {
 
 
 let ptrDragFrom: Square | null = null;
-let ptrDragNode: HTMLElement | null = null;
+let ptrDragNode: HTMLImageElement | null = null;
 let ptrDragMoved = false;
 let ptrStartX = 0;
 let ptrStartY = 0;
@@ -935,7 +968,7 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
   }
 
   clearSelection();
-  requestBoardRefresh();
+  requestBoardRefresh(true);
   updateCaption();
 }
 
@@ -996,8 +1029,8 @@ async function triggerBotResponse() {
     if (state.premoves.length > 0) {
       checkAndExecutePremove(); 
     }
-    if (activeGhostAnimation) activeGhostAnimation.cancel();
-    renderBoard(); 
+
+    requestBoardRefresh(true); 
 
     if (state.snapshot.analysis.enabled) {
       void maybeRunLiveAnalysis(state.snapshot);
@@ -1338,9 +1371,23 @@ function cancelCurrentDrag(): void {
   state.legalTargets = [];
 }
 
+function getDisplayBoard(): Chess {
+  // If we are live, or have no history, show the real board
+  if (state.viewCursor === null || !state.snapshot) {
+    return state.premoves.length > 0 ? getVirtualBoard() : chess;
+  }
+
+  // Replay moves up to the cursor to get the historical FEN
+  const historyBoard = new Chess();
+  for (let i = 0; i < state.viewCursor; i++) {
+    historyBoard.move(state.snapshot.moves[i]!.san);
+  }
+  return historyBoard;
+}
+
 
 function renderBoard(): void {
-  // --- 1. UI DRAG SYNCHRONIZATION ---
+
   if (ptrDragFrom) {
     const pieceAtSource = chess.get(ptrDragFrom);
     if (!pieceAtSource || pieceAtSource.color !== state.role) {
@@ -1350,41 +1397,71 @@ function renderBoard(): void {
 
   const fragment = document.createDocumentFragment();
   const squares = buildSquareList(state.orientation);
-  const lastMoveSquares = new Set<string>();
-  const checkedKingSquare = getCheckedKingSquare();
-  const lastMove = state.snapshot?.lastMove ?? null;
   
-  const lastPremove = state.premoves.length > 0 ? state.premoves[state.premoves.length - 1] : null;
-  const vBoard = lastPremove ? getVirtualBoard() : null;
+  // Determine if we are reviewing history
+  const isHistoryView = state.viewCursor !== null;
+  const displayBoard = getDisplayBoard();
+  
+  // Figure out which move to highlight
+// Figure out which move to highlight
+  let lastMove = state.snapshot?.lastMove ?? null;
+  if (isHistoryView && state.snapshot && state.viewCursor !== null && state.viewCursor > 0) {
+    lastMove = state.snapshot.moves[state.viewCursor - 1] ?? null;
+  } else if (isHistoryView && state.viewCursor === 0) {
+    lastMove = null;
+  }
 
-  const liveGrade = state.snapshot?.analysis.enabled && state.snapshot.lastMove
-    ? state.liveMoveGrades[state.snapshot.moveCount]
-    : undefined;
-  const liveMarkerSquare = liveGrade && state.snapshot?.lastMove ? state.snapshot.lastMove.to : null;
-
+  const lastMoveSquares = new Set<string>();
   if (lastMove) {
     lastMoveSquares.add(lastMove.from);
     lastMoveSquares.add(lastMove.to);
   }
 
+  // Calculate checked king dynamically for the currently viewed board
+  let checkedKingSquare: string | null = null;
+  if (displayBoard.isCheck()) {
+    const checkedColor = displayBoard.turn();
+    for (const sqName of squares) {
+      const p = displayBoard.get(sqName as Square);
+      if (p?.type === "k" && p.color === checkedColor) {
+        checkedKingSquare = sqName;
+        break;
+      }
+    }
+  }
+
+  const liveGrade = state.snapshot?.analysis.enabled && state.snapshot.lastMove
+    ? state.liveMoveGrades[state.snapshot.moveCount]
+    : undefined;
+  // Only show the live grade badge if we are looking at the live board
+  const liveMarkerSquare = (!isHistoryView && liveGrade && state.snapshot?.lastMove) 
+    ? state.snapshot.lastMove.to 
+    : null;
+
   for (const squareName of squares) {
     const square = squareName as Square;
-    const piece = chess.get(square);
+    const piece = displayBoard.get(square);
+    
     const button = document.createElement("button");
     button.type = "button";
     button.tabIndex = -1;
     button.className = `square ${isLightSquare(squareName) ? "light" : "dark"}`;
     button.dataset.square = squareName;
 
-    if (state.selectedSquare === square) button.classList.add("selected");
-    if (state.legalTargets.includes(square)) button.classList.add("legal");
+    // Only show selection highlights if we are live
+    if (!isHistoryView && state.selectedSquare === square) button.classList.add("selected");
+    if (!isHistoryView && state.legalTargets.includes(square)) button.classList.add("legal");
+    
     if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
     if (checkedKingSquare === squareName) button.classList.add("in-check");
 
-    state.premoves.forEach((p) => {
-      if (p.from === square) button.classList.add("premove-from");
-      if (p.to === square) button.classList.add("premove-to");
-    });
+    // Only show queued premoves on the live board
+    if (!isHistoryView) {
+      state.premoves.forEach((p) => {
+        if (p.from === square) button.classList.add("premove-from");
+        if (p.to === square) button.classList.add("premove-to");
+      });
+    }
 
     // --- 2. RENDER REAL PIECE ---
     if (piece) {
@@ -1396,12 +1473,8 @@ function renderBoard(): void {
       const isTargetOfActiveAnimation = square === animatingToSquare && !animationFinished;
       const isBeingDragged = square === ptrDragFrom;
 
-      // UPDATED: Hide the piece if any queued premove targets this square. 
-      // This handles both capturing opponents and moving to your own occupied squares (anticipating capture).
-      const isTargetOfQueuedPremove = state.premoves.some(p => p.to === square);
-
-      // If any of these conditions are true, we hide the static piece on the board
-      if ((isTargetOfActiveAnimation && !isMyPremove) || isBeingDragged || isTargetOfQueuedPremove) {
+      // Notice: Target hiding logic for premove queues is completely gone
+      if ((isTargetOfActiveAnimation && !isMyPremove && !isHistoryView) || isBeingDragged) {
         pieceElement.style.opacity = "0";
         pieceElement.style.visibility = "hidden";
         pieceElement.style.pointerEvents = "none";
@@ -1424,59 +1497,63 @@ function renderBoard(): void {
       }
     }
 
-    // --- 3. RENDER PREMOVE GHOST ---
-    if (lastPremove && square === lastPremove.to && vBoard) {
-      const ghostPieceData = vBoard.get(square);
-      if (ghostPieceData) {
-        const ghostElement = document.createElement("span");
-        ghostElement.className = `piece piece-${ghostPieceData.type} ${ghostPieceData.color === "w" ? "white" : "black"} ghost-piece`;
-        Object.assign(ghostElement.style, {
-          opacity: "0.45",
-          position: "absolute",
-          inset: "0",
-          zIndex: "2",
-          pointerEvents: "none"
-        });
-
-        const ghostImage = document.createElement("img");
-        ghostImage.className = "piece-image";
-        ghostImage.src = PIECES[`${ghostPieceData.color}${ghostPieceData.type}`];
-        ghostImage.draggable = false;
-        ghostElement.append(ghostImage);
-        button.append(ghostElement);
-      }
-    }
-
     fragment.append(button);
   }
 
   board.replaceChildren(fragment);
 
-  // --- 4. ANIMATION SCHEDULING ---
-  const isPremoveExecution = suppressAnimationForMove && 
-                             lastMove && 
-                             lastMove.from === suppressAnimationForMove.from && 
-                             lastMove.to === suppressAnimationForMove.to;
+  // --- 3. ANIMATION SCHEDULING ---
+  if (!isHistoryView) {
+    const isPremoveExecution = suppressAnimationForMove && 
+                               lastMove && 
+                               lastMove.from === suppressAnimationForMove.from && 
+                               lastMove.to === suppressAnimationForMove.to;
 
-  if (isPremoveExecution) {
-    lastAnimatedMoveKey = `${state.snapshot!.moveCount}:${lastMove!.from}:${lastMove!.to}:${lastMove!.san}`;
-    suppressAnimationForMove = null; 
-    animationFinished = true;
-    requestAnimationFrame(() => renderBoard());
-  } else if (lastMove) {
-    const moveKey = `${state.snapshot!.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
-    if (lastAnimatedMoveKey !== moveKey) {
-      if (state.animationStyle === "epic") animateLastMoveEpic(lastMove);
-      else animateLastMove(lastMove);
+    if (isPremoveExecution) {
+      lastAnimatedMoveKey = `${state.snapshot!.moveCount}:${lastMove!.from}:${lastMove!.to}:${lastMove!.san}`;
+      suppressAnimationForMove = null; 
+      animationFinished = true;
+      requestAnimationFrame(() => renderBoard());
+    } else if (lastMove) {
+      const moveKey = `${state.snapshot!.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
+      if (lastAnimatedMoveKey !== moveKey) {
+        if (state.animationStyle === "epic") animateLastMoveEpic(lastMove);
+        else animateLastMove(lastMove);
+      }
+    }
+  } else {
+    // If we are navigating history, snap animations immediately to avoid weird floating pieces
+  if (activeGhostAnimation) {
+      const tempAnim = activeGhostAnimation;
+      activeGhostAnimation = null; 
+      tempAnim.cancel();
     }
   }
+  // --- 4. HISTORY NAVIGATION UI ---
+  const boardWrap = board.parentElement;
+  const existingLiveBtn = boardWrap?.querySelector(".snap-live-btn");
+  if (existingLiveBtn) existingLiveBtn.remove();
+
+  if (isHistoryView) {
+    const liveBtn = document.createElement("button");
+    liveBtn.className = "action cta-turquoise snap-live-btn";
+    liveBtn.innerHTML = "▶ Resume Live Game";
+    liveBtn.onclick = () => {
+      state.viewCursor = null;
+      render();
+    };
+    boardWrap?.appendChild(liveBtn);
+  }
+
+  renderArrows();
 
   renderArrows();
 
   const snapshot = state.snapshot;
   const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
 
-  if (gameEnded && snapshot) {
+  // Only show the game over overlay if they are at the end of the timeline
+  if (gameEnded && snapshot && !isHistoryView) {
     const overlay = document.createElement("div");
     overlay.className = "game-over-overlay";
     const title = document.createElement("h2");
@@ -1500,7 +1577,18 @@ function renderBoard(): void {
       else socket.emit("game:rematch");
     };
 
-    overlay.append(title, reason, overlayRematchBtn);
+    const overlayAnalyzeBtn = document.createElement("a");
+    overlayAnalyzeBtn.className = "action cta-rainbow";
+    overlayAnalyzeBtn.style.marginTop = "10px";
+    overlayAnalyzeBtn.style.textDecoration = "none";
+    // Send the FEN history to the analysis page via localStorage or URL params
+    overlayAnalyzeBtn.onclick = () => {
+      localStorage.setItem("postGameMoves", JSON.stringify(snapshot.moves.map(m => m.san)));
+      window.location.href = "/analyze";
+    };
+    overlayAnalyzeBtn.textContent = "Analyze Game";
+
+    overlay.append(title, reason, overlayRematchBtn, overlayAnalyzeBtn);
     board.append(overlay);
   }
 }
@@ -1612,11 +1700,11 @@ function detectCapturedPiece(previousFen: string, lastMove: MoveSummary): PieceS
 
   let move: Move | null = null;
   try {
-    move = replay.move({
-      from: lastMove.from,
-      to: lastMove.to,
-      promotion: promotion as "q" | "r" | "b" | "n" | undefined,
-    });
+    move = replay.move(
+      promotion 
+        ? { from: lastMove.from, to: lastMove.to, promotion: promotion as "q" | "r" | "b" | "n" }
+        : { from: lastMove.from, to: lastMove.to }
+    );
   } catch {
     return null;
   }
@@ -1772,31 +1860,61 @@ function renderMoves(): void {
 
   const rows: string[] = [];
   for (let index = 0; index < snapshot.moves.length; index += 2) {
-    const whiteMove = snapshot.moves[index];
-    const blackMove = snapshot.moves[index + 1];
+    const whiteMove = snapshot.moves[index] as MoveSummary | undefined;
+    const blackMove = snapshot.moves[index + 1] as MoveSummary | undefined;
+    
     const whitePly = index + 1;
     const blackPly = index + 2;
+    
     const whiteGrade = state.liveMoveGrades[whitePly];
     const blackGrade = state.liveMoveGrades[blackPly];
+    
     const whiteBadge = whiteMove && whiteGrade
       ? ` <span class="move-quality-tag ${whiteGrade.category}">${whiteGrade.label}</span>`
       : "";
     const blackBadge = blackMove && blackGrade
       ? ` <span class="move-quality-tag ${blackGrade.category}">${blackGrade.label}</span>`
       : "";
+      
     const moveNumber = Math.floor(index / 2) + 1;
+
+    // Apply a highlight if the user is currently viewing this specific move in history
+    const wActiveStyle = state.viewCursor === whitePly ? "background: var(--accent); color: #fffdf8;" : "";
+    const bActiveStyle = state.viewCursor === blackPly ? "background: var(--accent); color: #fffdf8;" : "";
 
     rows.push(`
       <div class="move-row">
         <strong>${moveNumber}.</strong>
-        <span>${whiteMove ? whiteMove.san : ""}${whiteBadge}</span>
-        <span>${blackMove ? blackMove.san : ""}${blackBadge}</span>
+        <span class="move-clickable" data-index="${whitePly}" style="cursor: pointer; padding: 2px 6px; border-radius: 4px; transition: background 0.2s ease, color 0.2s ease; ${wActiveStyle}">
+          ${whiteMove ? whiteMove.san : ""}${whiteBadge}
+        </span>
+        <span class="move-clickable" data-index="${blackPly}" style="cursor: pointer; padding: 2px 6px; border-radius: 4px; transition: background 0.2s ease, color 0.2s ease; ${bActiveStyle}">
+          ${blackMove ? blackMove.san : ""}${blackBadge}
+        </span>
       </div>
     `);
   }
 
   moveList.innerHTML = rows.join("");
 }
+
+moveList.addEventListener("click", (e) => {
+  const target = (e.target as HTMLElement).closest<HTMLSpanElement>(".move-clickable");
+  if (!target || !state.snapshot) return;
+  
+  const index = parseInt(target.dataset.index!, 10);
+  
+  // If they click the very last move in the game, snap back to live viewing mode
+  if (index === state.snapshot.moves.length) {
+    state.viewCursor = null;
+  } else {
+    // Otherwise, set the cursor to the clicked move
+    state.viewCursor = index;
+  }
+  
+  render();
+});
+
 function updateCaption(): void {
   const snapshot = state.snapshot;
   
@@ -2205,9 +2323,21 @@ function animateLastMove(lastMove: MoveSummary | null): void {
 }
 
 function requestBoardRefresh(force = false): void {
-  // Force flag allows immediate updates during rapid play
+  // FIX: Safely detach AND clean up the DOM before canceling
   if (force && activeGhostAnimation) {
-    activeGhostAnimation.cancel();
+    const tempAnim = activeGhostAnimation;
+    activeGhostAnimation = null; 
+    
+    // Manually clean up the DOM since we are bypassing the onEnd event
+    if (activeGhostNode) activeGhostNode.remove();
+    if (activeGhostDestinationPiece) activeGhostDestinationPiece.style.visibility = "";
+    
+    activeGhostNode = null;
+    activeGhostDestinationPiece = null;
+    animationFinished = true;
+    animatingToSquare = null;
+
+    tempAnim.cancel(); 
   }
 
   if (!force && activeGhostAnimation) {
@@ -2217,7 +2347,6 @@ function requestBoardRefresh(force = false): void {
 
   renderBoard();
 }
-
 
 function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   if (!state.snapshot || !lastMove) {
@@ -2331,6 +2460,12 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
 }
 
 function onSquarePressed(square: Square): void {
+  if (state.viewCursor !== null) {
+    // Optional: Snap back to live view if they click the board
+    state.viewCursor = null; 
+    render();
+    return;
+  }
   const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
   if (gameEnded) return;
 
@@ -2353,7 +2488,7 @@ function onSquarePressed(square: Square): void {
 
   if (square === state.selectedSquare) {
     clearSelection();
-    requestBoardRefresh();
+    requestBoardRefresh(true);
     updateCaption();
     return;
   }
@@ -2361,7 +2496,7 @@ function onSquarePressed(square: Square): void {
   if (state.legalTargets.includes(square)) {
     tryMoveFromTo(state.selectedSquare, square);
     clearSelection();
-    requestBoardRefresh();
+    requestBoardRefresh(true);
     updateCaption();
     return;
   }
@@ -2372,7 +2507,7 @@ function onSquarePressed(square: Square): void {
   }
 
   clearSelection();
-  requestBoardRefresh();
+  requestBoardRefresh(true);
   updateCaption();
 }
 
@@ -2400,6 +2535,8 @@ function legalTargetsForRole(square: Square, role: PlayerRole): Square[] {
 }
 
 function canStartMoveFrom(square: Square): boolean {
+  if (state.viewCursor !== null) return false;
+
   if (!state.snapshot || !state.role || state.role === "spectator") return false;
 
   // Miramos el tablero virtual para permitir arrastrar "fantasmas"
@@ -2449,6 +2586,7 @@ function tryMoveFromTo(from: Square, to: Square): void {
     if (!playerMoveResult) return;
 
     updateManualSnapshot(playerMoveResult);
+    requestBoardRefresh(true);
     render(); 
     playSoundForSnapshot(state.snapshot);
 
@@ -2541,10 +2679,10 @@ function updateManualSnapshot(move: Move): void {
   }
 }
 function isTheoreticallyPossible(from: Square, to: Square, piece: PieceSymbol, color: string): boolean {
-  const fromFile = from.charCodeAt(0) - 97; // a=0, b=1...
-  const fromRank = parseInt(from[1]); 
+ const fromFile = from.charCodeAt(0) - 97; 
+  const fromRank = parseInt(from[1]!); 
   const toFile = to.charCodeAt(0) - 97;
-  const toRank = parseInt(to[1]);
+  const toRank = parseInt(to[1]!);
   
   const dx = Math.abs(toFile - fromFile);
   const dy = Math.abs(toRank - fromRank);
@@ -2613,7 +2751,6 @@ function queuePremove(from: Square, to: Square): void {
 
   if (!piece || piece.color !== state.role) return;
 
-  // Verificamos geometría básica (caballo en L, alfil en diagonal, etc.)
   if (!isTheoreticallyPossible(from, to, piece.type, piece.color)) return;
 
   const existingIndex = state.premoves.findIndex(p => p.from === from && p.to === to);
