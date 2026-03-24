@@ -8016,17 +8016,24 @@ var require_main = __commonJS({
       const promotion = button.dataset.promotion;
       const { from, to } = state.pendingPromotion;
       if (state.gameMode === "bot") {
-        const moveResult = chess.move({ from, to, promotion });
+        let moveResult = null;
+        try {
+          moveResult = chess.move({ from, to, promotion });
+        } catch (e) {
+          console.warn("Invalid promotion move attempted");
+        }
+        state.pendingPromotion = null;
+        promotionDialog.hidden = true;
         if (moveResult) {
           updateManualSnapshot(moveResult);
           suppressAnimationForMove = { from, to };
-          state.pendingPromotion = null;
-          promotionDialog.hidden = true;
           render();
           playSoundForSnapshot(state.snapshot);
           if (!state.snapshot.checkmate && !state.snapshot.draw) {
             triggerBotResponse();
           }
+        } else {
+          requestBoardRefresh(true);
         }
       } else {
         socket.emit("game:move", { from, to, promotion });
@@ -9090,6 +9097,8 @@ var require_main = __commonJS({
       }
       const selectedPiece = chess.get(from);
       if (selectedPiece?.type === "p" && reachesPromotionRank(to, state.role)) {
+        const isLegal = chess.moves({ verbose: true }).some((m) => m.from === from && m.to === to);
+        if (!isLegal) return;
         state.pendingPromotion = { from, to };
         promotionDialog.hidden = false;
         return;

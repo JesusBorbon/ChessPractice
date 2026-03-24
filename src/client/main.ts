@@ -990,18 +990,12 @@ async function triggerBotResponse() {
   const bMove = chess.move({ from: bFrom, to: bTo, promotion: bPromo });
   
   if (bMove && state.snapshot) {
-    // 1. Actualizar estado (procesa sangre)
     updateManualSnapshot(bMove);
-
-    // 2. Sonido del bot
     playSoundForSnapshot(state.snapshot);
 
-    // 3. Si hay premoves, ejecutarlos YA
     if (state.premoves.length > 0) {
       checkAndExecutePremove(); 
     }
-
-    // 4. Render único (animateLastMove decidirá si anima o no)
     if (activeGhostAnimation) activeGhostAnimation.cancel();
     renderBoard(); 
 
@@ -1018,27 +1012,28 @@ promotionDialog.addEventListener("click", (event) => {
   const { from, to } = state.pendingPromotion;
 
   if (state.gameMode === "bot") {
-    // 1. Execute the promotion move locally
-    const moveResult = chess.move({ from, to, promotion });
-    
+    let moveResult: Move | null = null;
+    try {
+      moveResult = chess.move({ from, to, promotion });
+    } catch (e) {
+      console.warn("Invalid promotion move attempted");
+    }
+    state.pendingPromotion = null;
+    promotionDialog.hidden = true;
+
     if (moveResult) {
-      // 2. Update the local snapshot so the UI reflects the new piece
       updateManualSnapshot(moveResult);
-      
-      // 3. Clear UI flags and render
       suppressAnimationForMove = { from, to }; 
-      state.pendingPromotion = null;
-      promotionDialog.hidden = true;
       render();
       playSoundForSnapshot(state.snapshot!);
 
-      // 4. FIX: Manually trigger the Bot's response
       if (!state.snapshot!.checkmate && !state.snapshot!.draw) {
         triggerBotResponse(); 
       }
+    } else {
+      requestBoardRefresh(true);
     }
   } else {
-    // Standard multiplayer logic
     socket.emit("game:move", { from, to, promotion });
     state.pendingPromotion = null;
     promotionDialog.hidden = true;
@@ -2418,9 +2413,9 @@ function canStartMoveFrom(square: Square): boolean {
 }
 
 function tryMoveFromTo(from: Square, to: Square): void {
-  const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
+ const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
   if (gameEnded) return;
-  
+
   if (!state.snapshot || !state.role || state.role === "spectator") return;
 
   // Handle Premoves
@@ -2432,9 +2427,12 @@ function tryMoveFromTo(from: Square, to: Square): void {
   // Handle Promotion Branch
   const selectedPiece = chess.get(from);
   if (selectedPiece?.type === "p" && reachesPromotionRank(to, state.role)) {
+    // FIX: Verify the promotion move is actually legal before showing the dialog
+    const isLegal = chess.moves({ verbose: true }).some(m => m.from === from && m.to === to);
+    if (!isLegal) return; 
+
     state.pendingPromotion = { from, to };
     promotionDialog.hidden = false;
-    // We return here; the actual move happens in the promotionDialog click listener
     return;
   }
 
