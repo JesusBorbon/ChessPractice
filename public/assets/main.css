@@ -2329,4 +2329,13 @@ body.focus-mode #focusTimer {
   pointer-events: auto !important;
   cursor: pointer !important;
 }
+.capture-splatter,
+.capture-drop,
+.capture-blood-pool {
+  will-change: transform, opacity;
+  pointer-events: none;
+}
+.capture-drop {
+  box-shadow: 0 0 3px var(--pool-color, #b00) !important;
+}
 /*# sourceMappingURL=main.css.map */

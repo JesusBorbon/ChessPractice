@@ -7881,6 +7881,9 @@ var require_main = __commonJS({
     var arrowDragPointer = null;
     var arrowDragMoved = false;
     board.addEventListener("pointerdown", (event) => {
+      if (event.button === 0 && arrowAnnotations.size > 0) {
+        clearArrows();
+      }
       const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
       if (gameEnded) return;
       if (event.button === 2) {
@@ -8541,43 +8544,37 @@ var require_main = __commonJS({
     }
     function spawnBloodSplatter(square, capturedPiece) {
       const boardWrap = board.parentElement;
-      if (!boardWrap) {
-        return;
-      }
+      if (!boardWrap) return;
       const intensityByPiece = {
-        p: 1,
-        n: 1.28,
-        b: 1.32,
-        r: 1.5,
-        q: 2.05,
-        k: 1.75
+        p: 0.6,
+        n: 0.8,
+        b: 0.8,
+        r: 1,
+        q: 1.4,
+        k: 1.2
       };
-      const intensity = intensityByPiece[capturedPiece] ?? 1;
+      const intensity = intensityByPiece[capturedPiece] ?? 0.8;
       const center = squareCenter(square);
       const splatter = document.createElement("div");
       splatter.className = "capture-splatter";
       splatter.style.left = `${center.x / 800 * 100}%`;
       splatter.style.top = `${center.y / 800 * 100}%`;
       splatter.style.setProperty("--intensity", String(intensity));
-      const dropCount = Math.max(14, Math.floor((16 + Math.random() * 12) * intensity));
+      const dropCount = Math.floor(4 + Math.random() * 6 * intensity);
       for (let index = 0; index < dropCount; index += 1) {
         const drop = document.createElement("span");
         drop.className = "capture-drop";
         const angle = Math.random() * Math.PI * 2;
-        const distance = (24 + Math.random() * 58) * (0.88 + intensity * 0.28);
-        const size = (5.8 + Math.random() * 10.8) * (0.84 + intensity * 0.18);
-        const smear = 0.68 + Math.random() * (0.95 + intensity * 0.28);
-        const stretch = 0.68 + Math.random() * 1.4;
+        const distance = (20 + Math.random() * 40) * intensity;
+        const size = (6 + Math.random() * 10) * intensity;
         drop.style.setProperty("--dx", `${Math.cos(angle) * distance}px`);
         drop.style.setProperty("--dy", `${Math.sin(angle) * distance}px`);
         drop.style.setProperty("--size", `${size}px`);
-        drop.style.setProperty("--delay", `${Math.random() * 120}ms`);
-        drop.style.setProperty("--smear", `${smear}`);
-        drop.style.setProperty("--stretch", `${stretch}`);
+        drop.style.setProperty("--delay", `${Math.random() * 50}ms`);
         splatter.append(drop);
       }
       boardWrap.append(splatter);
-      splatter.addEventListener("animationend", () => splatter.remove(), { once: true });
+      setTimeout(() => splatter.remove(), 2500);
     }
     function toggleArrow(from, to) {
       const key = `${from}-${to}`;
@@ -9232,7 +9229,7 @@ var require_main = __commonJS({
     }
     function updateManualSnapshot(move) {
       if (!state.snapshot) return;
-      const countPieces = (f) => f.split(" ")[0].replace(/[^a-zA-Z]/g, "").length;
+      const countPieces = (f) => (f.split(" ")[0] || "").replace(/[^a-zA-Z]/g, "").length;
       const previousPieceCount = countPieces(state.snapshot.fen);
       const newSummary = {
         color: move.color,
@@ -9246,6 +9243,7 @@ var require_main = __commonJS({
       state.snapshot.moveCount++;
       state.snapshot.lastMove = newSummary;
       state.snapshot.moves.push(newSummary);
+      clearArrows();
       const currentPieceCount = countPieces(state.snapshot.fen);
       if (state.bloodFxEnabled && currentPieceCount < previousPieceCount) {
         spawnBloodSplatter(move.to, move.captured || "p");

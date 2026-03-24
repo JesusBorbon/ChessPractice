@@ -851,6 +851,10 @@ let arrowDragMoved = false;
 
 board.addEventListener("pointerdown", (event) => {
 
+  if (event.button === 0 && arrowAnnotations.size > 0) {
+    clearArrows();
+  }
+
   const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
   if (gameEnded) return;
 
@@ -1732,19 +1736,13 @@ function triggerCheckFlash(): void {
 
 function spawnBloodSplatter(square: Square, capturedPiece: PieceSymbol): void {
   const boardWrap = board.parentElement as HTMLElement | null;
-  if (!boardWrap) {
-    return;
-  }
+  if (!boardWrap) return;
 
+  // Reduced intensity multipliers so queens don't crash the browser
   const intensityByPiece: Record<PieceSymbol, number> = {
-    p: 1,
-    n: 1.28,
-    b: 1.32,
-    r: 1.5,
-    q: 2.05,
-    k: 1.75,
+    p: 0.6, n: 0.8, b: 0.8, r: 1.0, q: 1.4, k: 1.2,
   };
-  const intensity = intensityByPiece[capturedPiece] ?? 1;
+  const intensity = intensityByPiece[capturedPiece] ?? 0.8;
 
   const center = squareCenter(square);
   const splatter = document.createElement("div");
@@ -1753,26 +1751,27 @@ function spawnBloodSplatter(square: Square, capturedPiece: PieceSymbol): void {
   splatter.style.top = `${(center.y / 800) * 100}%`;
   splatter.style.setProperty("--intensity", String(intensity));
 
-  const dropCount = Math.max(14, Math.floor((16 + Math.random() * 12) * intensity));
+  // OPTIMIZATION 1: Drastically reduce maximum drops (from ~60 down to ~4-10)
+  const dropCount = Math.floor(4 + Math.random() * 6 * intensity);
+  
   for (let index = 0; index < dropCount; index += 1) {
     const drop = document.createElement("span");
     drop.className = "capture-drop";
     const angle = Math.random() * Math.PI * 2;
-    const distance = (24 + Math.random() * 58) * (0.88 + intensity * 0.28);
-    const size = (5.8 + Math.random() * 10.8) * (0.84 + intensity * 0.18);
-    const smear = 0.68 + Math.random() * (0.95 + intensity * 0.28);
-    const stretch = 0.68 + Math.random() * 1.4;
+    const distance = (20 + Math.random() * 40) * intensity;
+    const size = (6 + Math.random() * 10) * intensity; // Slightly larger drops to compensate
+    
     drop.style.setProperty("--dx", `${Math.cos(angle) * distance}px`);
     drop.style.setProperty("--dy", `${Math.sin(angle) * distance}px`);
     drop.style.setProperty("--size", `${size}px`);
-    drop.style.setProperty("--delay", `${Math.random() * 120}ms`);
-    drop.style.setProperty("--smear", `${smear}`);
-    drop.style.setProperty("--stretch", `${stretch}`);
+    drop.style.setProperty("--delay", `${Math.random() * 50}ms`);
     splatter.append(drop);
   }
 
   boardWrap.append(splatter);
-  splatter.addEventListener("animationend", () => splatter.remove(), { once: true });
+  
+  // OPTIMIZATION 2: Use setTimeout instead of animationend to prevent layout thrashing
+  setTimeout(() => splatter.remove(), 2500); 
 }
 
 function toggleArrow(from: Square, to: Square): void {
@@ -2656,7 +2655,7 @@ function updateManualSnapshot(move: Move): void {
   if (!state.snapshot) return;
 
   // Contamos piezas antes del movimiento
-  const countPieces = (f: string) => f.split(" ")[0].replace(/[^a-zA-Z]/g, "").length;
+  const countPieces = (f: string) => (f.split(" ")[0] || "").replace(/[^a-zA-Z]/g, "").length;
   const previousPieceCount = countPieces(state.snapshot.fen);
 
   const newSummary: MoveSummary = {
@@ -2672,8 +2671,10 @@ function updateManualSnapshot(move: Move): void {
   state.snapshot.moveCount++;
   state.snapshot.lastMove = newSummary;
   state.snapshot.moves.push(newSummary);
+
+  clearArrows();
   
-  // Lógica de Sangre
+  // blood logic
   const currentPieceCount = countPieces(state.snapshot.fen);
   if (state.bloodFxEnabled && currentPieceCount < previousPieceCount) {
     spawnBloodSplatter(move.to, (move.captured as PieceSymbol) || "p");
@@ -2696,14 +2697,14 @@ function isTheoreticallyPossible(from: Square, to: Square, piece: PieceSymbol, c
   const dx = Math.abs(toFile - fromFile);
   const dy = Math.abs(toRank - fromRank);
 
-  // No tiene sentido un movimiento a la misma casilla
+  // a movement with no distance is not possible
   if (dx === 0 && dy === 0) return false;
 
   switch (piece) {
-    case 'p': // Peón
+    case 'p': 
       const forward = (color === 'w') ? (toRank - fromRank) : (fromRank - toRank);
       const isStartRank = (color === 'w' && fromRank === 2) || (color === 'b' && fromRank === 7);
-      // Avance recto (1 o 2) o captura diagonal (1)
+     
       if (dx === 0) return forward === 1 || (isStartRank && forward === 2);
       if (dx === 1) return forward === 1;
       return false;

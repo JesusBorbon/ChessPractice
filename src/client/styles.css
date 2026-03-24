@@ -2313,3 +2313,16 @@ body.focus-mode #focusTimer {
   pointer-events: auto !important;
   cursor: pointer !important;
 }
+
+/* OPTIMIZATION: Hardware acceleration for blood effect */
+.capture-splatter,
+.capture-drop,
+.capture-blood-pool {
+  will-change: transform, opacity;
+  pointer-events: none;
+}
+
+.capture-drop {
+  /* Simplifies the expensive box-shadow on tiny drops */
+  box-shadow: 0 0 3px var(--pool-color, #b00) !important;
+}
