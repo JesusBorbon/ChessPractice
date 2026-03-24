@@ -2584,15 +2584,20 @@ function getVirtualBoard(): Chess {
   // 1. Creamos el tablero virtual
   const vBoard = new Chess(chess.fen());
   
+  const currentFenParts = vBoard.fen().split(" ");
+  currentFenParts[1] = state.role as string;
+  currentFenParts[3] = "-"; 
+  vBoard.load(currentFenParts.join(" "));
+
   for (const p of state.premoves) {
     try {
-      // EL TRUCO: Forzamos el turno del tablero virtual a TU rol
-      // para que chess.js permita encadenar movimientos seguidos.
-      const fenParts = vBoard.fen().split(" ");
-      fenParts[1] = state.role as string; 
-      vBoard.load(fenParts.join(" "));
-
       vBoard.move({ from: p.from, to: p.to, promotion: p.promotion || "q" });
+      
+      // Volver a forzar el turno después de cada premove en la cadena
+      const nextFenParts = vBoard.fen().split(" ");
+      nextFenParts[1] = state.role as string;
+      nextFenParts[3] = "-";  
+      vBoard.load(nextFenParts.join(" "));
     } catch (e) {
       // Si un movimiento de la cadena es físicamente imposible, paramos.
       break; 

@@ -9203,12 +9203,17 @@ var require_main = __commonJS({
     }
     function getVirtualBoard() {
       const vBoard = new Chess(chess.fen());
+      const currentFenParts = vBoard.fen().split(" ");
+      currentFenParts[1] = state.role;
+      currentFenParts[3] = "-";
+      vBoard.load(currentFenParts.join(" "));
       for (const p of state.premoves) {
         try {
-          const fenParts = vBoard.fen().split(" ");
-          fenParts[1] = state.role;
-          vBoard.load(fenParts.join(" "));
           vBoard.move({ from: p.from, to: p.to, promotion: p.promotion || "q" });
+          const nextFenParts = vBoard.fen().split(" ");
+          nextFenParts[1] = state.role;
+          nextFenParts[3] = "-";
+          vBoard.load(nextFenParts.join(" "));
         } catch (e) {
           break;
         }
