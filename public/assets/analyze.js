@@ -3583,9 +3583,7 @@ function mountThemeSwitcher() {
   `;
   document.body.appendChild(widget);
   const toggleButton = widget.querySelector(".theme-toggle-btn");
-  if (!toggleButton) {
-    return;
-  }
+  if (!toggleButton) return;
   setPanelCollapsed(widget, toggleButton, initialCollapsed);
   widget.addEventListener("click", (e) => {
     const toggle = e.target.closest(".theme-toggle-btn");
@@ -3597,13 +3595,9 @@ function mountThemeSwitcher() {
     const btn = e.target.closest(".theme-btn");
     if (btn?.dataset.theme) setTheme(btn.dataset.theme);
     const animBtn = e.target.closest(".animation-btn");
-    if (animBtn?.dataset.animation) {
-      setAnimationStyle(animBtn.dataset.animation);
-    }
+    if (animBtn?.dataset.animation) setAnimationStyle(animBtn.dataset.animation);
     const fxBtn = e.target.closest(".fx-btn");
-    if (fxBtn?.dataset.bloodfx) {
-      setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
-    }
+    if (fxBtn?.dataset.bloodfx) setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
   });
   document.querySelectorAll(".animation-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);

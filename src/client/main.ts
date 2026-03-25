@@ -81,6 +81,7 @@ type AppState = {
   bloodFxEnabled: boolean;
   gameMode: "multiplayer" | "bot";
   viewCursor: number | null;
+  trailFxEnabled: boolean; 
 };
 
 type EngineEval = {
@@ -140,6 +141,7 @@ const state: AppState = {
   bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on",
   gameMode: "multiplayer",
   viewCursor: null,
+  trailFxEnabled: localStorage.getItem("chess-trail-fx") === "on",
 };
 
 (window as any).state = state;
@@ -549,6 +551,7 @@ window.addEventListener("bloodfxchange", (event: Event) => {
   state.bloodFxEnabled = customEvent.detail.enabled;
 });
 
+
 const joinRoomButton = must<HTMLButtonElement>("#joinRoomButton");
 const copyLinkButton = must<HTMLButtonElement>("#copyLinkButton");
 const leaveRoomButton = must<HTMLButtonElement>("#leaveRoomButton");
@@ -917,15 +920,16 @@ board.addEventListener("pointermove", (event) => {
       
       ptrDragNode = document.createElement("img");
       ptrDragNode.src = spritePath;
+      // Clean drop-shadow for picking up pieces
       Object.assign(ptrDragNode.style, {
         position: "fixed",
         pointerEvents: "none",
         zIndex: "9999",
-        // Keep piece at 100% square size
         width: `${btn.offsetWidth}px`, 
         height: `${btn.offsetHeight}px`,
-        transform: "translate(-50%, -50%)",
-        transition: "none",
+        transform: "translate(-50%, -50%) scale(1.18)", 
+        filter: "drop-shadow(0 12px 20px rgba(0, 0, 0, 0.4))", 
+        transition: "transform 0.05s ease-out", 
         opacity: "1" 
       });
       
@@ -942,52 +946,49 @@ board.addEventListener("pointermove", (event) => {
 });
 
 function endPointerDrag(event: PointerEvent, commit: boolean): void {
-  if (!ptrDragFrom) return;
-  
-  const fromSquare = ptrDragFrom;
-  const wasDrag = ptrDragMoved;
-  
-  ptrDragFrom = null;
-  ptrDragMoved = false;
-  
-  if (ptrDragNode) {
-    ptrDragNode.remove();
-    ptrDragNode = null;
-  }
-  board.querySelector<HTMLElement>(".square.dragging")?.classList.remove("dragging");
+  const el = document.elementFromPoint(event.clientX, event.clientY);
+  const squareButton = el?.closest<HTMLButtonElement>(".square");
+  const targetSquare = squareButton?.dataset.square as Square | undefined;
 
-  // Clean up old animations BEFORE the new move
-  clearSelection();
-  requestBoardRefresh(true); 
-  updateCaption();
-
-  if (!wasDrag) {
-    if (commit) {
-      lastPointerTapSquare = fromSquare;
+  // SCENARIO 1: Tapping an empty square or opponent piece (no piece grabbed)
+  if (!ptrDragFrom) {
+    if (commit && targetSquare && !ptrDragMoved) {
+      // --- ADD THESE TWO LINES ---
+      lastPointerTapSquare = targetSquare;
       lastPointerTapAtMs = performance.now();
-      clearArrows();
-      onSquarePressed(fromSquare);
+      
+      onSquarePressed(targetSquare);
     }
     return;
   }
 
-  if (commit) {
-    // Dynamically calculate where the piece was dropped
-    const el = document.elementFromPoint(event.clientX, event.clientY);
-    const squareButton = el?.closest<HTMLButtonElement>(".square");
-    const targetSquare = squareButton?.dataset.square as Square | undefined;
-    
-    if (targetSquare && targetSquare !== fromSquare) {
-      lastDragCommitSquare = targetSquare;
-      lastDragCommitAtMs = performance.now();
-      
-      // Explicitly suppress the animation for drag-and-drop so it snaps instantly
-      suppressAnimationForMove = { from: fromSquare, to: targetSquare }; 
-      tryMoveFromTo(fromSquare, targetSquare);
+  const fromSquare = ptrDragFrom;
+  const wasDrag = ptrDragMoved;
+
+  // Cleanup visual drag states
+  ptrDragFrom = null;
+  ptrDragMoved = false;
+  if (ptrDragNode) { ptrDragNode.remove(); ptrDragNode = null; }
+  board.querySelector<HTMLElement>(".square.dragging")?.classList.remove("dragging");
+
+  // SCENARIO 2: Tapped a piece but didn't drag it
+  if (!wasDrag) {
+    if (commit && targetSquare) {
+      // --- ADD THESE TWO LINES HERE TOO ---
+      lastPointerTapSquare = targetSquare;
+      lastPointerTapAtMs = performance.now();
+
+      onSquarePressed(targetSquare);
     }
+    return;
+  }
+
+  // SCENARIO 3: Finished a real Drag-and-Drop
+  if (commit && targetSquare && targetSquare !== fromSquare) {
+    suppressAnimationForMove = { from: fromSquare, to: targetSquare };
+    tryMoveFromTo(fromSquare, targetSquare);
   }
 }
-
 function endArrowDrag(event: PointerEvent, commit: boolean): void {
   if (!arrowDragFrom) return;
 
@@ -1137,10 +1138,11 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
   const previousMoveCount = state.snapshot?.moveCount ?? 0;
   const previousFen = chess.fen();
   
-  // Animation fix: Interrupt ghost if a new move arrives
+  // 1. HARD INTERRUPT: If a new move arrives, stop any existing ghost animation 
+  // and cleanup the DOM immediately so it doesn't conflict with the new state.
   const isNewMove = snapshot.moveCount > previousMoveCount;
   if (isNewMove && activeGhostAnimation) {
-    activeGhostAnimation.cancel();
+    requestBoardRefresh(true); 
   }
 
   state.snapshot = snapshot;
@@ -1198,6 +1200,7 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
         suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
         socket.emit("game:move", nextMove.promotion ? nextMove : { from: nextMove.from, to: nextMove.to });
         void maybeRunLiveAnalysis(snapshot);
+        // Note: We return here because the server will send another state for this move.
         return; 
       } else {
         state.premoves = [];
@@ -1205,8 +1208,10 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
     }
   }
 
-  // Optimized refresh: only force if it's a real board change
-  requestBoardRefresh(isNewMove); 
+  // 2. THE FIX: Always force a refresh (true) when receiving room state.
+  // This kills any "ghost" hidden states from fast play or rejected moves.
+  requestBoardRefresh(true); 
+
   renderSession();
   renderMoves();
   updateCaption();
@@ -1235,9 +1240,9 @@ function must<TElement extends Element>(selector: string): TElement {
 }
 
 // main.ts - Update the render() function
-function render(): void {
+function render(force = false): void {
   const savedScroll = window.scrollY;
-  requestBoardRefresh();
+  requestBoardRefresh(force);
   renderSession();
   renderMoves();
   updateCaption();
@@ -1253,6 +1258,62 @@ function render(): void {
       window.scrollTo({ top: savedScroll, behavior: "instant" });
     }
   });
+}
+
+// --- ARCADE TRAIL ENGINE ---
+let trailRafId: number | null = null;
+
+function startTrailSpawning(): void {
+  if (!state.trailFxEnabled) return;
+
+  let lastSpawnTime = 0;
+  const spawnRateMs = 12; 
+
+  function spawn() {
+    // FIX: Look for whichever piece is currently moving (Dragged OR Animating)
+    const movingNode = activeGhostNode || ptrDragNode;
+
+    if (!movingNode) {
+      trailRafId = null;
+      return;
+    }
+
+    const now = performance.now();
+    if (now - lastSpawnTime > spawnRateMs) {
+      createTrailParticle(movingNode);
+      lastSpawnTime = now;
+    }
+
+    trailRafId = requestAnimationFrame(spawn);
+  }
+
+  if (trailRafId) cancelAnimationFrame(trailRafId);
+  trailRafId = requestAnimationFrame(spawn);
+}
+
+function createTrailParticle(sourceNode: HTMLElement): void {
+  const rect = sourceNode.getBoundingClientRect();
+  
+  const particle = document.createElement("div");
+  particle.className = "piece-trail-particle";
+  
+  const img = sourceNode.querySelector("img");
+  if (img) {
+    const imgEl = document.createElement("img");
+    imgEl.src = img.src;
+    imgEl.className = "piece-image";
+    particle.appendChild(imgEl);
+  }
+
+  particle.style.left = `${rect.left + window.scrollX}px`;
+  particle.style.top = `${rect.top + window.scrollY}px`;
+  particle.style.width = `${rect.width}px`;
+  particle.style.height = `${rect.height}px`;
+
+  document.body.appendChild(particle);
+  
+  // Clean up instantly when the subtle CSS fade finishes
+  setTimeout(() => particle.remove(), 250); 
 }
 
 function renderSession(): void {
@@ -1402,7 +1463,6 @@ function getDisplayBoard(): Chess {
 
 
 function renderBoard(): void {
-
   if (ptrDragFrom) {
     const pieceAtSource = chess.get(ptrDragFrom);
     if (!pieceAtSource || pieceAtSource.color !== state.role) {
@@ -1413,12 +1473,9 @@ function renderBoard(): void {
   const fragment = document.createDocumentFragment();
   const squares = buildSquareList(state.orientation);
   
-  // Determine if we are reviewing history
   const isHistoryView = state.viewCursor !== null;
   const displayBoard = getDisplayBoard();
   
-  // Figure out which move to highlight
-// Figure out which move to highlight
   let lastMove = state.snapshot?.lastMove ?? null;
   if (isHistoryView && state.snapshot && state.viewCursor !== null && state.viewCursor > 0) {
     lastMove = state.snapshot.moves[state.viewCursor - 1] ?? null;
@@ -1432,7 +1489,6 @@ function renderBoard(): void {
     lastMoveSquares.add(lastMove.to);
   }
 
-  // Calculate checked king dynamically for the currently viewed board
   let checkedKingSquare: string | null = null;
   if (displayBoard.isCheck()) {
     const checkedColor = displayBoard.turn();
@@ -1448,7 +1504,7 @@ function renderBoard(): void {
   const liveGrade = state.snapshot?.analysis.enabled && state.snapshot.lastMove
     ? state.liveMoveGrades[state.snapshot.moveCount]
     : undefined;
-  // Only show the live grade badge if we are looking at the live board
+    
   const liveMarkerSquare = (!isHistoryView && liveGrade && state.snapshot?.lastMove) 
     ? state.snapshot.lastMove.to 
     : null;
@@ -1463,22 +1519,24 @@ function renderBoard(): void {
     button.className = `square ${isLightSquare(squareName) ? "light" : "dark"}`;
     button.dataset.square = squareName;
 
-    // Only show selection highlights if we are live
     if (!isHistoryView && state.selectedSquare === square) button.classList.add("selected");
     if (!isHistoryView && state.legalTargets.includes(square)) button.classList.add("legal");
     
     if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
     if (checkedKingSquare === squareName) button.classList.add("in-check");
 
-    // Only show queued premoves on the live board
+    // --- 1. PREMOVE & RED CAPTURE LOGIC ---
     if (!isHistoryView) {
       state.premoves.forEach((p) => {
         if (p.from === square) button.classList.add("premove-from");
-        if (p.to === square) button.classList.add("premove-to");
+        if (p.to === square) {
+          button.classList.add("premove-to");
+          if (piece) button.classList.add("premove-capture");
+        }
       });
     }
 
-    // --- 2. RENDER REAL PIECE ---
+    // --- 2. RENDER REAL PIECE (OPTIMIZED VISIBILITY) ---
     if (piece) {
       const spritePath = PIECES[`${piece.color}${piece.type}`];
       const pieceElement = document.createElement("span");
@@ -1488,11 +1546,19 @@ function renderBoard(): void {
       const isTargetOfActiveAnimation = square === animatingToSquare && !animationFinished;
       const isBeingDragged = square === ptrDragFrom;
 
-      // Notice: Target hiding logic for premove queues is completely gone
-      if ((isTargetOfActiveAnimation && !isMyPremove && !isHistoryView) || isBeingDragged) {
+      // FIX: Only hide the piece if there is an ACTUAL active ghost node existing.
+      // If the animation was force-cancelled, activeGhostNode is null, so we show the piece.
+      const shouldHide = (isTargetOfActiveAnimation && activeGhostNode) || isBeingDragged;
+
+      if (shouldHide && !isMyPremove && !isHistoryView) {
         pieceElement.style.opacity = "0";
         pieceElement.style.visibility = "hidden";
         pieceElement.style.pointerEvents = "none";
+      } else {
+        // Explicitly force visibility back to normal
+        pieceElement.style.opacity = "1";
+        pieceElement.style.visibility = "";
+        pieceElement.style.pointerEvents = "";
       }
 
       if (isMyPremove) pieceElement.style.transition = "none";
@@ -1537,13 +1603,13 @@ function renderBoard(): void {
       }
     }
   } else {
-    // If we are navigating history, snap animations immediately to avoid weird floating pieces
-  if (activeGhostAnimation) {
+    if (activeGhostAnimation) {
       const tempAnim = activeGhostAnimation;
       activeGhostAnimation = null; 
       tempAnim.cancel();
     }
   }
+  
   // --- 4. HISTORY NAVIGATION UI ---
   const boardWrap = board.parentElement;
   const existingLiveBtn = boardWrap?.querySelector(".snap-live-btn");
@@ -1562,12 +1628,9 @@ function renderBoard(): void {
 
   renderArrows();
 
-  renderArrows();
-
   const snapshot = state.snapshot;
   const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
 
-  // Only show the game over overlay if they are at the end of the timeline
   if (gameEnded && snapshot && !isHistoryView) {
     const overlay = document.createElement("div");
     overlay.className = "game-over-overlay";
@@ -1596,7 +1659,6 @@ function renderBoard(): void {
     overlayAnalyzeBtn.className = "action cta-rainbow";
     overlayAnalyzeBtn.style.marginTop = "10px";
     overlayAnalyzeBtn.style.textDecoration = "none";
-    // Send the FEN history to the analysis page via localStorage or URL params
     overlayAnalyzeBtn.onclick = () => {
       localStorage.setItem("postGameMoves", JSON.stringify(snapshot.moves.map(m => m.san)));
       window.location.href = "/analyze";
@@ -2293,6 +2355,7 @@ function animateLastMove(lastMove: MoveSummary | null): void {
     transform: "translate3d(-50%, -50%, 0)",
     zIndex: "9999",
     pointerEvents: "none",
+    // Notice: No filter here, so no blurry black shadows!
   });
 
   // Hide the real piece at the destination until the ghost arrives
@@ -2301,7 +2364,7 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   activeGhostDestinationPiece = destinationPiece;
   document.body.append(ghostPiece);
 
-  // 5. Trigger the animation
+  // 5. Trigger the smooth animation
   const animation = ghostPiece.animate(
     [
       { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0)` },
@@ -2313,48 +2376,65 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   activeGhostAnimation = animation;
 
   const onEnd = () => {
-    ghostPiece.remove();
-    destinationPiece.style.visibility = "";
+  ghostPiece.remove();
+  destinationPiece.style.visibility = "";
+  destinationPiece.style.opacity = "1";
+
+  animationFinished = true;
+  animatingToSquare = null;
+
+  if (activeGhostAnimation === animation) {
+    activeGhostAnimation = null;
+    activeGhostNode = null;
+    activeGhostDestinationPiece = null;
     
-    // Reset flags so renderBoard knows the animation is over
-    animationFinished = true;
-    animatingToSquare = null;
-    
-    if (activeGhostAnimation === animation) {
-      activeGhostAnimation = null;
-      activeGhostNode = null;
-      activeGhostDestinationPiece = null;
-      renderBoard(); 
+    // If a server update arrived while we were animating, 
+    // run the render now that the path is clear.
+    if (pendingBoardRefresh) {
+      pendingBoardRefresh = false;
+      renderBoard();
     }
-  };
+  }
+};
 
   animation.addEventListener("finish", onEnd);
   animation.addEventListener("cancel", onEnd);
 }
 
 function requestBoardRefresh(force = false): void {
-  // FIX: Safely detach AND clean up the DOM before canceling
   if (force && activeGhostAnimation) {
     const tempAnim = activeGhostAnimation;
     activeGhostAnimation = null; 
-    
-    // Manually clean up the DOM since we are bypassing the onEnd event
-    if (activeGhostNode) activeGhostNode.remove();
-    if (activeGhostDestinationPiece) activeGhostDestinationPiece.style.visibility = "";
-    
-    activeGhostNode = null;
-    activeGhostDestinationPiece = null;
+
+    // 1. Physical Cleanup: Remove the moving ghost image
+    if (activeGhostNode) {
+      activeGhostNode.remove();
+      activeGhostNode = null;
+    }
+
+    // 2. Visibility Restore: Instantly show the "real" piece again
+    if (activeGhostDestinationPiece) {
+      activeGhostDestinationPiece.style.visibility = "";
+      activeGhostDestinationPiece.style.opacity = "1"; 
+      activeGhostDestinationPiece = null;
+    }
+
+    // 3. State Reset: Tell the renderer the animation is officially OVER
     animationFinished = true;
     animatingToSquare = null;
+    // We clear this so the same move doesn't try to re-animate instantly
+    lastAnimatedMoveKey = null; 
 
     tempAnim.cancel(); 
   }
 
+  // If a move is still animating and we aren't forcing, queue it up
   if (!force && activeGhostAnimation) {
     pendingBoardRefresh = true;
     return;
   }
 
+  pendingBoardRefresh = false;
   renderBoard();
 }
 
@@ -2367,7 +2447,6 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   const moveKey = `${state.snapshot.moveCount}:${lastMove.from}:${lastMove.to}:${lastMove.san}`;
   if (lastAnimatedMoveKey === moveKey) return;
 
-  // 1. Reset all flags if a premove or manual drag is happening
   if (state.premoves.length > 0 || suppressAnimationForMove) {
     lastAnimatedMoveKey = moveKey;
     suppressAnimationForMove = null; 
@@ -2380,7 +2459,7 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
 
   lastAnimatedMoveKey = moveKey;
   animationFinished = false;
-  animatingToSquare = lastMove.to; // ADDED: Prevents "double piece" flicker
+  animatingToSquare = lastMove.to;
 
   if (activeGhostAnimation) activeGhostAnimation.cancel();
   if (activeGhostNode) {
@@ -2406,21 +2485,8 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   const deltaX = startX - endX;
   const deltaY = startY - endY;
 
-  const computed = window.getComputedStyle(destinationPiece);
   const pieceRect = destinationPiece.getBoundingClientRect();
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
-  
-  // (Your Epic animation math remains the same...)
-  const randomRotation = Math.random() * 300 + 220;
-  const spinDirection = Math.random() > 0.5 ? 1 : -1;
-  const settleWobble = Math.random() * 14 + 8;
-  const profileRoll = Math.random();
-  const motionProfile = profileRoll < 0.38 ? "spin" : profileRoll < 0.76 ? "inertia" : "tilt";
-  const hasFlip = motionProfile === "spin" ? Math.random() > 0.45 : motionProfile === "inertia" ? Math.random() > 0.92 : false;
-  const spinStart = motionProfile === "spin" ? randomRotation * 0.22 * spinDirection : settleWobble * spinDirection;
-  const jumpA = 62 + Math.random() * 36;
-  const jumpB = 100 + Math.random() * 32;
-  const duration = 900 + Math.floor(Math.random() * 170);
   
   Object.assign(ghostPiece.style, {
     position: "absolute",
@@ -2438,32 +2504,87 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   activeGhostDestinationPiece = destinationPiece;
   document.body.append(ghostPiece);
 
-  const keyframes = [
-    { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg)`, offset: 0 },
-    { transform: `translate3d(calc(-50% + ${deltaX * 0.5}px), calc(-50% + ${deltaY * 0.5 - jumpA}px), 0) rotateZ(${spinStart}deg)`, offset: 0.4 },
-    { transform: "translate3d(-50%, -50%, 0) rotateZ(0deg)", offset: 1 }
-  ];
+  const aura = state.trailFxEnabled ? "drop-shadow(0 0 12px rgba(255,255,255,0.3))" : "";
+
+  // --- RANDOMIZED PROFILE SYSTEM ---
+  const roll = Math.random();
+  let profile = "slide"; // 40% chance
+  if (roll < 0.3) profile = "smash"; // 30% chance
+  else if (roll < 0.6) profile = "spin"; // 30% chance
+
+  let keyframes: Keyframe[] = [];
+  let duration = 600; // Base duration
+
+  if (profile === "smash") {
+    // 1. THE SMASH (Massive Jump & Scale)
+    duration = 800 + Math.random() * 100;
+    const jump = 90 + Math.random() * 40;
+    const scale = 1.25 + Math.random() * 0.15;
+    const spin = (Math.random() * 15 + 10) * (Math.random() > 0.5 ? 1 : -1);
+    
+    keyframes = [
+      { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) scale(1)`, filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 0 },
+      { transform: `translate3d(calc(-50% + ${deltaX * 0.15}px), calc(-50% + ${-jump}px), 0) rotateZ(${spin}deg) scale(${scale})`, filter: `brightness(1.4) drop-shadow(0 40px 25px rgba(0,0,0,0.45)) ${aura}`, offset: 0.65 },
+      { transform: `translate3d(-50%, calc(-50% + 8px), 0) rotateZ(${-(spin * 0.5)}deg) scale(0.92)`, filter: `brightness(1.05) drop-shadow(0 2px 4px rgba(0,0,0,0.7)) ${aura}`, offset: 0.92 },
+      { transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) scale(1)", filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 1 }
+    ];
+  } 
+  else if (profile === "spin") {
+    // 2. THE SPIN (360 Kickflip)
+    duration = 650 + Math.random() * 100;
+    const jump = 40 + Math.random() * 20;
+    const spinDir = Math.random() > 0.5 ? 360 : -360;
+    
+    keyframes = [
+      { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg)`, filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 0 },
+      { transform: `translate3d(calc(-50% + ${deltaX * 0.4}px), calc(-50% + ${-jump}px), 0) rotateZ(${spinDir * 0.6}deg)`, filter: `brightness(1.2) drop-shadow(0 15px 15px rgba(0,0,0,0.3)) ${aura}`, offset: 0.5 },
+      { transform: `translate3d(-50%, -50%, 0) rotateZ(${spinDir}deg)`, filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 1 }
+    ];
+  } 
+  else {
+    // 3. THE SLIDE (Fast, Low, Aggressive Tilt)
+    duration = 450 + Math.random() * 80; // Much faster
+    // Calculate tilt direction based on movement (deltaX is inverted: negative means moving right)
+    const tilt = deltaX < 0 ? 18 : (deltaX > 0 ? -18 : 0); 
+    
+    keyframes = [
+      { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) scale(1)`, filter: `brightness(1) ${aura}`, offset: 0 },
+      { transform: `translate3d(calc(-50% + ${deltaX * 0.4}px), calc(-50% + ${deltaY * 0.4 - 10}px), 0) rotateZ(${tilt}deg) scale(1.05)`, filter: `brightness(1.1) drop-shadow(0 8px 10px rgba(0,0,0,0.25)) ${aura}`, offset: 0.4 },
+      { transform: `translate3d(-50%, calc(-50% + 4px), 0) rotateZ(${-(tilt * 0.3)}deg) scale(0.95)`, filter: `brightness(1) drop-shadow(0 2px 2px rgba(0,0,0,0.5)) ${aura}`, offset: 0.9 },
+      { transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) scale(1)", filter: `brightness(1) ${aura}`, offset: 1 }
+    ];
+  }
 
   const animation = ghostPiece.animate(keyframes, {
     duration,
-    easing: "cubic-bezier(0.22, 0.61, 0.36, 1)",
+    easing: profile === "slide" ? "cubic-bezier(0.1, 0.9, 0.2, 1)" : "cubic-bezier(0.22, 0.61, 0.36, 1)", // Slide gets a punchier easing
   });
 
   activeGhostAnimation = animation;
+  
+  startTrailSpawning();
 
-  const onEnd = () => {
-    ghostPiece.remove();
-    destinationPiece.style.visibility = "";
-    animationFinished = true;
-    animatingToSquare = null; // ADDED: Cleanup
+ const onEnd = () => {
+  ghostPiece.remove();
+  destinationPiece.style.visibility = "";
+  destinationPiece.style.opacity = "1";
 
-    if (activeGhostAnimation === animation) {
-      activeGhostAnimation = null;
-      activeGhostNode = null;
-      activeGhostDestinationPiece = null;
+  animationFinished = true;
+  animatingToSquare = null;
+
+  if (activeGhostAnimation === animation) {
+    activeGhostAnimation = null;
+    activeGhostNode = null;
+    activeGhostDestinationPiece = null;
+    
+    // If a server update arrived while we were animating, 
+    // run the render now that the path is clear.
+    if (pendingBoardRefresh) {
+      pendingBoardRefresh = false;
       renderBoard();
     }
-  };
+  }
+};
 
   animation.addEventListener("finish", onEnd);
   animation.addEventListener("cancel", onEnd);
@@ -2595,7 +2716,7 @@ function tryMoveFromTo(from: Square, to: Square): void {
 
     updateManualSnapshot(playerMoveResult);
    
-    render(); 
+    render(true); 
     playSoundForSnapshot(state.snapshot);
 
     // Trigger Bot Response after a short delay

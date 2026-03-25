@@ -58,8 +58,10 @@ export function mountThemeSwitcher(): void {
   const collapsedRaw = localStorage.getItem(THEME_PANEL_COLLAPSED_KEY);
   const animationRaw = localStorage.getItem(ANIMATION_STORAGE_KEY);
   const savedAnimationStyle: AnimationStyle = animationRaw === "epic" ? "epic" : "smooth";
+  
   const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
   const bloodFxEnabled = bloodFxRaw === "on";
+
   const defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
   const initialCollapsed = collapsedRaw === null ? defaultCollapsed : collapsedRaw === "1";
 
@@ -101,9 +103,7 @@ export function mountThemeSwitcher(): void {
   document.body.appendChild(widget);
 
   const toggleButton = widget.querySelector<HTMLButtonElement>(".theme-toggle-btn");
-  if (!toggleButton) {
-    return;
-  }
+  if (!toggleButton) return;
 
   setPanelCollapsed(widget, toggleButton, initialCollapsed);
 
@@ -119,20 +119,16 @@ export function mountThemeSwitcher(): void {
     if (btn?.dataset.theme) setTheme(btn.dataset.theme as Theme);
 
     const animBtn = (e.target as Element).closest<HTMLButtonElement>(".animation-btn");
-    if (animBtn?.dataset.animation) {
-      setAnimationStyle(animBtn.dataset.animation as AnimationStyle);
-    }
+    if (animBtn?.dataset.animation) setAnimationStyle(animBtn.dataset.animation as AnimationStyle);
 
     const fxBtn = (e.target as Element).closest<HTMLButtonElement>(".fx-btn");
-    if (fxBtn?.dataset.bloodfx) {
-      setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
-    }
+    if (fxBtn?.dataset.bloodfx) setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
   });
 
   document.querySelectorAll<HTMLElement>(".animation-btn").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
+    btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
     btn.setAttribute("aria-checked", String(btn.dataset.animation === savedAnimationStyle));
-    });
+  });
 
   document.querySelectorAll<HTMLElement>(".fx-btn").forEach((btn) => {
     const isActive = (btn.dataset.bloodfx === "on") === bloodFxEnabled;

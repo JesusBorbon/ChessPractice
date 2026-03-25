@@ -7186,9 +7186,7 @@ function mountThemeSwitcher() {
   `;
   document.body.appendChild(widget);
   const toggleButton = widget.querySelector(".theme-toggle-btn");
-  if (!toggleButton) {
-    return;
-  }
+  if (!toggleButton) return;
   setPanelCollapsed(widget, toggleButton, initialCollapsed);
   widget.addEventListener("click", (e) => {
     const toggle = e.target.closest(".theme-toggle-btn");
@@ -7200,13 +7198,9 @@ function mountThemeSwitcher() {
     const btn = e.target.closest(".theme-btn");
     if (btn?.dataset.theme) setTheme(btn.dataset.theme);
     const animBtn = e.target.closest(".animation-btn");
-    if (animBtn?.dataset.animation) {
-      setAnimationStyle(animBtn.dataset.animation);
-    }
+    if (animBtn?.dataset.animation) setAnimationStyle(animBtn.dataset.animation);
     const fxBtn = e.target.closest(".fx-btn");
-    if (fxBtn?.dataset.bloodfx) {
-      setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
-    }
+    if (fxBtn?.dataset.bloodfx) setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
   });
   document.querySelectorAll(".animation-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
@@ -7280,7 +7274,8 @@ var require_main = __commonJS({
       animationStyle: localStorage.getItem("chess-animation-style") || "smooth",
       bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on",
       gameMode: "multiplayer",
-      viewCursor: null
+      viewCursor: null,
+      trailFxEnabled: localStorage.getItem("chess-trail-fx") === "on"
     };
     window.state = state;
     var lastAnimatedMoveKey = null;
@@ -7938,11 +7933,11 @@ var require_main = __commonJS({
             position: "fixed",
             pointerEvents: "none",
             zIndex: "9999",
-            // Keep piece at 100% square size
             width: `${btn.offsetWidth}px`,
             height: `${btn.offsetHeight}px`,
-            transform: "translate(-50%, -50%)",
-            transition: "none",
+            transform: "translate(-50%, -50%) scale(1.18)",
+            filter: "drop-shadow(0 12px 20px rgba(0, 0, 0, 0.4))",
+            transition: "transform 0.05s ease-out",
             opacity: "1"
           });
           document.body.append(ptrDragNode);
@@ -7955,7 +7950,17 @@ var require_main = __commonJS({
       }
     });
     function endPointerDrag(event, commit) {
-      if (!ptrDragFrom) return;
+      const el = document.elementFromPoint(event.clientX, event.clientY);
+      const squareButton = el?.closest(".square");
+      const targetSquare = squareButton?.dataset.square;
+      if (!ptrDragFrom) {
+        if (commit && targetSquare && !ptrDragMoved) {
+          lastPointerTapSquare = targetSquare;
+          lastPointerTapAtMs = performance.now();
+          onSquarePressed(targetSquare);
+        }
+        return;
+      }
       const fromSquare = ptrDragFrom;
       const wasDrag = ptrDragMoved;
       ptrDragFrom = null;
@@ -7965,28 +7970,17 @@ var require_main = __commonJS({
         ptrDragNode = null;
       }
       board.querySelector(".square.dragging")?.classList.remove("dragging");
-      clearSelection();
-      requestBoardRefresh(true);
-      updateCaption();
       if (!wasDrag) {
-        if (commit) {
-          lastPointerTapSquare = fromSquare;
+        if (commit && targetSquare) {
+          lastPointerTapSquare = targetSquare;
           lastPointerTapAtMs = performance.now();
-          clearArrows();
-          onSquarePressed(fromSquare);
+          onSquarePressed(targetSquare);
         }
         return;
       }
-      if (commit) {
-        const el = document.elementFromPoint(event.clientX, event.clientY);
-        const squareButton = el?.closest(".square");
-        const targetSquare = squareButton?.dataset.square;
-        if (targetSquare && targetSquare !== fromSquare) {
-          lastDragCommitSquare = targetSquare;
-          lastDragCommitAtMs = performance.now();
-          suppressAnimationForMove = { from: fromSquare, to: targetSquare };
-          tryMoveFromTo(fromSquare, targetSquare);
-        }
+      if (commit && targetSquare && targetSquare !== fromSquare) {
+        suppressAnimationForMove = { from: fromSquare, to: targetSquare };
+        tryMoveFromTo(fromSquare, targetSquare);
       }
     }
     function endArrowDrag(event, commit) {
@@ -8108,7 +8102,7 @@ var require_main = __commonJS({
       const previousFen = chess.fen();
       const isNewMove = snapshot.moveCount > previousMoveCount;
       if (isNewMove && activeGhostAnimation) {
-        activeGhostAnimation.cancel();
+        requestBoardRefresh(true);
       }
       state.snapshot = snapshot;
       if (!focusTimerStartMs || snapshot.moveCount < previousMoveCount) {
@@ -8156,7 +8150,7 @@ var require_main = __commonJS({
           }
         }
       }
-      requestBoardRefresh(isNewMove);
+      requestBoardRefresh(true);
       renderSession();
       renderMoves();
       updateCaption();
@@ -8179,9 +8173,9 @@ var require_main = __commonJS({
       }
       return element;
     }
-    function render() {
+    function render(force = false) {
       const savedScroll = window.scrollY;
-      requestBoardRefresh();
+      requestBoardRefresh(force);
       renderSession();
       renderMoves();
       updateCaption();
@@ -8194,6 +8188,45 @@ var require_main = __commonJS({
           window.scrollTo({ top: savedScroll, behavior: "instant" });
         }
       });
+    }
+    var trailRafId = null;
+    function startTrailSpawning() {
+      if (!state.trailFxEnabled) return;
+      let lastSpawnTime = 0;
+      const spawnRateMs = 12;
+      function spawn() {
+        const movingNode = activeGhostNode || ptrDragNode;
+        if (!movingNode) {
+          trailRafId = null;
+          return;
+        }
+        const now = performance.now();
+        if (now - lastSpawnTime > spawnRateMs) {
+          createTrailParticle(movingNode);
+          lastSpawnTime = now;
+        }
+        trailRafId = requestAnimationFrame(spawn);
+      }
+      if (trailRafId) cancelAnimationFrame(trailRafId);
+      trailRafId = requestAnimationFrame(spawn);
+    }
+    function createTrailParticle(sourceNode) {
+      const rect = sourceNode.getBoundingClientRect();
+      const particle = document.createElement("div");
+      particle.className = "piece-trail-particle";
+      const img = sourceNode.querySelector("img");
+      if (img) {
+        const imgEl = document.createElement("img");
+        imgEl.src = img.src;
+        imgEl.className = "piece-image";
+        particle.appendChild(imgEl);
+      }
+      particle.style.left = `${rect.left + window.scrollX}px`;
+      particle.style.top = `${rect.top + window.scrollY}px`;
+      particle.style.width = `${rect.width}px`;
+      particle.style.height = `${rect.height}px`;
+      document.body.appendChild(particle);
+      setTimeout(() => particle.remove(), 250);
     }
     function renderSession() {
       const snapshot = state.snapshot;
@@ -8341,7 +8374,10 @@ var require_main = __commonJS({
         if (!isHistoryView) {
           state.premoves.forEach((p) => {
             if (p.from === square) button.classList.add("premove-from");
-            if (p.to === square) button.classList.add("premove-to");
+            if (p.to === square) {
+              button.classList.add("premove-to");
+              if (piece) button.classList.add("premove-capture");
+            }
           });
         }
         if (piece) {
@@ -8351,10 +8387,15 @@ var require_main = __commonJS({
           const isMyPremove = suppressAnimationForMove && square === suppressAnimationForMove.to;
           const isTargetOfActiveAnimation = square === animatingToSquare && !animationFinished;
           const isBeingDragged = square === ptrDragFrom;
-          if (isTargetOfActiveAnimation && !isMyPremove && !isHistoryView || isBeingDragged) {
+          const shouldHide = isTargetOfActiveAnimation && activeGhostNode || isBeingDragged;
+          if (shouldHide && !isMyPremove && !isHistoryView) {
             pieceElement.style.opacity = "0";
             pieceElement.style.visibility = "hidden";
             pieceElement.style.pointerEvents = "none";
+          } else {
+            pieceElement.style.opacity = "1";
+            pieceElement.style.visibility = "";
+            pieceElement.style.pointerEvents = "";
           }
           if (isMyPremove) pieceElement.style.transition = "none";
           const pieceImage = document.createElement("img");
@@ -8407,7 +8448,6 @@ var require_main = __commonJS({
         };
         boardWrap?.appendChild(liveBtn);
       }
-      renderArrows();
       renderArrows();
       const snapshot = state.snapshot;
       const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
@@ -8956,6 +8996,7 @@ var require_main = __commonJS({
         transform: "translate3d(-50%, -50%, 0)",
         zIndex: "9999",
         pointerEvents: "none"
+        // Notice: No filter here, so no blurry black shadows!
       });
       destinationPiece.style.visibility = "hidden";
       activeGhostNode = ghostPiece;
@@ -8972,13 +9013,17 @@ var require_main = __commonJS({
       const onEnd = () => {
         ghostPiece.remove();
         destinationPiece.style.visibility = "";
+        destinationPiece.style.opacity = "1";
         animationFinished = true;
         animatingToSquare = null;
         if (activeGhostAnimation === animation) {
           activeGhostAnimation = null;
           activeGhostNode = null;
           activeGhostDestinationPiece = null;
-          renderBoard();
+          if (pendingBoardRefresh) {
+            pendingBoardRefresh = false;
+            renderBoard();
+          }
         }
       };
       animation.addEventListener("finish", onEnd);
@@ -8988,18 +9033,25 @@ var require_main = __commonJS({
       if (force && activeGhostAnimation) {
         const tempAnim = activeGhostAnimation;
         activeGhostAnimation = null;
-        if (activeGhostNode) activeGhostNode.remove();
-        if (activeGhostDestinationPiece) activeGhostDestinationPiece.style.visibility = "";
-        activeGhostNode = null;
-        activeGhostDestinationPiece = null;
+        if (activeGhostNode) {
+          activeGhostNode.remove();
+          activeGhostNode = null;
+        }
+        if (activeGhostDestinationPiece) {
+          activeGhostDestinationPiece.style.visibility = "";
+          activeGhostDestinationPiece.style.opacity = "1";
+          activeGhostDestinationPiece = null;
+        }
         animationFinished = true;
         animatingToSquare = null;
+        lastAnimatedMoveKey = null;
         tempAnim.cancel();
       }
       if (!force && activeGhostAnimation) {
         pendingBoardRefresh = true;
         return;
       }
+      pendingBoardRefresh = false;
       renderBoard();
     }
     function animateLastMoveEpic(lastMove) {
@@ -9042,19 +9094,8 @@ var require_main = __commonJS({
       const endY = toRect.top + toRect.height / 2 + window.scrollY;
       const deltaX = startX - endX;
       const deltaY = startY - endY;
-      const computed = window.getComputedStyle(destinationPiece);
       const pieceRect = destinationPiece.getBoundingClientRect();
       const ghostPiece = destinationPiece.cloneNode(true);
-      const randomRotation = Math.random() * 300 + 220;
-      const spinDirection = Math.random() > 0.5 ? 1 : -1;
-      const settleWobble = Math.random() * 14 + 8;
-      const profileRoll = Math.random();
-      const motionProfile = profileRoll < 0.38 ? "spin" : profileRoll < 0.76 ? "inertia" : "tilt";
-      const hasFlip = motionProfile === "spin" ? Math.random() > 0.45 : motionProfile === "inertia" ? Math.random() > 0.92 : false;
-      const spinStart = motionProfile === "spin" ? randomRotation * 0.22 * spinDirection : settleWobble * spinDirection;
-      const jumpA = 62 + Math.random() * 36;
-      const jumpB = 100 + Math.random() * 32;
-      const duration = 900 + Math.floor(Math.random() * 170);
       Object.assign(ghostPiece.style, {
         position: "absolute",
         left: `${endX}px`,
@@ -9069,26 +9110,64 @@ var require_main = __commonJS({
       activeGhostNode = ghostPiece;
       activeGhostDestinationPiece = destinationPiece;
       document.body.append(ghostPiece);
-      const keyframes = [
-        { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg)`, offset: 0 },
-        { transform: `translate3d(calc(-50% + ${deltaX * 0.5}px), calc(-50% + ${deltaY * 0.5 - jumpA}px), 0) rotateZ(${spinStart}deg)`, offset: 0.4 },
-        { transform: "translate3d(-50%, -50%, 0) rotateZ(0deg)", offset: 1 }
-      ];
+      const aura = state.trailFxEnabled ? "drop-shadow(0 0 12px rgba(255,255,255,0.3))" : "";
+      const roll = Math.random();
+      let profile = "slide";
+      if (roll < 0.3) profile = "smash";
+      else if (roll < 0.6) profile = "spin";
+      let keyframes = [];
+      let duration = 600;
+      if (profile === "smash") {
+        duration = 800 + Math.random() * 100;
+        const jump = 90 + Math.random() * 40;
+        const scale = 1.25 + Math.random() * 0.15;
+        const spin = (Math.random() * 15 + 10) * (Math.random() > 0.5 ? 1 : -1);
+        keyframes = [
+          { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) scale(1)`, filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 0 },
+          { transform: `translate3d(calc(-50% + ${deltaX * 0.15}px), calc(-50% + ${-jump}px), 0) rotateZ(${spin}deg) scale(${scale})`, filter: `brightness(1.4) drop-shadow(0 40px 25px rgba(0,0,0,0.45)) ${aura}`, offset: 0.65 },
+          { transform: `translate3d(-50%, calc(-50% + 8px), 0) rotateZ(${-(spin * 0.5)}deg) scale(0.92)`, filter: `brightness(1.05) drop-shadow(0 2px 4px rgba(0,0,0,0.7)) ${aura}`, offset: 0.92 },
+          { transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) scale(1)", filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 1 }
+        ];
+      } else if (profile === "spin") {
+        duration = 650 + Math.random() * 100;
+        const jump = 40 + Math.random() * 20;
+        const spinDir = Math.random() > 0.5 ? 360 : -360;
+        keyframes = [
+          { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg)`, filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 0 },
+          { transform: `translate3d(calc(-50% + ${deltaX * 0.4}px), calc(-50% + ${-jump}px), 0) rotateZ(${spinDir * 0.6}deg)`, filter: `brightness(1.2) drop-shadow(0 15px 15px rgba(0,0,0,0.3)) ${aura}`, offset: 0.5 },
+          { transform: `translate3d(-50%, -50%, 0) rotateZ(${spinDir}deg)`, filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 1 }
+        ];
+      } else {
+        duration = 450 + Math.random() * 80;
+        const tilt = deltaX < 0 ? 18 : deltaX > 0 ? -18 : 0;
+        keyframes = [
+          { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) scale(1)`, filter: `brightness(1) ${aura}`, offset: 0 },
+          { transform: `translate3d(calc(-50% + ${deltaX * 0.4}px), calc(-50% + ${deltaY * 0.4 - 10}px), 0) rotateZ(${tilt}deg) scale(1.05)`, filter: `brightness(1.1) drop-shadow(0 8px 10px rgba(0,0,0,0.25)) ${aura}`, offset: 0.4 },
+          { transform: `translate3d(-50%, calc(-50% + 4px), 0) rotateZ(${-(tilt * 0.3)}deg) scale(0.95)`, filter: `brightness(1) drop-shadow(0 2px 2px rgba(0,0,0,0.5)) ${aura}`, offset: 0.9 },
+          { transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) scale(1)", filter: `brightness(1) ${aura}`, offset: 1 }
+        ];
+      }
       const animation = ghostPiece.animate(keyframes, {
         duration,
-        easing: "cubic-bezier(0.22, 0.61, 0.36, 1)"
+        easing: profile === "slide" ? "cubic-bezier(0.1, 0.9, 0.2, 1)" : "cubic-bezier(0.22, 0.61, 0.36, 1)"
+        // Slide gets a punchier easing
       });
       activeGhostAnimation = animation;
+      startTrailSpawning();
       const onEnd = () => {
         ghostPiece.remove();
         destinationPiece.style.visibility = "";
+        destinationPiece.style.opacity = "1";
         animationFinished = true;
         animatingToSquare = null;
         if (activeGhostAnimation === animation) {
           activeGhostAnimation = null;
           activeGhostNode = null;
           activeGhostDestinationPiece = null;
-          renderBoard();
+          if (pendingBoardRefresh) {
+            pendingBoardRefresh = false;
+            renderBoard();
+          }
         }
       };
       animation.addEventListener("finish", onEnd);
@@ -9185,7 +9264,7 @@ var require_main = __commonJS({
         playerMoveResult = chess.move({ from, to, promotion: "q" });
         if (!playerMoveResult) return;
         updateManualSnapshot(playerMoveResult);
-        render();
+        render(true);
         playSoundForSnapshot(state.snapshot);
         if (!state.snapshot.checkmate && !state.snapshot.draw) {
           setTimeout(() => triggerBotResponse(), 600);

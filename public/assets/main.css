@@ -757,7 +757,8 @@ button {
   animation: check-pulse 1.05s ease-in-out infinite;
 }
 .square.last-move::before {
-  background: rgba(56, 132, 245, 0.38);
+  background: rgba(255, 214, 66, 0.45) !important;
+  box-shadow: inset 0 0 0 2px rgba(255, 214, 66, 0.6) !important;
   inset: 0;
   border-radius: 0;
 }
@@ -775,6 +776,18 @@ button {
 .square.premove-to::before {
   background: rgba(200, 50, 30, 0.45);
   box-shadow: inset 0 0 0 4px rgba(220, 50, 20, 0.95);
+}
+.square.premove-capture,
+[data-theme] .square.premove-capture {
+  background-color: rgba(235, 64, 52, 0.6) !important;
+  background: rgba(235, 64, 52, 0.6) !important;
+  box-shadow: inset 0 0 0 4px rgba(235, 64, 52, 0.9) !important;
+}
+.square.premove-capture::before,
+.square.premove-capture::after {
+  background: transparent !important;
+  box-shadow: none !important;
+  display: none !important;
 }
 .square.premove-from .piece,
 .square.premove-to .piece {
@@ -1113,13 +1126,6 @@ body.focus-mode.focus-multiplayer .board-caption,
 body.focus-mode.focus-multiplayer .game-nav {
   display: none !important;
 }
-body.focus-mode.focus-multiplayer .app-shell {
-  padding: 0;
-  height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 body.focus-mode.focus-multiplayer .layout {
   margin: 0;
   grid-template-columns: 1fr;
@@ -1200,49 +1206,51 @@ body.focus-mode.focus-multiplayer .board-panel {
   }
   body.focus-mode.focus-multiplayer .app-shell {
     width: 100vw;
-    max-width: 100vw;
     height: 100dvh;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    place-items: center;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    flex-direction: column;
+    justify-content: center !important;
+    align-items: center !important;
+    overflow: hidden;
   }
   body.focus-mode.focus-multiplayer .layout {
     width: 100vw;
-    height: 100dvh;
-    display: grid;
-    place-items: center;
+    height: auto !important;
+    margin: 0 !important;
+    display: flex !important;
+    justify-content: center;
+    align-items: center;
   }
   body.focus-mode.focus-multiplayer .board-panel {
-    width: 100vw;
-    height: 100vw;
+    width: 95vw;
+    max-width: 95vw;
+    height: 95vw;
     padding: 0;
-    border: 0;
-    border-radius: 0;
     background: transparent;
-    box-shadow: none;
   }
-  body.focus-mode.focus-multiplayer .focus-toggle-btn {
-    left: 50%;
-    right: auto;
-    top: auto;
-    bottom: max(8px, env(safe-area-inset-bottom));
-    transform: translateX(-50%);
-  }
-  body.focus-mode.focus-multiplayer .board-wrap {
-    width: 100%;
-    height: 100%;
-  }
-  body.focus-mode.focus-multiplayer .board {
-    width: 100%;
-    height: 100%;
-    border-radius: 0;
-  }
-  body.focus-mode.focus-multiplayer .focus-chip {
-    min-width: 66px;
-    padding: 5px 10px;
-    font-size: 0.78rem;
-  }
+}
+body.focus-mode.focus-multiplayer .focus-toggle-btn {
+  left: 50%;
+  right: auto;
+  top: auto;
+  bottom: max(8px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+}
+body.focus-mode.focus-multiplayer .board-wrap {
+  width: 100%;
+  height: 100%;
+}
+body.focus-mode.focus-multiplayer .board {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+body.focus-mode.focus-multiplayer .focus-chip {
+  min-width: 66px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
 }
 @keyframes arrow-flow {
   from {
@@ -1543,11 +1551,11 @@ body.focus-mode.focus-multiplayer .board-panel {
   background:
     radial-gradient(
       circle at top left,
-      rgba(160, 60, 255, 0.18),
+      rgba(144, 0, 255, 0.18),
       transparent 32%),
     radial-gradient(
       circle at bottom right,
-      rgba(90, 20, 200, 0.22),
+      rgba(129, 8, 222, 0.22),
       transparent 28%),
     linear-gradient(
       135deg,
@@ -1661,7 +1669,8 @@ body.focus-mode.focus-multiplayer .board-panel {
   box-shadow: inset 0 0 0 5px rgba(220, 160, 255, 0.85);
 }
 [data-theme=purple] .square.last-move::before {
-  background: rgba(140, 100, 255, 0.35);
+  background: rgba(255, 0, 238, 0.35) !important;
+  box-shadow: inset 0 0 0 2px rgba(255, 0, 247, 0.5) !important;
 }
 [data-theme=purple] .square.legal::before {
   background: rgba(200, 160, 255, 0.22);
@@ -1678,13 +1687,15 @@ body.focus-mode.focus-multiplayer .board-panel {
   box-shadow: inset 0 0 0 5px rgba(240, 196, 50, 0.88);
 }
 [data-theme=walnut] .square.last-move::before {
-  background: rgba(200, 140, 50, 0.36);
+  background: rgba(255, 140, 0, 0.4) !important;
+  box-shadow: inset 0 0 0 2px rgba(255, 140, 0, 0.6) !important;
 }
 [data-theme=refined] .square.selected {
   box-shadow: inset 0 0 0 5px rgba(255, 209, 102, 0.84);
 }
 [data-theme=refined] .square.last-move::before {
-  background: rgba(70, 130, 180, 0.32);
+  background: rgba(56, 163, 255, 0.38) !important;
+  box-shadow: inset 0 0 0 2px rgba(56, 163, 255, 0.5) !important;
 }
 [data-theme=refined] .square.legal::before {
   background: rgba(16, 56, 88, 0.2);
