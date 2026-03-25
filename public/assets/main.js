@@ -7970,6 +7970,7 @@ var require_main = __commonJS({
         ptrDragNode = null;
       }
       board.querySelector(".square.dragging")?.classList.remove("dragging");
+      requestBoardRefresh(true);
       if (!wasDrag) {
         if (commit && targetSquare) {
           lastPointerTapSquare = targetSquare;
@@ -9044,7 +9045,6 @@ var require_main = __commonJS({
         }
         animationFinished = true;
         animatingToSquare = null;
-        lastAnimatedMoveKey = null;
         tempAnim.cancel();
       }
       if (!force && activeGhostAnimation) {
@@ -9208,9 +9208,11 @@ var require_main = __commonJS({
         selectSquare(square);
         return;
       }
-      clearSelection();
-      requestBoardRefresh(true);
-      updateCaption();
+      if (state.selectedSquare) {
+        clearSelection();
+        requestBoardRefresh(true);
+        updateCaption();
+      }
     }
     function selectSquare(square) {
       state.selectedSquare = square;
@@ -9405,11 +9407,15 @@ var require_main = __commonJS({
         if (clickedPiece && clickedPiece.color === state.role) {
           state.selectedSquare = square;
           state.legalTargets = vBoard.moves({ square, verbose: true }).map((m) => m.to);
+          requestBoardRefresh(true);
+          updateCaption();
         } else {
-          state.premoves = [];
+          if (state.premoves.length > 0) {
+            state.premoves = [];
+            requestBoardRefresh(true);
+            updateCaption();
+          }
         }
-        requestBoardRefresh(true);
-        updateCaption();
         return;
       }
       if (square === state.selectedSquare) {
@@ -9424,8 +9430,8 @@ var require_main = __commonJS({
       } else {
         state.premoves = [];
         clearSelection();
+        requestBoardRefresh(true);
       }
-      requestBoardRefresh(true);
       updateCaption();
     }
     function isOwnPiece(color) {

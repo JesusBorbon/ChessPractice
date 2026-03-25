@@ -944,7 +944,6 @@ board.addEventListener("pointermove", (event) => {
   
   }
 });
-
 function endPointerDrag(event: PointerEvent, commit: boolean): void {
   const el = document.elementFromPoint(event.clientX, event.clientY);
   const squareButton = el?.closest<HTMLButtonElement>(".square");
@@ -953,7 +952,6 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
   // SCENARIO 1: Tapping an empty square or opponent piece (no piece grabbed)
   if (!ptrDragFrom) {
     if (commit && targetSquare && !ptrDragMoved) {
-      // --- ADD THESE TWO LINES ---
       lastPointerTapSquare = targetSquare;
       lastPointerTapAtMs = performance.now();
       
@@ -971,10 +969,13 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
   if (ptrDragNode) { ptrDragNode.remove(); ptrDragNode = null; }
   board.querySelector<HTMLElement>(".square.dragging")?.classList.remove("dragging");
 
+  // FIX: Force a sync right after dropping a piece. 
+  // This clears the inline 'opacity: 0' applied during dragging to prevent flickering.
+  requestBoardRefresh(true);
+
   // SCENARIO 2: Tapped a piece but didn't drag it
   if (!wasDrag) {
     if (commit && targetSquare) {
-      // --- ADD THESE TWO LINES HERE TOO ---
       lastPointerTapSquare = targetSquare;
       lastPointerTapAtMs = performance.now();
 
@@ -989,6 +990,7 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
     tryMoveFromTo(fromSquare, targetSquare);
   }
 }
+
 function endArrowDrag(event: PointerEvent, commit: boolean): void {
   if (!arrowDragFrom) return;
 
@@ -1138,8 +1140,6 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
   const previousMoveCount = state.snapshot?.moveCount ?? 0;
   const previousFen = chess.fen();
   
-  // 1. HARD INTERRUPT: If a new move arrives, stop any existing ghost animation 
-  // and cleanup the DOM immediately so it doesn't conflict with the new state.
   const isNewMove = snapshot.moveCount > previousMoveCount;
   if (isNewMove && activeGhostAnimation) {
     requestBoardRefresh(true); 
@@ -2422,8 +2422,10 @@ function requestBoardRefresh(force = false): void {
     // 3. State Reset: Tell the renderer the animation is officially OVER
     animationFinished = true;
     animatingToSquare = null;
-    // We clear this so the same move doesn't try to re-animate instantly
-    lastAnimatedMoveKey = null; 
+    
+    // FIX: DO NOT clear lastAnimatedMoveKey here! 
+    // Clearing it caused the renderer to think the move had never been animated, 
+    // resulting in the piece "re-animating" if you clicked during the movement.
 
     tempAnim.cancel(); 
   }
@@ -2620,7 +2622,6 @@ function onSquarePressed(square: Square): void {
     requestBoardRefresh(true);
     
     if (from) {
-      // Explicitly allow the animation for click-to-move
       suppressAnimationForMove = null; 
       tryMoveFromTo(from, square);
     }
@@ -2631,14 +2632,17 @@ function onSquarePressed(square: Square): void {
 
   const clickedPiece = chess.get(square);
   if (clickedPiece && isOwnPiece(clickedPiece.color)) {
-    // FIX: Using the correct function to highlight legal targets
     selectSquare(square); 
     return;
   }
 
-  clearSelection();
-  requestBoardRefresh(true);
-  updateCaption();
+  // FIX: Only force refresh if there was actually a selection to clear.
+  // This prevents random clicks on empty squares from resetting/flickering the board.
+  if (state.selectedSquare) {
+    clearSelection();
+    requestBoardRefresh(true);
+    updateCaption();
+  }
 }
 function selectSquare(square: Square): void {
   state.selectedSquare = square;
@@ -2904,12 +2908,16 @@ function onPremoveSquarePressed(square: Square): void {
     if (clickedPiece && clickedPiece.color === state.role) {
       state.selectedSquare = square;
       state.legalTargets = vBoard.moves({ square, verbose: true }).map(m => m.to);
+      requestBoardRefresh(true); // Force refresh to show selection
+      updateCaption();
     } else {
-      // FIX: Clicking empty or opponent piece cancels all premoves
-      state.premoves = [];
+      // FIX: Clicking empty or opponent piece cancels all premoves ONLY if you have them.
+      if (state.premoves.length > 0) {
+        state.premoves = [];
+        requestBoardRefresh(true);
+        updateCaption();
+      }
     }
-    requestBoardRefresh(true); // Force refresh
-    updateCaption();
     return;
   }
 
@@ -2924,12 +2932,12 @@ function onPremoveSquarePressed(square: Square): void {
   if (pieceToMove && isTheoreticallyPossible(state.selectedSquare, square, pieceToMove.type, pieceToMove.color)) {
     queuePremove(state.selectedSquare, square);
   } else {
-    // FIX: Clicking a random area while a piece is selected now clears everything
+    // Clicking a random area while a piece is selected now clears everything
     state.premoves = [];
     clearSelection();
+    requestBoardRefresh(true);
   }
 
-  requestBoardRefresh(true);
   updateCaption();
 }
 
