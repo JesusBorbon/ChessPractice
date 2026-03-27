@@ -2404,8 +2404,11 @@ body.focus-mode.focus-analyze .nav-row button:hover {
     bottom: calc(max(8px, env(safe-area-inset-bottom)) + 65px);
   }
 }
-.square.highlight-red {
-  background-color: #e35b52 !important;
+.square.light.highlight-red {
+  background-color: #eb6150 !important;
+}
+.square.dark.highlight-red {
+  background-color: #d14a3b !important;
 }
 @media (min-width: 641px) {
   body.focus-mode #focusTimer {

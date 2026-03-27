@@ -2417,9 +2417,13 @@ body.focus-mode.focus-analyze .nav-row button:hover {
   }
 }
 
-/* ── Right-Click Highlight Square ── */
-.square.highlight-red {
-  background-color: #e35b52 !important; 
+/* ── Right-Click Highlight Square (Light vs Dark) ── */
+.square.light.highlight-red {
+  background-color: #eb6150 !important; /* Brighter red for light squares */
+}
+
+.square.dark.highlight-red {
+  background-color: #d14a3b !important; /* Deeper red for dark squares */
 }
 
 /* ── PC Focus Mode Tweaks (Clean Corners) ── */
