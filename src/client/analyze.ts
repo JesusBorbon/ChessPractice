@@ -209,6 +209,7 @@ let fenHistory: string[] = [chess.fen()];
 let moveHistory: Move[] = [];
 let cursor = 0; // which FEN we're currently viewing
 const arrowAnnotations = new Set<string>();
+const squareAnnotations = new Set<string>();
 let lastAnimatedMoveKey: string | null = null;
 let suppressAnimationForMove: { from: Square; to: Square } | null = null;
 let activeGhostAnimation: Animation | null = null;
@@ -225,6 +226,7 @@ let focusMode = false;
 let animationStyle: "smooth" | "epic" = (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth";
 let bloodFxEnabled = localStorage.getItem("chess-blood-fx") === "on";
 let lastCheckFlashKey: string | null = null;
+
 
 // ── Mount ──────────────────────────────────────────────────────────────────────
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -338,6 +340,7 @@ const analyzeBtn = q<HTMLButtonElement>("#analyzeBtn");
 const stopAnalyzeBtn = q<HTMLButtonElement>("#stopAnalyzeBtn");
 const focusModeButton = q<HTMLButtonElement>("#focusModeBtn");
 
+
 // ── Button wiring ──────────────────────────────────────────────────────────────
 q<HTMLButtonElement>("#resetBtn").addEventListener("click", () => {
   cancelAnalysis();
@@ -415,12 +418,18 @@ focusModeButton.addEventListener("click", () => {
 });
 
 window.addEventListener("keydown", (event) => {
-  if (event.key.toLowerCase() !== "z" || isTypingTarget(event.target)) {
-    return;
-  }
+  if (isTypingTarget(event.target)) return;
 
-  event.preventDefault();
-  void toggleFocusMode();
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    goTo(cursor - 1);
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    goTo(cursor + 1);
+  } else if (event.key.toLowerCase() === "z") {
+    event.preventDefault();
+    void toggleFocusMode();
+  }
 });
 
 // Navigation
@@ -476,6 +485,11 @@ let arrowDragPointer: { x: number; y: number } | null = null;
 let arrowDragMoved = false;
 
 boardEl.addEventListener("pointerdown", (event) => {
+
+  if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
+    clearArrows();
+  }
+  
   if (event.button === 2) {
     const square = getSquareFromPoint(event.clientX, event.clientY);
     if (!square) return;
@@ -610,8 +624,20 @@ function endArrowDrag(event: PointerEvent, commit: boolean): void {
   }
 
   const targetSquare = previewTo ?? getSquareFromPoint(event.clientX, event.clientY);
-  if (!targetSquare || !arrowDragMoved || targetSquare === fromSquare) {
+  if (!targetSquare) {
     arrowDragMoved = false;
+    return;
+  }
+
+  // NEW: Right-Click Highlight
+  if (!arrowDragMoved || targetSquare === fromSquare) {
+    if (squareAnnotations.has(fromSquare)) {
+      squareAnnotations.delete(fromSquare);
+    } else {
+      squareAnnotations.add(fromSquare);
+    }
+    arrowDragMoved = false;
+    renderBoard();
     return;
   }
 
@@ -818,6 +844,7 @@ function renderBoard(): void {
     if (legalTargets.includes(sq))   btn.classList.add("legal");
     if (lastMoveSquares.has(sq))     btn.classList.add("last-move");
     if (checkedKingSquare === sq)    btn.classList.add("in-check");
+    if (squareAnnotations.has(sq))   btn.classList.add("highlight-red");
 
     if (piece) {
       const span = document.createElement("span");
@@ -1307,12 +1334,14 @@ function toggleArrow(from: Square, to: Square): void {
 }
 
 function clearArrows(): void {
-  if (arrowAnnotations.size === 0) {
+  if (arrowAnnotations.size === 0 && squareAnnotations.size === 0) {
     return;
   }
 
   arrowAnnotations.clear();
+  squareAnnotations.clear();
   renderArrows();
+  renderBoard(); // Forces the board to clear the red backgrounds
 }
 
 function getSquareFromPoint(clientX: number, clientY: number): Square | null {

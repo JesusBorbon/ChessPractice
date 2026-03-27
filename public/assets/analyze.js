@@ -3787,6 +3787,7 @@ var require_analyze = __commonJS({
     var moveHistory = [];
     var cursor = 0;
     var arrowAnnotations = /* @__PURE__ */ new Set();
+    var squareAnnotations = /* @__PURE__ */ new Set();
     var lastAnimatedMoveKey = null;
     var suppressAnimationForMove = null;
     var activeGhostAnimation = null;
@@ -3973,11 +3974,17 @@ var require_analyze = __commonJS({
       void toggleFocusMode();
     });
     window.addEventListener("keydown", (event) => {
-      if (event.key.toLowerCase() !== "z" || isTypingTarget(event.target)) {
-        return;
+      if (isTypingTarget(event.target)) return;
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        goTo(cursor - 1);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        goTo(cursor + 1);
+      } else if (event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        void toggleFocusMode();
       }
-      event.preventDefault();
-      void toggleFocusMode();
     });
     navFirst.addEventListener("click", () => goTo(0));
     navPrev.addEventListener("click", () => goTo(cursor - 1));
@@ -4019,6 +4026,9 @@ var require_analyze = __commonJS({
     var arrowDragPointer = null;
     var arrowDragMoved = false;
     boardEl.addEventListener("pointerdown", (event) => {
+      if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
+        clearArrows();
+      }
       if (event.button === 2) {
         const square2 = getSquareFromPoint(event.clientX, event.clientY);
         if (!square2) return;
@@ -4133,8 +4143,18 @@ var require_analyze = __commonJS({
         return;
       }
       const targetSquare = previewTo ?? getSquareFromPoint(event.clientX, event.clientY);
-      if (!targetSquare || !arrowDragMoved || targetSquare === fromSquare) {
+      if (!targetSquare) {
         arrowDragMoved = false;
+        return;
+      }
+      if (!arrowDragMoved || targetSquare === fromSquare) {
+        if (squareAnnotations.has(fromSquare)) {
+          squareAnnotations.delete(fromSquare);
+        } else {
+          squareAnnotations.add(fromSquare);
+        }
+        arrowDragMoved = false;
+        renderBoard();
         return;
       }
       toggleArrow(fromSquare, targetSquare);
@@ -4298,6 +4318,7 @@ var require_analyze = __commonJS({
         if (legalTargets.includes(sq)) btn.classList.add("legal");
         if (lastMoveSquares.has(sq)) btn.classList.add("last-move");
         if (checkedKingSquare === sq) btn.classList.add("in-check");
+        if (squareAnnotations.has(sq)) btn.classList.add("highlight-red");
         if (piece) {
           const span = document.createElement("span");
           span.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
@@ -4702,11 +4723,13 @@ var require_analyze = __commonJS({
       arrowAnnotations.add(key);
     }
     function clearArrows() {
-      if (arrowAnnotations.size === 0) {
+      if (arrowAnnotations.size === 0 && squareAnnotations.size === 0) {
         return;
       }
       arrowAnnotations.clear();
+      squareAnnotations.clear();
       renderArrows();
+      renderBoard();
     }
     function getSquareFromPoint(clientX, clientY) {
       const node2 = document.elementFromPoint(clientX, clientY);

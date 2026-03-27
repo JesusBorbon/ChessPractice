@@ -394,6 +394,13 @@ app.innerHTML = `
           Tap or click one of your pieces, then choose a legal destination.
         </div>
 
+        <div class="nav-row" id="gameNavRow" hidden>
+          <button id="liveNavFirst" title="Go to start">⏮</button>
+          <button id="liveNavPrev"  title="Previous move">◀</button>
+          <button id="liveNavNext"  title="Next move">▶</button>
+          <button id="liveNavLast"  title="Go to live">⏭</button>
+        </div>
+
         <div class="focus-hud" id="focusHud" hidden>
             <span class="focus-chip" id="focusTimer">00:00</span>
 
@@ -560,7 +567,15 @@ const rematchButton = must<HTMLButtonElement>("#rematchButton");
 const liveAnalysisButton = must<HTMLButtonElement>("#liveAnalysisButton");
 const arrowLayer = must<SVGSVGElement>("#arrowLayer");
 const resignButton = must<HTMLButtonElement>("#resignButton");
+
+const liveNavFirst = must<HTMLButtonElement>("#liveNavFirst");
+const liveNavPrev = must<HTMLButtonElement>("#liveNavPrev");
+const liveNavNext = must<HTMLButtonElement>("#liveNavNext");
+const liveNavLast = must<HTMLButtonElement>("#liveNavLast");
+const gameNavRow = must<HTMLDivElement>("#gameNavRow");
+
 const arrowAnnotations = new Set<string>();
+const squareAnnotations = new Set<string>(); 
 
 
 playBotButton.addEventListener("click", () => {
@@ -604,6 +619,38 @@ copyLinkButton.addEventListener("click", async () => {
   } catch {
     showToast("Clipboard access failed. Copy the link manually.");
   }
+});
+
+liveNavFirst.addEventListener("click", () => {
+  if (!state.snapshot || state.snapshot.moves.length === 0) return;
+  state.viewCursor = 0;
+  render();
+});
+
+liveNavPrev.addEventListener("click", () => {
+  if (!state.snapshot || state.snapshot.moves.length === 0) return;
+  const currentPos = state.viewCursor !== null ? state.viewCursor : state.snapshot.moves.length;
+  if (currentPos > 0) {
+    state.viewCursor = currentPos - 1;
+    render();
+  }
+});
+
+liveNavNext.addEventListener("click", () => {
+  if (!state.snapshot || state.snapshot.moves.length === 0) return;
+  const maxMoves = state.snapshot.moves.length;
+  const currentPos = state.viewCursor !== null ? state.viewCursor : maxMoves;
+  if (currentPos < maxMoves) {
+    state.viewCursor = currentPos + 1;
+    if (state.viewCursor === maxMoves) state.viewCursor = null;
+    render();
+  }
+});
+
+liveNavLast.addEventListener("click", () => {
+  if (!state.snapshot || state.snapshot.moves.length === 0) return;
+  state.viewCursor = null;
+  render();
 });
 
 leaveRoomButton.addEventListener("click", () => {
@@ -854,10 +901,9 @@ let arrowDragMoved = false;
 
 board.addEventListener("pointerdown", (event) => {
 
-  if (event.button === 0 && arrowAnnotations.size > 0) {
+if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
     clearArrows();
   }
-
   const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
   if (gameEnded) return;
 
@@ -990,7 +1036,6 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
     tryMoveFromTo(fromSquare, targetSquare);
   }
 }
-
 function endArrowDrag(event: PointerEvent, commit: boolean): void {
   if (!arrowDragFrom) return;
 
@@ -1007,8 +1052,20 @@ function endArrowDrag(event: PointerEvent, commit: boolean): void {
   }
 
   const targetSquare = previewTo ?? getSquareFromPoint(event.clientX, event.clientY);
-  if (!targetSquare || !arrowDragMoved || targetSquare === fromSquare) {
+  if (!targetSquare) {
     arrowDragMoved = false;
+    return;
+  }
+
+  // NEW: Detect a static right click on a single square
+  if (!arrowDragMoved || targetSquare === fromSquare) {
+    if (squareAnnotations.has(fromSquare)) {
+      squareAnnotations.delete(fromSquare);
+    } else {
+      squareAnnotations.add(fromSquare);
+    }
+    arrowDragMoved = false;
+    requestBoardRefresh(true); // Forces board to re-render the squares
     return;
   }
 
@@ -1317,11 +1374,16 @@ function createTrailParticle(sourceNode: HTMLElement): void {
 }
 
 function renderSession(): void {
+  
   const snapshot = state.snapshot;
   const hasRoom = Boolean(state.roomId);
+  
   const isMultiplayerReady = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
   const isGameActive = (state.gameMode === "multiplayer" && isMultiplayerReady) || 
                        (state.gameMode === "bot" && snapshot !== null);
+                       
+  const maxMoves = snapshot?.moves.length ?? 0;
+  gameNavRow.hidden = !isGameActive || maxMoves === 0;
   
   const canVote = state.role === "w" || state.role === "b";
   const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
@@ -1519,6 +1581,22 @@ function renderBoard(): void {
     button.className = `square ${isLightSquare(squareName) ? "light" : "dark"}`;
     button.dataset.square = squareName;
 
+  if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
+  if (checkedKingSquare === squareName) button.classList.add("in-check");
+  if (squareAnnotations.has(squareName)) button.classList.add("highlight-red"); // NEW
+  
+  // Also inside renderBoard(), anywhere outside the loop:
+  if (!gameNavRow.hidden) {
+    const isHistoryView = state.viewCursor !== null;
+    const maxMoves = state.snapshot?.moves.length ?? 0;
+    const currentPos = isHistoryView ? state.viewCursor! : maxMoves;
+
+    liveNavFirst.disabled = currentPos === 0;
+    liveNavPrev.disabled = currentPos === 0;
+    liveNavNext.disabled = currentPos === maxMoves;
+    liveNavLast.disabled = currentPos === maxMoves;
+  }
+
     if (!isHistoryView && state.selectedSquare === square) button.classList.add("selected");
     if (!isHistoryView && state.legalTargets.includes(square)) button.classList.add("legal");
     
@@ -1608,22 +1686,6 @@ function renderBoard(): void {
       activeGhostAnimation = null; 
       tempAnim.cancel();
     }
-  }
-  
-  // --- 4. HISTORY NAVIGATION UI ---
-  const boardWrap = board.parentElement;
-  const existingLiveBtn = boardWrap?.querySelector(".snap-live-btn");
-  if (existingLiveBtn) existingLiveBtn.remove();
-
-  if (isHistoryView) {
-    const liveBtn = document.createElement("button");
-    liveBtn.className = "action cta-turquoise snap-live-btn";
-    liveBtn.innerHTML = "▶ Resume Live Game";
-    liveBtn.onclick = () => {
-      state.viewCursor = null;
-      render();
-    };
-    boardWrap?.appendChild(liveBtn);
   }
 
   renderArrows();
@@ -1847,12 +1909,14 @@ function toggleArrow(from: Square, to: Square): void {
 }
 
 function clearArrows(): void {
-  if (arrowAnnotations.size === 0) {
+  if (arrowAnnotations.size === 0 && squareAnnotations.size === 0) {
     return;
   }
 
   arrowAnnotations.clear();
+  squareAnnotations.clear();
   renderArrows();
+  requestBoardRefresh(true);
 }
 
 function renderArrows(): void {

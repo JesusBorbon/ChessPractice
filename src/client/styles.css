@@ -2248,7 +2248,6 @@ body.focus-mode .board-toolbar,
 body.focus-mode .analyze-toolbar,
 body.focus-mode .analyze-topbar,
 body.focus-mode .board-caption,
-body.focus-mode .nav-row,
 body.focus-mode .analyze-status,
 body.focus-mode .game-nav {
   display: none !important;
@@ -2349,3 +2348,103 @@ body.focus-mode #focusTimer {
   box-shadow: 0 0 3px var(--pool-color, #b00) !important;
 }
 
+/* ── Global Nav Row Styles (For Main & Analyze) ── */
+.nav-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  justify-content: center;
+}
+
+.nav-row button {
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 20px;
+  font: inherit;
+  font-size: 1.1rem;
+  cursor: pointer;
+  background: rgba(25, 35, 32, 0.08);
+  color: var(--ink);
+  transition: background 140ms;
+}
+
+.nav-row button:hover {
+  background: rgba(25, 35, 32, 0.16);
+}
+
+.nav-row button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ── Focus Mode Overrides for Navigation ── */
+body.focus-mode.focus-multiplayer .nav-row,
+body.focus-mode.focus-analyze .nav-row {
+  display: flex !important;
+  position: relative; /* Forces it into the document flow under the board */
+  margin: 16px auto;  /* Adds spacing and centers it horizontally */
+  justify-content: center;
+  background: rgba(20, 20, 20, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  width: fit-content;
+  z-index: 1000;
+  
+  /* Overrides to prevent floating */
+  bottom: auto;
+  left: auto;
+  transform: none;
+}
+
+body.focus-mode.focus-multiplayer .nav-row button,
+body.focus-mode.focus-analyze .nav-row button {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+body.focus-mode.focus-multiplayer .nav-row button:hover,
+body.focus-mode.focus-analyze .nav-row button:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Push the Focus Exit button up slightly so it doesn't overlap the nav */
+@media (max-width: 640px) {
+  body.focus-mode.focus-multiplayer .focus-toggle-btn {
+    bottom: calc(max(8px, env(safe-area-inset-bottom)) + 65px);
+  }
+}
+
+/* ── Right-Click Highlight Square ── */
+.square.highlight-red {
+  background-color: #e35b52 !important; 
+}
+
+/* ── PC Focus Mode Tweaks (Clean Corners) ── */
+@media (min-width: 641px) {
+  /* 1. Fix the disconnected background by resetting the timer's inner shift */
+  body.focus-mode #focusTimer {
+    top: 0 !important;
+    transform: none !important;
+  }
+
+  /* 2. Place the Timer container neatly in the bottom-left corner */
+  body.focus-mode .focus-hud {
+    top: auto !important;
+    right: auto !important;
+    bottom: 1px !important;
+    left: 30px !important;
+  }
+
+  /* 3. Place the Exit button neatly in the bottom-right corner */
+  body.focus-mode #focusModeBtn {
+    top: auto !important;
+    left: auto !important;
+    bottom: 1px !important;
+    right: 30px !important;
+    transform: none !important;
+    margin: 0 !important;
+  }
+}

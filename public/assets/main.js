@@ -7501,6 +7501,13 @@ var require_main = __commonJS({
           Tap or click one of your pieces, then choose a legal destination.
         </div>
 
+        <div class="nav-row" id="gameNavRow" hidden>
+          <button id="liveNavFirst" title="Go to start">\u23EE</button>
+          <button id="liveNavPrev"  title="Previous move">\u25C0</button>
+          <button id="liveNavNext"  title="Next move">\u25B6</button>
+          <button id="liveNavLast"  title="Go to live">\u23ED</button>
+        </div>
+
         <div class="focus-hud" id="focusHud" hidden>
             <span class="focus-chip" id="focusTimer">00:00</span>
 
@@ -7657,7 +7664,13 @@ var require_main = __commonJS({
     var liveAnalysisButton = must("#liveAnalysisButton");
     var arrowLayer = must("#arrowLayer");
     var resignButton = must("#resignButton");
+    var liveNavFirst = must("#liveNavFirst");
+    var liveNavPrev = must("#liveNavPrev");
+    var liveNavNext = must("#liveNavNext");
+    var liveNavLast = must("#liveNavLast");
+    var gameNavRow = must("#gameNavRow");
     var arrowAnnotations = /* @__PURE__ */ new Set();
+    var squareAnnotations = /* @__PURE__ */ new Set();
     playBotButton.addEventListener("click", () => {
       if (state.roomId && state.gameMode === "multiplayer") {
         toggleConfirmModal(true, "bot");
@@ -7693,6 +7706,34 @@ var require_main = __commonJS({
       } catch {
         showToast("Clipboard access failed. Copy the link manually.");
       }
+    });
+    liveNavFirst.addEventListener("click", () => {
+      if (!state.snapshot || state.snapshot.moves.length === 0) return;
+      state.viewCursor = 0;
+      render();
+    });
+    liveNavPrev.addEventListener("click", () => {
+      if (!state.snapshot || state.snapshot.moves.length === 0) return;
+      const currentPos = state.viewCursor !== null ? state.viewCursor : state.snapshot.moves.length;
+      if (currentPos > 0) {
+        state.viewCursor = currentPos - 1;
+        render();
+      }
+    });
+    liveNavNext.addEventListener("click", () => {
+      if (!state.snapshot || state.snapshot.moves.length === 0) return;
+      const maxMoves = state.snapshot.moves.length;
+      const currentPos = state.viewCursor !== null ? state.viewCursor : maxMoves;
+      if (currentPos < maxMoves) {
+        state.viewCursor = currentPos + 1;
+        if (state.viewCursor === maxMoves) state.viewCursor = null;
+        render();
+      }
+    });
+    liveNavLast.addEventListener("click", () => {
+      if (!state.snapshot || state.snapshot.moves.length === 0) return;
+      state.viewCursor = null;
+      render();
     });
     leaveRoomButton.addEventListener("click", () => {
       if (!state.roomId) {
@@ -7876,7 +7917,7 @@ var require_main = __commonJS({
     var arrowDragPointer = null;
     var arrowDragMoved = false;
     board.addEventListener("pointerdown", (event) => {
-      if (event.button === 0 && arrowAnnotations.size > 0) {
+      if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
         clearArrows();
       }
       const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
@@ -7997,8 +8038,18 @@ var require_main = __commonJS({
         return;
       }
       const targetSquare = previewTo ?? getSquareFromPoint(event.clientX, event.clientY);
-      if (!targetSquare || !arrowDragMoved || targetSquare === fromSquare) {
+      if (!targetSquare) {
         arrowDragMoved = false;
+        return;
+      }
+      if (!arrowDragMoved || targetSquare === fromSquare) {
+        if (squareAnnotations.has(fromSquare)) {
+          squareAnnotations.delete(fromSquare);
+        } else {
+          squareAnnotations.add(fromSquare);
+        }
+        arrowDragMoved = false;
+        requestBoardRefresh(true);
         return;
       }
       toggleArrow(fromSquare, targetSquare);
@@ -8234,6 +8285,8 @@ var require_main = __commonJS({
       const hasRoom = Boolean(state.roomId);
       const isMultiplayerReady = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
       const isGameActive = state.gameMode === "multiplayer" && isMultiplayerReady || state.gameMode === "bot" && snapshot !== null;
+      const maxMoves = snapshot?.moves.length ?? 0;
+      gameNavRow.hidden = !isGameActive || maxMoves === 0;
       const canVote = state.role === "w" || state.role === "b";
       const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
       roomBadge.textContent = state.roomId ? `Room ${state.roomId}` : "No active room";
@@ -8368,6 +8421,18 @@ var require_main = __commonJS({
         button.tabIndex = -1;
         button.className = `square ${isLightSquare(squareName) ? "light" : "dark"}`;
         button.dataset.square = squareName;
+        if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
+        if (checkedKingSquare === squareName) button.classList.add("in-check");
+        if (squareAnnotations.has(squareName)) button.classList.add("highlight-red");
+        if (!gameNavRow.hidden) {
+          const isHistoryView2 = state.viewCursor !== null;
+          const maxMoves = state.snapshot?.moves.length ?? 0;
+          const currentPos = isHistoryView2 ? state.viewCursor : maxMoves;
+          liveNavFirst.disabled = currentPos === 0;
+          liveNavPrev.disabled = currentPos === 0;
+          liveNavNext.disabled = currentPos === maxMoves;
+          liveNavLast.disabled = currentPos === maxMoves;
+        }
         if (!isHistoryView && state.selectedSquare === square) button.classList.add("selected");
         if (!isHistoryView && state.legalTargets.includes(square)) button.classList.add("legal");
         if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
@@ -8435,19 +8500,6 @@ var require_main = __commonJS({
           activeGhostAnimation = null;
           tempAnim.cancel();
         }
-      }
-      const boardWrap = board.parentElement;
-      const existingLiveBtn = boardWrap?.querySelector(".snap-live-btn");
-      if (existingLiveBtn) existingLiveBtn.remove();
-      if (isHistoryView) {
-        const liveBtn = document.createElement("button");
-        liveBtn.className = "action cta-turquoise snap-live-btn";
-        liveBtn.innerHTML = "\u25B6 Resume Live Game";
-        liveBtn.onclick = () => {
-          state.viewCursor = null;
-          render();
-        };
-        boardWrap?.appendChild(liveBtn);
       }
       renderArrows();
       const snapshot = state.snapshot;
@@ -8626,11 +8678,13 @@ var require_main = __commonJS({
       arrowAnnotations.add(key);
     }
     function clearArrows() {
-      if (arrowAnnotations.size === 0) {
+      if (arrowAnnotations.size === 0 && squareAnnotations.size === 0) {
         return;
       }
       arrowAnnotations.clear();
+      squareAnnotations.clear();
       renderArrows();
+      requestBoardRefresh(true);
     }
     function renderArrows() {
       const arrows = [...arrowAnnotations].map((entry) => {
