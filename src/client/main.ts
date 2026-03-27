@@ -35,6 +35,7 @@ type RoomSnapshot = {
   moveCount: number;
   moves: MoveSummary[];
   lastMove: MoveSummary | null;
+
   players: {
     whiteConnected: boolean;
     blackConnected: boolean;
@@ -45,7 +46,15 @@ type RoomSnapshot = {
     enabled: boolean;
     votes: number;
   };
+  isStarted: boolean;
+  pregame: {
+    p1Choice: "w" | "b" | null;
+    p2Choice: "w" | "b" | null;
+    p1Ready: boolean;
+    p2Ready: boolean;
+  };
 };
+
 
 type PendingPromotion = {
   from: Square;
@@ -382,10 +391,38 @@ app.innerHTML = `
           <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
           <button class="ghost" id="resignButton" type="button" hidden>Resign</button>
         </div>
-        <div class="pregame-placeholder" id="pregamePlaceholder">
-          <h2>Waiting for match start</h2>
-          <p>Create or join a room. The board appears automatically once both players are connected.</p>
+       <div class="pregame-placeholder" id="pregamePlaceholder">
+          <div id="pregameWaiting">
+            <h2>Waiting for opponent</h2>
+            <p>Create or join a room. The board appears automatically once both players are connected.</p>
+          </div>
+          <div id="pregameSelection" hidden>
+            <h2>Choose Your Color</h2>
+            <div class="selection-grid">
+              <div class="selection-col">
+                <strong>You</strong>
+                <div class="color-options">
+                  <button class="color-opt-btn" id="myPickWhite">White</button>
+                  <button class="color-opt-btn" id="myPickBlack">Black</button>
+                </div>
+                <div class="ready-badge" id="myReadyBadge">Ready!</div>
+              </div>
+              <div class="selection-col">
+                <strong>Opponent</strong>
+                <div class="color-options">
+                  <button class="color-opt-btn disabled" id="opPickWhite">White</button>
+                  <button class="color-opt-btn disabled" id="opPickBlack">Black</button>
+                </div>
+                <div class="ready-badge" id="opReadyBadge">Ready!</div>
+              </div>
+            </div>
+            <div style="margin-top: 24px;">
+              <button class="action" id="pregameReadyBtn">Ready to Play</button>
+              <div id="pregameConflictWarning" hidden>Both players cannot select the same color.</div>
+            </div>
+          </div>
         </div>
+
         <div class="board-wrap">
           <div class="board" id="board"></div>
           <svg class="board-arrows" id="arrowLayer" viewBox="0 0 800 800" aria-hidden="true"></svg>
@@ -543,6 +580,21 @@ const confirmNoBtn = must<HTMLButtonElement>("#confirmNoBtn");
 const modalTitle = must<HTMLElement>("#modalTitle");
 const modalDescription = must<HTMLElement>("#modalDescription");
 const gameNav = must<HTMLElement>("#gameNav");
+
+const pregameWaiting = must<HTMLDivElement>("#pregameWaiting");
+const pregameSelection = must<HTMLDivElement>("#pregameSelection");
+const myPickWhite = must<HTMLButtonElement>("#myPickWhite");
+const myPickBlack = must<HTMLButtonElement>("#myPickBlack");
+const opPickWhite = must<HTMLButtonElement>("#opPickWhite");
+const opPickBlack = must<HTMLButtonElement>("#opPickBlack");
+const myReadyBadge = must<HTMLDivElement>("#myReadyBadge");
+const opReadyBadge = must<HTMLDivElement>("#opReadyBadge");
+const pregameReadyBtn = must<HTMLButtonElement>("#pregameReadyBtn");
+const pregameConflictWarning = must<HTMLDivElement>("#pregameConflictWarning");
+
+myPickWhite.addEventListener("click", () => socket.emit("pregame:select", { color: "w" }));
+myPickBlack.addEventListener("click", () => socket.emit("pregame:select", { color: "b" }));
+pregameReadyBtn.addEventListener("click", () => socket.emit("pregame:ready"));
 
 mountThemeSwitcher();
 
@@ -1151,16 +1203,17 @@ promotionDialog.addEventListener("click", (event) => {
 
 // --- SOCKET.IO LISTENERS ---
 
-socket.on("connect", () => {
+function onSocketConnect() {
   state.connected = true;
-
   if (state.autoJoinCode) {
     if (ROOM_ID_PATTERN.test(state.autoJoinCode)) {
       socket.emit("room:join", { roomId: state.autoJoinCode });
     }
     state.autoJoinCode = null;
   }
-});
+}
+socket.on("connect", onSocketConnect);
+if (socket.connected) onSocketConnect(); // Fires immediately if already connected
 
 socket.on("disconnect", () => {
   state.connected = false;
@@ -1374,48 +1427,44 @@ function createTrailParticle(sourceNode: HTMLElement): void {
 }
 
 function renderSession(): void {
-  
   const snapshot = state.snapshot;
   const hasRoom = Boolean(state.roomId);
   
+  // 1. Core State Calculations (Calculated FIRST so we can use them to toggle UI)
   const isMultiplayerReady = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
-  const isGameActive = (state.gameMode === "multiplayer" && isMultiplayerReady) || 
-                       (state.gameMode === "bot" && snapshot !== null);
-                       
-  const maxMoves = snapshot?.moves.length ?? 0;
-  gameNavRow.hidden = !isGameActive || maxMoves === 0;
+  const isGameActive = Boolean(
+    (state.gameMode === "multiplayer" && isMultiplayerReady && snapshot?.isStarted) || 
+    (state.gameMode === "bot" && snapshot !== null)
+  );
   
   const canVote = state.role === "w" || state.role === "b";
   const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
+  const maxMoves = snapshot?.moves.length ?? 0;
 
-  // 1. Session labels
+  // 2. Setup UI & Action Visibility Toggles
+  gameNavRow.hidden = !isGameActive || maxMoves === 0;
+
   roomBadge.textContent = state.roomId ? `Room ${state.roomId}` : "No active room";
   roleBadge.textContent = humanRole(state.role);
   shareLink.textContent = state.shareUrl || "Create or join a room to get a live invite link.";
 
-  // 2. Hide Setup UI (Hero section and Setup buttons)
-  // This hides the title and the "Open Analysis Board" button at the top
   const heroCopy = document.querySelector<HTMLElement>(".hero-copy");
   if (heroCopy) heroCopy.hidden = isGameActive;
 
-  // Hide the invite card and setup buttons while playing
   inviteJoinCard.hidden = isGameActive;
   createRoomButton.hidden = isGameActive;
   playBotButton.hidden = isGameActive;
 
-  // 3. Action Button Visibility
   leaveRoomButton.hidden = !hasRoom;
   copyLinkButton.hidden = !state.shareUrl || isGameActive;
   flipBoardButton.hidden = !isGameActive;
   focusModeButton.hidden = !isGameActive;
   gameNav.hidden = !isGameActive;
   
-  // Side Panels
   seatCard.hidden = !hasRoom;
   summaryCard.hidden = !isGameActive;
   movesCard.hidden = !isGameActive;
 
-  // Specific gameplay buttons
   liveAnalysisButton.hidden = !isGameActive || !canVote;
   rematchButton.hidden = !gameEnded || !canVote || !hasRoom;
   resignButton.hidden = !isGameActive || gameEnded || !canVote;
@@ -1425,9 +1474,11 @@ function renderSession(): void {
     applyFocusMode();
   }
   
-  // 4. Initial State or Pregame
+  // 3. Early Exit if No Snapshot (Lobby State)
   if (!snapshot) {
     pregamePlaceholder.hidden = false;
+    pregameWaiting.hidden = false;
+    pregameSelection.hidden = true;
     matchStatus.textContent = "Create a room to start.";
     whiteSeat.textContent = "Waiting for player";
     blackSeat.textContent = "Waiting for player";
@@ -1436,10 +1487,44 @@ function renderSession(): void {
     spectatorMeta.textContent = "0";
     summaryText.textContent = "Ready to play.";
     liveAnalysisText.textContent = "Live analysis disabled.";
+    updateFocusHud();
     return;
   }
-
+  
+  // 4. Pregame Selection Menu Logic
   pregamePlaceholder.hidden = isGameActive;
+
+  if (state.gameMode === "multiplayer" && !snapshot.isStarted) {
+    if (isMultiplayerReady) {
+       pregameWaiting.hidden = true;
+       pregameSelection.hidden = false;
+
+       const isP1 = state.role === "w";
+       const myChoice = isP1 ? snapshot.pregame.p1Choice : snapshot.pregame.p2Choice;
+       const opChoice = isP1 ? snapshot.pregame.p2Choice : snapshot.pregame.p1Choice;
+       const myReady = isP1 ? snapshot.pregame.p1Ready : snapshot.pregame.p2Ready;
+       const opReady = isP1 ? snapshot.pregame.p2Ready : snapshot.pregame.p1Ready;
+
+       myPickWhite.classList.toggle("selected", myChoice === "w");
+       myPickBlack.classList.toggle("selected", myChoice === "b");
+       opPickWhite.classList.toggle("selected", opChoice === "w");
+       opPickBlack.classList.toggle("selected", opChoice === "b");
+
+       myReadyBadge.classList.toggle("is-ready", myReady);
+       opReadyBadge.classList.toggle("is-ready", opReady);
+
+       const hasConflict = myChoice !== null && myChoice === opChoice;
+       pregameConflictWarning.hidden = !hasConflict;
+
+       pregameReadyBtn.disabled = myChoice === null || hasConflict || myReady;
+       pregameReadyBtn.textContent = myReady ? "Waiting for Opponent..." : "Ready to Play";
+       
+       if (state.role === "spectator") pregameReadyBtn.hidden = true;
+    } else {
+       pregameWaiting.hidden = false;
+       pregameSelection.hidden = true;
+    }
+  }
 
   // 5. Live Game Data
   matchStatus.textContent = snapshot.status;
@@ -2817,11 +2902,11 @@ function startBotGame() {
   chess.reset();
   
   // Initialize snapshot manually to bypass server socket
-  state.snapshot = {
+ state.snapshot = {
     roomId: "LOCAL",
     fen: chess.fen(),
-    turn: "w",
-    status: "Playing vs Stockfish (800 ELO)",
+    turn: chess.turn(),
+    status: "Active",
     winner: null,
     check: false,
     checkmate: false,
@@ -2831,7 +2916,9 @@ function startBotGame() {
     lastMove: null,
     players: { whiteConnected: true, blackConnected: true, spectatorCount: 0 },
     rematchVotes: 0,
-    analysis: { enabled: false, votes: 0 }
+    analysis: { enabled: false, votes: 0 },
+    isStarted: true,
+    pregame: { p1Choice: "w", p2Choice: "b", p1Ready: true, p2Ready: true }
   };
 
   showToast("Bot mode active. You are White!");

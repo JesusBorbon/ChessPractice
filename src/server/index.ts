@@ -33,6 +33,7 @@ type RoomSnapshot = {
   moveCount: number;
   moves: MoveSummary[];
   lastMove: MoveSummary | null;
+  
   players: {
     whiteConnected: boolean;
     blackConnected: boolean;
@@ -42,6 +43,13 @@ type RoomSnapshot = {
   analysis: {
     enabled: boolean;
     votes: number;
+  };
+  isStarted: boolean;
+  pregame: {
+    p1Choice: "w" | "b" | null;
+    p2Choice: "w" | "b" | null;
+    p1Ready: boolean;
+    p2Ready: boolean;
   };
 };
 
@@ -58,6 +66,10 @@ type GameRoom = {
   analysisVotes: Set<string>;
   analysisEnabled: boolean;
   updatedAt: number;
+
+  isStarted: boolean;
+  colorChoices: Map<string, "w" | "b">;
+  readyPlayers: Set<string>;
 };
 
 const app = express();
@@ -178,7 +190,7 @@ function buildSnapshot(room: GameRoom): RoomSnapshot {
     status = room.statusOverride || status;
   }
 
-  return {
+return {
     roomId: room.id,
     fen: room.chess.fen(),
     turn: room.chess.turn(),
@@ -200,6 +212,13 @@ function buildSnapshot(room: GameRoom): RoomSnapshot {
       enabled: room.analysisEnabled,
       votes: room.analysisVotes.size,
     },
+    isStarted: room.isStarted,
+    pregame: {
+      p1Choice: room.white ? (room.colorChoices.get(room.white) || null) : null,
+      p2Choice: room.black ? (room.colorChoices.get(room.black) || null) : null,
+      p1Ready: room.white ? room.readyPlayers.has(room.white) : false,
+      p2Ready: room.black ? room.readyPlayers.has(room.black) : false,
+    }
   };
 }
 
@@ -250,6 +269,10 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
     }
 
     if (room.analysisVotes.delete(socketId)) {
+      changed = true;
+    }
+
+    if (room.readyPlayers.delete(socketId)) {
       changed = true;
     }
 
@@ -360,8 +383,7 @@ io.on("connection", (socket) => {
 
   socket.on("room:create", () => {
     removeFromRoom(socket.id);
-
-    const roomId = createRoomCode();
+const roomId = createRoomCode();
     const room: GameRoom = {
       id: roomId,
       chess: new Chess(),
@@ -370,6 +392,9 @@ io.on("connection", (socket) => {
       analysisVotes: new Set(),
       analysisEnabled: false,
       updatedAt: Date.now(),
+      isStarted: false,
+      colorChoices: new Map(),
+      readyPlayers: new Set(),
     };
 
     rooms.set(roomId, room);
@@ -466,8 +491,13 @@ io.on("connection", (socket) => {
         return;
       }
 
-      if (room.chess.isGameOver()) {
+   if (room.chess.isGameOver()) {
         socket.emit("room:error", { message: "This game is already finished. Start a rematch." });
+        return;
+      }
+
+      if (!room.isStarted) {
+        socket.emit("room:error", { message: "The game hasn't started yet." });
         return;
       }
 
@@ -566,6 +596,51 @@ io.on("connection", (socket) => {
     emitRoomState(room);
   });
 
+  socket.on("pregame:select", (payload?: { color: "w" | "b" }) => {
+    if (!payload || (payload.color !== "w" && payload.color !== "b")) return;
+    const room = getRoomForSocket(socket.id);
+    if (!room || room.isStarted) return;
+
+    room.colorChoices.set(socket.id, payload.color);
+    room.readyPlayers.delete(socket.id); // Un-ready them if they switch colors
+    emitRoomState(room);
+  });
+
+  socket.on("pregame:ready", () => {
+    const room = getRoomForSocket(socket.id);
+    if (!room || room.isStarted) return;
+
+    const choice = room.colorChoices.get(socket.id);
+    if (!choice) return;
+
+    room.readyPlayers.add(socket.id);
+
+    if (room.white && room.black && room.readyPlayers.has(room.white) && room.readyPlayers.has(room.black)) {
+      const c1 = room.colorChoices.get(room.white);
+      const c2 = room.colorChoices.get(room.black);
+      if (c1 && c2 && c1 !== c2) {
+        room.isStarted = true;
+        
+        // If the creator actually chose black, swap their seats globally
+      if (c1 === "b" && room.white && room.black) {
+          const w = room.white;
+          const b = room.black;
+          room.white = b;
+          room.black = w;
+
+          io.sockets.sockets.get(room.white)?.emit("session:joined", { roomId: room.id, role: "w", shareUrl: buildShareUrl(room.white, room.id) });
+          io.sockets.sockets.get(room.black)?.emit("session:joined", { roomId: room.id, role: "b", shareUrl: buildShareUrl(room.black, room.id) });
+
+          const wData = io.sockets.sockets.get(room.white)?.data as ClientState | undefined;
+          if (wData) wData.role = "w";
+          const bData = io.sockets.sockets.get(room.black)?.data as ClientState | undefined;
+          if (bData) bData.role = "b";
+        }
+      }
+    }
+    emitRoomState(room);
+  });
+
 socket.on("game:rematch", () => {
     const clientState = socket.data as ClientState;
     const roomId = clientState.roomId;
@@ -585,15 +660,31 @@ socket.on("game:rematch", () => {
     room.rematchVotes.add(socket.id);
     const players = getActivePlayerSockets(room);
 
-    // Si ambos jugadores han votado por la revancha
-    if (players.length === 2 && players.every((playerId) => room.rematchVotes.has(playerId))) {
-      room.chess.reset();
-
     
+   if (players.length === 2 && players.every((playerId) => room.rematchVotes.has(playerId))) {
+      room.chess.reset();
       delete room.winner;      
       delete room.statusOverride; 
-      
       room.rematchVotes.clear();
+
+    
+      if (room.white && room.black) {
+        const w = room.white;
+        const b = room.black;
+        room.white = b;
+        room.black = w;
+      }
+
+      if (room.white) {
+        const wData = io.sockets.sockets.get(room.white)?.data as ClientState | undefined;
+        if (wData) wData.role = "w";
+        io.sockets.sockets.get(room.white)?.emit("session:joined", { roomId: room.id, role: "w", shareUrl: buildShareUrl(room.white, room.id) });
+      }
+      if (room.black) {
+        const bData = io.sockets.sockets.get(room.black)?.data as ClientState | undefined;
+        if (bData) bData.role = "b";
+        io.sockets.sockets.get(room.black)?.emit("session:joined", { roomId: room.id, role: "b", shareUrl: buildShareUrl(room.black, room.id) });
+      }
     }
 
     emitRoomState(room);

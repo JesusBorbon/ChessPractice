@@ -7489,10 +7489,38 @@ var require_main = __commonJS({
           <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
           <button class="ghost" id="resignButton" type="button" hidden>Resign</button>
         </div>
-        <div class="pregame-placeholder" id="pregamePlaceholder">
-          <h2>Waiting for match start</h2>
-          <p>Create or join a room. The board appears automatically once both players are connected.</p>
+       <div class="pregame-placeholder" id="pregamePlaceholder">
+          <div id="pregameWaiting">
+            <h2>Waiting for opponent</h2>
+            <p>Create or join a room. The board appears automatically once both players are connected.</p>
+          </div>
+          <div id="pregameSelection" hidden>
+            <h2>Choose Your Color</h2>
+            <div class="selection-grid">
+              <div class="selection-col">
+                <strong>You</strong>
+                <div class="color-options">
+                  <button class="color-opt-btn" id="myPickWhite">White</button>
+                  <button class="color-opt-btn" id="myPickBlack">Black</button>
+                </div>
+                <div class="ready-badge" id="myReadyBadge">Ready!</div>
+              </div>
+              <div class="selection-col">
+                <strong>Opponent</strong>
+                <div class="color-options">
+                  <button class="color-opt-btn disabled" id="opPickWhite">White</button>
+                  <button class="color-opt-btn disabled" id="opPickBlack">Black</button>
+                </div>
+                <div class="ready-badge" id="opReadyBadge">Ready!</div>
+              </div>
+            </div>
+            <div style="margin-top: 24px;">
+              <button class="action" id="pregameReadyBtn">Ready to Play</button>
+              <div id="pregameConflictWarning" hidden>Both players cannot select the same color.</div>
+            </div>
+          </div>
         </div>
+
         <div class="board-wrap">
           <div class="board" id="board"></div>
           <svg class="board-arrows" id="arrowLayer" viewBox="0 0 800 800" aria-hidden="true"></svg>
@@ -7647,6 +7675,19 @@ var require_main = __commonJS({
     var modalTitle = must("#modalTitle");
     var modalDescription = must("#modalDescription");
     var gameNav = must("#gameNav");
+    var pregameWaiting = must("#pregameWaiting");
+    var pregameSelection = must("#pregameSelection");
+    var myPickWhite = must("#myPickWhite");
+    var myPickBlack = must("#myPickBlack");
+    var opPickWhite = must("#opPickWhite");
+    var opPickBlack = must("#opPickBlack");
+    var myReadyBadge = must("#myReadyBadge");
+    var opReadyBadge = must("#opReadyBadge");
+    var pregameReadyBtn = must("#pregameReadyBtn");
+    var pregameConflictWarning = must("#pregameConflictWarning");
+    myPickWhite.addEventListener("click", () => socket.emit("pregame:select", { color: "w" }));
+    myPickBlack.addEventListener("click", () => socket.emit("pregame:select", { color: "b" }));
+    pregameReadyBtn.addEventListener("click", () => socket.emit("pregame:ready"));
     mountThemeSwitcher();
     window.addEventListener("animationchange", (event) => {
       const customEvent = event;
@@ -8117,7 +8158,7 @@ var require_main = __commonJS({
         promotionDialog.hidden = true;
       }
     });
-    socket.on("connect", () => {
+    function onSocketConnect() {
       state.connected = true;
       if (state.autoJoinCode) {
         if (ROOM_ID_PATTERN.test(state.autoJoinCode)) {
@@ -8125,7 +8166,9 @@ var require_main = __commonJS({
         }
         state.autoJoinCode = null;
       }
-    });
+    }
+    socket.on("connect", onSocketConnect);
+    if (socket.connected) onSocketConnect();
     socket.on("disconnect", () => {
       state.connected = false;
     });
@@ -8284,11 +8327,13 @@ var require_main = __commonJS({
       const snapshot = state.snapshot;
       const hasRoom = Boolean(state.roomId);
       const isMultiplayerReady = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
-      const isGameActive = state.gameMode === "multiplayer" && isMultiplayerReady || state.gameMode === "bot" && snapshot !== null;
-      const maxMoves = snapshot?.moves.length ?? 0;
-      gameNavRow.hidden = !isGameActive || maxMoves === 0;
+      const isGameActive = Boolean(
+        state.gameMode === "multiplayer" && isMultiplayerReady && snapshot?.isStarted || state.gameMode === "bot" && snapshot !== null
+      );
       const canVote = state.role === "w" || state.role === "b";
       const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
+      const maxMoves = snapshot?.moves.length ?? 0;
+      gameNavRow.hidden = !isGameActive || maxMoves === 0;
       roomBadge.textContent = state.roomId ? `Room ${state.roomId}` : "No active room";
       roleBadge.textContent = humanRole(state.role);
       shareLink.textContent = state.shareUrl || "Create or join a room to get a live invite link.";
@@ -8314,6 +8359,8 @@ var require_main = __commonJS({
       }
       if (!snapshot) {
         pregamePlaceholder.hidden = false;
+        pregameWaiting.hidden = false;
+        pregameSelection.hidden = true;
         matchStatus.textContent = "Create a room to start.";
         whiteSeat.textContent = "Waiting for player";
         blackSeat.textContent = "Waiting for player";
@@ -8322,9 +8369,35 @@ var require_main = __commonJS({
         spectatorMeta.textContent = "0";
         summaryText.textContent = "Ready to play.";
         liveAnalysisText.textContent = "Live analysis disabled.";
+        updateFocusHud();
         return;
       }
       pregamePlaceholder.hidden = isGameActive;
+      if (state.gameMode === "multiplayer" && !snapshot.isStarted) {
+        if (isMultiplayerReady) {
+          pregameWaiting.hidden = true;
+          pregameSelection.hidden = false;
+          const isP1 = state.role === "w";
+          const myChoice = isP1 ? snapshot.pregame.p1Choice : snapshot.pregame.p2Choice;
+          const opChoice = isP1 ? snapshot.pregame.p2Choice : snapshot.pregame.p1Choice;
+          const myReady = isP1 ? snapshot.pregame.p1Ready : snapshot.pregame.p2Ready;
+          const opReady = isP1 ? snapshot.pregame.p2Ready : snapshot.pregame.p1Ready;
+          myPickWhite.classList.toggle("selected", myChoice === "w");
+          myPickBlack.classList.toggle("selected", myChoice === "b");
+          opPickWhite.classList.toggle("selected", opChoice === "w");
+          opPickBlack.classList.toggle("selected", opChoice === "b");
+          myReadyBadge.classList.toggle("is-ready", myReady);
+          opReadyBadge.classList.toggle("is-ready", opReady);
+          const hasConflict = myChoice !== null && myChoice === opChoice;
+          pregameConflictWarning.hidden = !hasConflict;
+          pregameReadyBtn.disabled = myChoice === null || hasConflict || myReady;
+          pregameReadyBtn.textContent = myReady ? "Waiting for Opponent..." : "Ready to Play";
+          if (state.role === "spectator") pregameReadyBtn.hidden = true;
+        } else {
+          pregameWaiting.hidden = false;
+          pregameSelection.hidden = true;
+        }
+      }
       matchStatus.textContent = snapshot.status;
       whiteSeat.textContent = snapshot.players.whiteConnected ? seatLabel("w") : "Waiting for player";
       blackSeat.textContent = snapshot.players.blackConnected ? seatLabel("b") : "Waiting for player";
@@ -9346,8 +9419,8 @@ var require_main = __commonJS({
       state.snapshot = {
         roomId: "LOCAL",
         fen: chess.fen(),
-        turn: "w",
-        status: "Playing vs Stockfish (800 ELO)",
+        turn: chess.turn(),
+        status: "Active",
         winner: null,
         check: false,
         checkmate: false,
@@ -9357,7 +9430,9 @@ var require_main = __commonJS({
         lastMove: null,
         players: { whiteConnected: true, blackConnected: true, spectatorCount: 0 },
         rematchVotes: 0,
-        analysis: { enabled: false, votes: 0 }
+        analysis: { enabled: false, votes: 0 },
+        isStarted: true,
+        pregame: { p1Choice: "w", p2Choice: "b", p1Ready: true, p2Ready: true }
       };
       showToast("Bot mode active. You are White!");
       render();
