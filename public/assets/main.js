@@ -7103,16 +7103,6 @@ var init_styles = __esm({
 });
 
 // src/client/theme.ts
-function setLegalMovesEnabled(enabled) {
-  localStorage.setItem(LEGAL_MOVES_STORAGE_KEY, enabled ? "on" : "off");
-  document.querySelectorAll(".legal-btn").forEach((btn) => {
-    const isActive = btn.dataset.legal === "on" === enabled;
-    btn.classList.toggle("active", isActive);
-    btn.setAttribute("aria-checked", String(isActive));
-  });
-  const event = new CustomEvent("legalmoveschange", { detail: { enabled } });
-  window.dispatchEvent(event);
-}
 function setTheme(theme) {
   if (theme === "forest") {
     document.documentElement.removeAttribute("data-theme");
@@ -7136,7 +7126,7 @@ function setAnimationStyle(style) {
 }
 function setBloodFxEnabled(enabled) {
   localStorage.setItem(BLOOD_FX_STORAGE_KEY, enabled ? "on" : "off");
-  document.querySelectorAll(".fx-btn").forEach((btn) => {
+  document.querySelectorAll(".fx-btn:not(.legal-btn)").forEach((btn) => {
     const isActive = btn.dataset.bloodfx === "on" === enabled;
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-checked", String(isActive));
@@ -7144,23 +7134,30 @@ function setBloodFxEnabled(enabled) {
   const event = new CustomEvent("bloodfxchange", { detail: { enabled } });
   window.dispatchEvent(event);
 }
-function setPanelCollapsed(widget, toggleButton, collapsed) {
+function setLegalMovesEnabled(enabled) {
+  localStorage.setItem(LEGAL_MOVES_STORAGE_KEY, enabled ? "on" : "off");
+  document.querySelectorAll(".legal-btn").forEach((btn) => {
+    const isActive = btn.dataset.legal === "on" === enabled;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  const event = new CustomEvent("legalmoveschange", { detail: { enabled } });
+  window.dispatchEvent(event);
+}
+function setPanelCollapsed(widget, toggleBtn, collapsed) {
   widget.classList.toggle("is-collapsed", collapsed);
-  toggleButton.setAttribute("aria-expanded", String(!collapsed));
-  toggleButton.textContent = collapsed ? "\u25C0" : "\u25B6";
-  toggleButton.title = collapsed ? "Show customization" : "Hide customization";
+  toggleBtn.setAttribute("aria-expanded", String(!collapsed));
+  toggleBtn.style.transform = collapsed ? "rotate(0deg)" : "rotate(180deg)";
   localStorage.setItem(THEME_PANEL_COLLAPSED_KEY, collapsed ? "1" : "0");
 }
 function mountThemeSwitcher() {
-  const themeRaw = localStorage.getItem(THEME_STORAGE_KEY);
-  const savedTheme = themeRaw === "forest" || themeRaw === "purple" || themeRaw === "walnut" || themeRaw === "refined" ? themeRaw : "forest";
-  const collapsedRaw = localStorage.getItem(THEME_PANEL_COLLAPSED_KEY);
-  const animationRaw = localStorage.getItem(ANIMATION_STORAGE_KEY);
-  const savedAnimationStyle = animationRaw === "epic" ? "epic" : "smooth";
+  const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || "forest";
+  const savedAnimationStyle = localStorage.getItem(ANIMATION_STORAGE_KEY) || "smooth";
   const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
   const bloodFxEnabled = bloodFxRaw === "on";
   const legalMovesRaw = localStorage.getItem(LEGAL_MOVES_STORAGE_KEY);
-  const legalMovesEnabled = legalMovesRaw === "on";
+  const legalMovesEnabled = legalMovesRaw !== "off";
+  const collapsedRaw = localStorage.getItem(THEME_PANEL_COLLAPSED_KEY);
   const defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
   const initialCollapsed = collapsedRaw === null ? defaultCollapsed : collapsedRaw === "1";
   setTheme(savedTheme);
@@ -7194,6 +7191,13 @@ function mountThemeSwitcher() {
           <button class="fx-btn" type="button" data-bloodfx="on" role="radio" aria-label="Enable blood effect">On</button>
         </div>
       </div>
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Watch Legal Moves</span>
+        <div class="fx-segment" role="radiogroup" aria-label="Legal moves toggle">
+          <button class="legal-btn fx-btn" type="button" data-legal="off" role="radio" aria-label="Hide legal moves">Off</button>
+          <button class="legal-btn fx-btn" type="button" data-legal="on" role="radio" aria-label="Show legal moves">On</button>
+        </div>
+      </div>
     </div>
   `;
   document.body.appendChild(widget);
@@ -7211,16 +7215,20 @@ function mountThemeSwitcher() {
     if (btn?.dataset.theme) setTheme(btn.dataset.theme);
     const animBtn = e.target.closest(".animation-btn");
     if (animBtn?.dataset.animation) setAnimationStyle(animBtn.dataset.animation);
-    const fxBtn = e.target.closest(".fx-btn");
-    if (fxBtn?.dataset.bloodfx) setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
-    const legalBtn = e.target.closest(".legal-btn");
-    if (legalBtn?.dataset.legal) setLegalMovesEnabled(legalBtn.dataset.legal === "on");
+    const targetEl = e.target;
+    if (targetEl.closest(".legal-btn")) {
+      const legalBtn = targetEl.closest(".legal-btn");
+      if (legalBtn?.dataset.legal) setLegalMovesEnabled(legalBtn.dataset.legal === "on");
+    } else if (targetEl.closest(".fx-btn")) {
+      const fxBtn = targetEl.closest(".fx-btn");
+      if (fxBtn?.dataset.bloodfx) setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
+    }
   });
   document.querySelectorAll(".animation-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
     btn.setAttribute("aria-checked", String(btn.dataset.animation === savedAnimationStyle));
   });
-  document.querySelectorAll(".fx-btn").forEach((btn) => {
+  document.querySelectorAll(".fx-btn:not(.legal-btn)").forEach((btn) => {
     const isActive = btn.dataset.bloodfx === "on" === bloodFxEnabled;
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-checked", String(isActive));
@@ -7231,15 +7239,15 @@ function mountThemeSwitcher() {
     btn.setAttribute("aria-checked", String(isActive));
   });
 }
-var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, LEGAL_MOVES_STORAGE_KEY, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY;
+var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY, LEGAL_MOVES_STORAGE_KEY;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
     THEME_STORAGE_KEY = "chess-theme";
     THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
-    LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
     ANIMATION_STORAGE_KEY = "chess-animation-style";
     BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
+    LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
   }
 });
 
