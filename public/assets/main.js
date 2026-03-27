@@ -8361,9 +8361,10 @@ var require_main = __commonJS({
     function renderSession() {
       const snapshot = state.snapshot;
       const hasRoom = Boolean(state.roomId);
-      const isMultiplayerReady = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
+      const isMultiplayer = state.gameMode === "multiplayer";
+      const bothConnected = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
       const isGameActive = Boolean(
-        state.gameMode === "multiplayer" && isMultiplayerReady && snapshot?.isStarted || state.gameMode === "bot" && snapshot !== null
+        isMultiplayer && bothConnected && snapshot?.isStarted || state.gameMode === "bot" && snapshot !== null
       );
       const canVote = state.role === "w" || state.role === "b";
       const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
@@ -8408,8 +8409,8 @@ var require_main = __commonJS({
         return;
       }
       pregamePlaceholder.hidden = isGameActive;
-      if (state.gameMode === "multiplayer" && !snapshot.isStarted) {
-        if (isMultiplayerReady) {
+      if (isMultiplayer && !isGameActive) {
+        if (bothConnected) {
           pregameWaiting.hidden = true;
           pregameSelection.hidden = false;
           const isP1 = state.role === "w";
@@ -8458,6 +8459,10 @@ var require_main = __commonJS({
         liveAnalysisText.textContent = `Waiting for both players: ${snapshot.analysis.votes}/2 ready.`;
       } else {
         liveAnalysisText.textContent = "Live analysis disabled.";
+      }
+      if (!gameEnded) {
+        const existingOverlay = document.querySelector(".game-over-overlay");
+        if (existingOverlay) existingOverlay.remove();
       }
       updateFocusHud();
     }
@@ -8616,17 +8621,20 @@ var require_main = __commonJS({
       if (gameEnded && snapshot && !isHistoryView) {
         const overlay = document.createElement("div");
         overlay.className = "game-over-overlay";
+        const banner = document.createElement("div");
+        banner.className = "game-over-banner";
         const title = document.createElement("h2");
         title.className = "game-over-title";
         if (snapshot.checkmate) title.textContent = snapshot.winner === "w" ? "White Wins!" : "Black Wins!";
         else if (snapshot.draw) title.textContent = "Draw";
-        else if (snapshot.winner) title.textContent = snapshot.winner === "w" ? "White Wins (Resignation)" : "Black Wins (Resignation)";
+        else if (snapshot.winner) title.textContent = snapshot.winner === "w" ? "White Wins" : "Black Wins";
         const reason = document.createElement("p");
         reason.className = "game-over-reason";
         reason.textContent = snapshot.status;
+        const actionContainer = document.createElement("div");
+        actionContainer.className = "game-over-actions";
         const overlayRematchBtn = document.createElement("button");
         overlayRematchBtn.className = "action cta-turquoise";
-        overlayRematchBtn.style.marginTop = "20px";
         overlayRematchBtn.textContent = state.gameMode === "bot" ? "Play Again" : "Request Rematch";
         overlayRematchBtn.onclick = () => {
           if (state.gameMode === "bot") startBotGame();
@@ -8634,14 +8642,15 @@ var require_main = __commonJS({
         };
         const overlayAnalyzeBtn = document.createElement("a");
         overlayAnalyzeBtn.className = "action cta-rainbow";
-        overlayAnalyzeBtn.style.marginTop = "10px";
         overlayAnalyzeBtn.style.textDecoration = "none";
         overlayAnalyzeBtn.onclick = () => {
           localStorage.setItem("postGameMoves", JSON.stringify(snapshot.moves.map((m) => m.san)));
           window.location.href = "/analyze";
         };
         overlayAnalyzeBtn.textContent = "Analyze Game";
-        overlay.append(title, reason, overlayRematchBtn, overlayAnalyzeBtn);
+        actionContainer.append(overlayRematchBtn, overlayAnalyzeBtn);
+        banner.append(title, reason, actionContainer);
+        overlay.append(banner);
         board.append(overlay);
       }
     }

@@ -1974,40 +1974,73 @@ square.legal:has(.piece-quality-marker)::after {
     }
   }
 
+/* ── Cinematic Endgame Banner ── */
 .game-over-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(18, 28, 24, 0.92); /* Asegúrate de que el color no sea transparente */
-  backdrop-filter: blur(8px);
+  pointer-events: none; /* Lets players still see/click the board behind it */
   display: flex;
-  flex-direction: column;
-  align-items: center;
+  align-items: center; /* Centers the banner vertically */
   justify-content: center;
-  z-index: 1000; /* Debe ser mayor que el de las piezas y flechas */
-  border-radius: 26px;
-  color: #fff;
+  z-index: 1000;
+}
+
+.game-over-banner {
+  width: 100%;
+  background: linear-gradient(90deg, transparent, rgba(18, 28, 24, 0.88) 15%, rgba(18, 28, 24, 0.88) 85%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  padding: 2.5rem 0;
   text-align: center;
-  padding: 20px;
-  pointer-events: all; /* Importante: bloquea clics físicos al tablero */
+  opacity: 0;
+  pointer-events: auto; /* Re-enables clicks specifically for the buttons */
+  animation: bannerSlideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .game-over-title {
   font-family: "Fraunces", serif;
-  font-size: 3rem;
-  margin: 0 0 10px 0;
-  color: #fff;
-  text-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  font-size: clamp(2rem, 6vw, 3.2rem);
+  font-weight: 800;
+  color: #ffffff;
+  margin: 0;
+  text-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transform: scale(0.8);
+  animation: textPopIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s forwards;
 }
 
 .game-over-reason {
-  font-size: 1.2rem;
-  opacity: 0.8;
-  margin: 0;
+  font-size: 1.15rem;
+  color: #a0a0b0;
+  margin-top: 0.5rem;
+  margin-bottom: 1.5rem;
+  font-weight: 500;
+  opacity: 0;
+  transform: translateY(10px);
+  animation: textFadeUp 0.4s ease-out 0.4s forwards;
 }
 
-@keyframes fadeIn {
-  from { opacity: 0; transform: scale(0.9); }
+.game-over-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  opacity: 0;
+  transform: translateY(10px);
+  animation: textFadeUp 0.4s ease-out 0.6s forwards;
+}
+
+/* Animations */
+@keyframes bannerSlideIn {
+  from { opacity: 0; transform: scaleY(0); }
+  to { opacity: 1; transform: scaleY(1); }
+}
+@keyframes textPopIn {
+  from { opacity: 0; transform: scale(0.8); }
   to { opacity: 1; transform: scale(1); }
+}
+@keyframes textFadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* --- Estilos Modo Focus (Adaptados a la paleta de colores del tema) --- */
@@ -2567,6 +2600,17 @@ body.focus-mode.focus-analyze .nav-row button:hover {
 /* Prevent the capture ring/dot from showing on the piece you are currently moving */
 .square.selected::after {
   display: none !important;
+}
+
+#pregameSelection {
+  position: relative;
+  z-index: 1001; /* Higher than the game-over and board overlays */
+  pointer-events: auto !important;
+}
+
+.color-opt-btn {
+  pointer-events: auto !important;
+  touch-action: manipulation; /* Improves responsiveness on Android */
 }
 
 /* ── Hide the yellow selection ring while dragging ── */

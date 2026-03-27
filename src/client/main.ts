@@ -302,6 +302,28 @@ class StockfishBridge {
   terminate(): void { this.worker.terminate(); }
 }
 
+
+function triggerGameOverScreen(title: string, subtitle: string) {
+  const boardWrap = board.parentElement;
+  if (!boardWrap) return;
+
+  // Prevent duplicate banners if the board refreshes
+  if (boardWrap.querySelector('.endgame-overlay')) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'endgame-overlay';
+  overlay.innerHTML = `
+    <div class="endgame-banner">
+      <h1 class="endgame-title">${title}</h1>
+      <div class="endgame-subtitle">${subtitle}</div>
+    </div>
+  `;
+  
+  // Ensure the wrapper is positioned relatively so the absolute overlay fits perfectly inside it
+  boardWrap.style.position = "relative"; 
+  boardWrap.appendChild(overlay);
+}
+
 function parseInfoLine(line: string): { cp: number; mate: number | null; pv: string } | null {
   const scoreMatch = line.match(/score (cp|mate) (-?\d+)/);
   if (!scoreMatch) {
@@ -1441,10 +1463,12 @@ function renderSession(): void {
   const snapshot = state.snapshot;
   const hasRoom = Boolean(state.roomId);
   
-  // 1. Core State Calculations (Calculated FIRST so we can use them to toggle UI)
-  const isMultiplayerReady = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
+  // 1. Core State Calculations
+  const isMultiplayer = state.gameMode === "multiplayer";
+  const bothConnected = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
+  
   const isGameActive = Boolean(
-    (state.gameMode === "multiplayer" && isMultiplayerReady && snapshot?.isStarted) || 
+    (isMultiplayer && bothConnected && snapshot?.isStarted) || 
     (state.gameMode === "bot" && snapshot !== null)
   );
   
@@ -1502,11 +1526,11 @@ function renderSession(): void {
     return;
   }
   
-  // 4. Pregame Selection Menu Logic
+  // 4. Pregame Selection Menu Logic (Consolidated!)
   pregamePlaceholder.hidden = isGameActive;
 
-  if (state.gameMode === "multiplayer" && !snapshot.isStarted) {
-    if (isMultiplayerReady) {
+  if (isMultiplayer && !isGameActive) {
+    if (bothConnected) {
        pregameWaiting.hidden = true;
        pregameSelection.hidden = false;
 
@@ -1579,6 +1603,12 @@ function renderSession(): void {
     liveAnalysisText.textContent = `Waiting for both players: ${snapshot.analysis.votes}/2 ready.`;
   } else {
     liveAnalysisText.textContent = "Live analysis disabled.";
+  }
+
+  // 9. Wipe the old banner if the game restarts
+  if (!gameEnded) {
+    const existingOverlay = document.querySelector('.game-over-overlay');
+    if (existingOverlay) existingOverlay.remove();
   }
 
   updateFocusHud();
@@ -1794,22 +1824,29 @@ function renderBoard(): void {
   if (gameEnded && snapshot && !isHistoryView) {
     const overlay = document.createElement("div");
     overlay.className = "game-over-overlay";
+
+    // The new cinematic wrapper
+    const banner = document.createElement("div");
+    banner.className = "game-over-banner";
+
     const title = document.createElement("h2");
     title.className = "game-over-title";
     
     if (snapshot.checkmate) title.textContent = snapshot.winner === "w" ? "White Wins!" : "Black Wins!";
     else if (snapshot.draw) title.textContent = "Draw";
-    else if (snapshot.winner) title.textContent = snapshot.winner === "w" ? "White Wins (Resignation)" : "Black Wins (Resignation)";
+    else if (snapshot.winner) title.textContent = snapshot.winner === "w" ? "White Wins" : "Black Wins";
 
     const reason = document.createElement("p");
     reason.className = "game-over-reason";
     reason.textContent = snapshot.status;
 
+    // A container to keep the buttons neatly side-by-side
+    const actionContainer = document.createElement("div");
+    actionContainer.className = "game-over-actions";
+
     const overlayRematchBtn = document.createElement("button");
     overlayRematchBtn.className = "action cta-turquoise";
-    overlayRematchBtn.style.marginTop = "20px";
     overlayRematchBtn.textContent = state.gameMode === "bot" ? "Play Again" : "Request Rematch";
-    
     overlayRematchBtn.onclick = () => {
       if (state.gameMode === "bot") startBotGame();
       else socket.emit("game:rematch");
@@ -1817,7 +1854,6 @@ function renderBoard(): void {
 
     const overlayAnalyzeBtn = document.createElement("a");
     overlayAnalyzeBtn.className = "action cta-rainbow";
-    overlayAnalyzeBtn.style.marginTop = "10px";
     overlayAnalyzeBtn.style.textDecoration = "none";
     overlayAnalyzeBtn.onclick = () => {
       localStorage.setItem("postGameMoves", JSON.stringify(snapshot.moves.map(m => m.san)));
@@ -1825,7 +1861,9 @@ function renderBoard(): void {
     };
     overlayAnalyzeBtn.textContent = "Analyze Game";
 
-    overlay.append(title, reason, overlayRematchBtn, overlayAnalyzeBtn);
+    actionContainer.append(overlayRematchBtn, overlayAnalyzeBtn);
+    banner.append(title, reason, actionContainer);
+    overlay.append(banner);
     board.append(overlay);
   }
 }
