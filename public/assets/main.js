@@ -8062,6 +8062,7 @@ var require_main = __commonJS({
         return;
       }
       if (commit && targetSquare && targetSquare !== fromSquare) {
+        clearSelection();
         suppressAnimationForMove = { from: fromSquare, to: targetSquare };
         tryMoveFromTo(fromSquare, targetSquare);
       }
@@ -8510,6 +8511,7 @@ var require_main = __commonJS({
         if (!isHistoryView && state.legalTargets.includes(square)) button.classList.add("legal");
         if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
         if (checkedKingSquare === squareName) button.classList.add("in-check");
+        if (square === ptrDragFrom) button.classList.add("dragging");
         if (!isHistoryView) {
           state.premoves.forEach((p) => {
             if (p.from === square) button.classList.add("premove-from");
@@ -8789,6 +8791,7 @@ var require_main = __commonJS({
         }
         squareButton.classList.toggle("selected", state.selectedSquare === square);
         squareButton.classList.toggle("legal", state.legalTargets.includes(square));
+        squareButton.classList.toggle("dragging", square === ptrDragFrom);
       }
     }
     function checkAndExecutePremove() {

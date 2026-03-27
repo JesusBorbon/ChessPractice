@@ -516,6 +516,59 @@ body.focus-mode.focus-analyze .analyze-move-list {
   }
 }
 
+/* ── High-Visibility Legal Move Indicators (Main Board) ── */
+.square.legal {
+  position: relative;
+  cursor: pointer;
+}
+
+/* The "Dot" for empty squares */
+.square.legal::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 25%; 
+  height: 25%;
+  background-color: var(--legal-dot-color, rgba(0, 0, 0, 0.2));
+  border-radius: 50%;
+  pointer-events: none; /* CRITICAL: Allows drag-and-drop to pass through the dot */
+  z-index: 5;
+  transition: transform 0.1s ease-out;
+}
+
+/* The "Capture Ring" for occupied squares */
+/* Automatically detects if the target square has an opponent's image */
+.square.legal:has(img)::after {
+  width: 85%;
+  height: 85%;
+  background-color: transparent;
+  border: 5px solid var(--legal-dot-color, rgba(0, 0, 0, 0.2));
+  box-sizing: border-box;
+}
+
+/* Hover Effect (Works for normal mouse hover AND dragging over the square) */
+.square.legal:hover::after {
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
+/* ── Theme-Specific Palette Colors ── */
+
+/* Classic, Emerald, Wood (Dark dots on light squares) */
+[data-theme="classic"], [data-theme="emerald"], [data-theme="wood"] {
+  --legal-dot-color: rgba(0, 0, 0, 0.22);
+}
+
+/* Refined (Clean blue-steel indicator) */
+[data-theme="refined"] {
+  --legal-dot-color: rgba(45, 75, 110, 0.3);
+}
+
+/* Walnut (Glowing white dots to stand out against dark wood) */
+[data-theme="walnut"] {
+  --legal-dot-color: rgba(255, 255, 255, 0.4);
+}
 /* ── Per-theme overrides (analysis page) ───────────────────────────────────── */
 
 /* Purple: ghost/nav buttons */
@@ -734,4 +787,16 @@ body.focus-mode.focus-analyze .analyze-move-list {
 
 [data-theme="refined"] .move-quality-badge.blunder {
   transform: none;
+}
+
+
+/* ── Hide the yellow selection ring while dragging ── */
+.square.selected.dragging {
+  box-shadow: none !important;
+}
+
+/* Ensure no dots or rings try to render on the empty square either */
+.square.dragging::after,
+.square.dragging::before {
+  display: none !important;
 }

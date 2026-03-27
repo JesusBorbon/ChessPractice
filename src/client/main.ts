@@ -1084,6 +1084,7 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
 
   // SCENARIO 3: Finished a real Drag-and-Drop
   if (commit && targetSquare && targetSquare !== fromSquare) {
+    clearSelection();
     suppressAnimationForMove = { from: fromSquare, to: targetSquare };
     tryMoveFromTo(fromSquare, targetSquare);
   }
@@ -1688,6 +1689,8 @@ function renderBoard(): void {
     if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
     if (checkedKingSquare === squareName) button.classList.add("in-check");
 
+    if (square === ptrDragFrom) button.classList.add("dragging");
+
     // --- 1. PREMOVE & RED CAPTURE LOGIC ---
     if (!isHistoryView) {
       state.premoves.forEach((p) => {
@@ -2042,6 +2045,8 @@ function syncBoardInteractionState(): void {
 
     squareButton.classList.toggle("selected", state.selectedSquare === square);
     squareButton.classList.toggle("legal", state.legalTargets.includes(square));
+    
+    squareButton.classList.toggle("dragging", square === ptrDragFrom);
   }
 }
 

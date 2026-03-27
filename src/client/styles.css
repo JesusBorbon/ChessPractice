@@ -1480,10 +1480,33 @@ body.focus-mode.focus-multiplayer .board-panel {
       linear-gradient(135deg, #edf3f9, #e1e9f2);
   }
 
+  
+
+  /* Classic / Default Theme */
+[data-theme="purple"] {
+  --legal-dot-color: rgb(225, 0, 255);
+}
+
+/* Refined / Light Theme */
+[data-theme="refined"] {
+  --legal-dot-color: rgba(0, 0, 0, 0.201); /* Subtle blueish tint */
+}
+
+/* Walnut / Dark Wood Theme */
+[data-theme="walnut"] {
+  --legal-dot-color: rgba(248, 164, 47, 0.838); /* Bright white/glow for dark wood */
+}
+
+/* Emerald / Green Theme */
+[data-theme="classic"] {
+  --legal-dot-color: rgba(9, 255, 0, 0.86);
+}
+
   /* Board gap-fill colour (background of the .board grid container) */
   [data-theme="purple"] .board { background: #28105a; }
   [data-theme="walnut"]  .board { background: #a07848; }
   [data-theme="refined"] .board { background: #4d687f; }
+  [data-theme="classic"] .board { background: #09ff00; }
 
   /* Card / panel borders on purple dark bg */
   [data-theme="purple"] .hero-card,
@@ -1618,6 +1641,41 @@ body.focus-mode.focus-multiplayer .board-panel {
   [data-theme="refined"] .piece.white {
     color: #fefefe;
   }
+
+  .square.legal::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 26%; /* Slightly larger for better visibility */
+  height: 26%;
+  background-color: var(--legal-dot-color, rgba(0, 0, 0, 0.15));
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 5;
+  transition: transform 0.1s ease;
+}
+
+/* The Ring (for captures/occupied squares) */
+/* This kicks in if the square has a piece (image or icon) inside it */
+.square.legal:has(img)::after,
+.square.legal:has(svg)::after,
+.square.legal:has(.piece)::after {
+  width: 85%;
+  height: 85%;
+  background-color: transparent;
+  border: 6px solid var(--legal-dot-color, rgba(0, 0, 0, 0.15));
+  box-sizing: border-box;
+}
+
+.square.legal:hover::after {
+  transform: translate(-50%, -50%) scale(1.2);
+}
+
+.square.selected::after {
+  display: none !important;
+}
 
   /* ── Theme Switcher Widget ───────────────────────────────────────── */
   .theme-switcher {
@@ -2464,3 +2522,18 @@ body.focus-mode.focus-analyze .nav-row button:hover {
 .ready-badge { font-size: 0.85rem; font-weight: bold; color: var(--accent); opacity: 0; transition: 0.2s; transform: translateY(-5px); }
 .ready-badge.is-ready { opacity: 1; transform: translateY(0); }
 #pregameConflictWarning { color: #e35b52; margin-top: 12px; font-weight: bold; font-size: 0.95rem; }
+/* Prevent the capture ring/dot from showing on the piece you are currently moving */
+.square.selected::after {
+  display: none !important;
+}
+
+/* ── Hide the yellow selection ring while dragging ── */
+.square.selected.dragging {
+  box-shadow: none !important;
+}
+
+/* Ensure no dots or rings try to render on the empty square either */
+.square.dragging::after,
+.square.dragging::before {
+  display: none !important;
+}
