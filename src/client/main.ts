@@ -91,6 +91,7 @@ type AppState = {
   gameMode: "multiplayer" | "bot";
   viewCursor: number | null;
   trailFxEnabled: boolean; 
+  legalMovesEnabled: boolean;
 };
 
 type EngineEval = {
@@ -151,6 +152,7 @@ const state: AppState = {
   gameMode: "multiplayer",
   viewCursor: null,
   trailFxEnabled: localStorage.getItem("chess-trail-fx") === "on",
+  legalMovesEnabled: localStorage.getItem("chess-legal-moves") !== "off",
 };
 
 (window as any).state = state;
@@ -610,6 +612,12 @@ window.addEventListener("bloodfxchange", (event: Event) => {
   state.bloodFxEnabled = customEvent.detail.enabled;
 });
 
+window.addEventListener("legalmoveschange" , (event: Event) => {
+  const customEvent = event as CustomEvent<{ enabled: boolean }>;
+  state.legalMovesEnabled = customEvent.detail.enabled;
+  requestBoardRefresh(true);
+});
+
 
 const joinRoomButton = must<HTMLButtonElement>("#joinRoomButton");
 const copyLinkButton = must<HTMLButtonElement>("#copyLinkButton");
@@ -850,6 +858,8 @@ confirmYesBtn.addEventListener("click", () => {
 focusModeButton.addEventListener("click", () => {
   void toggleFocusMode();
 });
+
+
 
 window.addEventListener("keydown", (e) => {
   if (isTypingTarget(e.target)) return;
@@ -1684,7 +1694,7 @@ function renderBoard(): void {
   }
 
     if (!isHistoryView && state.selectedSquare === square) button.classList.add("selected");
-    if (!isHistoryView && state.legalTargets.includes(square)) button.classList.add("legal");
+    if (!isHistoryView && state.legalMovesEnabled && state.legalTargets.includes(square)) button.classList.add("legal");
     
     if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
     if (checkedKingSquare === squareName) button.classList.add("in-check");
@@ -2044,8 +2054,7 @@ function syncBoardInteractionState(): void {
     }
 
     squareButton.classList.toggle("selected", state.selectedSquare === square);
-    squareButton.classList.toggle("legal", state.legalTargets.includes(square));
-    
+    squareButton.classList.toggle("legal", state.legalMovesEnabled && state.legalTargets.includes(square));    
     squareButton.classList.toggle("dragging", square === ptrDragFrom);
   }
 }

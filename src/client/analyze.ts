@@ -223,6 +223,7 @@ let analysisRunId = 0;
 let analysisInProgress = false;
 let fullAnalysisInProgress = false;
 let focusMode = false;
+let legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
 let animationStyle: "smooth" | "epic" = (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth";
 let bloodFxEnabled = localStorage.getItem("chess-blood-fx") === "on";
 let lastCheckFlashKey: string | null = null;
@@ -319,6 +320,12 @@ window.addEventListener("animationchange", (event: Event) => {
 window.addEventListener("bloodfxchange", (event: Event) => {
   const customEvent = event as CustomEvent<{ enabled: boolean }>;
   bloodFxEnabled = customEvent.detail.enabled;
+});
+
+window.addEventListener("legalmoveschange", (event: Event) => {
+  const customEvent = event as CustomEvent<{ enabled: boolean }>;
+  legalMovesEnabled = customEvent.detail.enabled;
+  renderBoard();
 });
 
 // ── Element refs ───────────────────────────────────────────────────────────────
@@ -841,7 +848,7 @@ function renderBoard(): void {
     btn.setAttribute("aria-label", sq);
 
     if (selectedSquare === sq)       btn.classList.add("selected");
-    if (legalTargets.includes(sq))   btn.classList.add("legal");
+    if (legalMovesEnabled && legalTargets.includes(sq))   btn.classList.add("legal");
     if (lastMoveSquares.has(sq))     btn.classList.add("last-move");
     if (checkedKingSquare === sq)    btn.classList.add("in-check");
     if (squareAnnotations.has(sq))   btn.classList.add("highlight-red");

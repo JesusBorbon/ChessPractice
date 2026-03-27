@@ -695,6 +695,11 @@ button {
   box-shadow: inset 0 0 0 5px rgba(239, 195, 95, 0.85);
 }
 
+.square.legal {
+  position: relative;
+  cursor: pointer;
+}
+
 .square.last-move::before,
 .square.legal::before {
   content: "";
@@ -1642,19 +1647,21 @@ body.focus-mode.focus-multiplayer .board-panel {
     color: #fefefe;
   }
 
-  .square.legal::after {
+ .square.legal::after {
   content: "";
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 26%; /* Slightly larger for better visibility */
-  height: 26%;
-  background-color: var(--legal-dot-color, rgba(0, 0, 0, 0.15));
+  width: 25%; 
+  height: 25%;
+  background-color: var(--legal-dot-color, rgba(60, 255, 120, 0.7));
   border-radius: 50%;
   pointer-events: none;
   z-index: 5;
-  transition: transform 0.1s ease;
+  /* Soft Neon Glow */
+  box-shadow: 0 0 12px 2px var(--legal-dot-color, rgba(60, 255, 120, 0.7));
+  transition: transform 0.1s ease-out;
 }
 
 /* The Ring (for captures/occupied squares) */
@@ -1669,12 +1676,47 @@ body.focus-mode.focus-multiplayer .board-panel {
   box-sizing: border-box;
 }
 
+.square.legal:has(.piece)::after, .square.legal:has(img)::after {
+  width: 86%;
+  height: 86%;
+  background-color: transparent;
+
+  border: 3.5px solid rgba(255,65,65,0.9) !important;
+
+  box-shadow: 0 0 12px rgba(255, 50, 50, 0.65), inset 0 0 12px rgba(255, 50, 50, 0.65) !important;
+  box-sizing: border-box;
+}
+
 .square.legal:hover::after {
-  transform: translate(-50%, -50%) scale(1.2);
+  transform: translate(-50%, -50%) scale(1.15);
 }
 
 .square.selected::after {
   display: none !important;
+}
+
+square.legal:has(.piece-quality-marker)::after {
+  display: none !important;
+}
+
+/* Classic / Forest (Bright Neon Green) */
+[data-theme="classic"], :root {
+  --legal-dot-color: rgba(60, 255, 120, 0.7);
+}
+
+/* Refined (Neon Cyan/Blue) */
+[data-theme="refined"] {
+  --legal-dot-color: rgba(60, 200, 255, 0.75);
+}
+
+/* Walnut (Warm Neon Gold) */
+[data-theme="walnut"] {
+  --legal-dot-color: rgba(255, 195, 60, 0.8);
+}
+
+/* Purple (Neon Pink/Magenta) */
+[data-theme="purple"] {
+  --legal-dot-color: rgba(255, 60, 225, 0.75);
 }
 
   /* ── Theme Switcher Widget ───────────────────────────────────────── */

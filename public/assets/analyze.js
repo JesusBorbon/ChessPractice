@@ -3500,6 +3500,16 @@ var init_analyze = __esm({
 });
 
 // src/client/theme.ts
+function setLegalMovesEnabled(enabled) {
+  localStorage.setItem(LEGAL_MOVES_STORAGE_KEY, enabled ? "on" : "off");
+  document.querySelectorAll(".legal-btn").forEach((btn) => {
+    const isActive = btn.dataset.legal === "on" === enabled;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  const event = new CustomEvent("legalmoveschange", { detail: { enabled } });
+  window.dispatchEvent(event);
+}
 function setTheme(theme) {
   if (theme === "forest") {
     document.documentElement.removeAttribute("data-theme");
@@ -3546,6 +3556,8 @@ function mountThemeSwitcher() {
   const savedAnimationStyle = animationRaw === "epic" ? "epic" : "smooth";
   const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
   const bloodFxEnabled = bloodFxRaw === "on";
+  const legalMovesRaw = localStorage.getItem(LEGAL_MOVES_STORAGE_KEY);
+  const legalMovesEnabled = legalMovesRaw === "on";
   const defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
   const initialCollapsed = collapsedRaw === null ? defaultCollapsed : collapsedRaw === "1";
   setTheme(savedTheme);
@@ -3598,6 +3610,8 @@ function mountThemeSwitcher() {
     if (animBtn?.dataset.animation) setAnimationStyle(animBtn.dataset.animation);
     const fxBtn = e.target.closest(".fx-btn");
     if (fxBtn?.dataset.bloodfx) setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
+    const legalBtn = e.target.closest(".legal-btn");
+    if (legalBtn?.dataset.legal) setLegalMovesEnabled(legalBtn.dataset.legal === "on");
   });
   document.querySelectorAll(".animation-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
@@ -3608,13 +3622,19 @@ function mountThemeSwitcher() {
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-checked", String(isActive));
   });
+  document.querySelectorAll(".legal-btn").forEach((btn) => {
+    const isActive = btn.dataset.legal === "on" === legalMovesEnabled;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
 }
-var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY;
+var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, LEGAL_MOVES_STORAGE_KEY, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
     THEME_STORAGE_KEY = "chess-theme";
     THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
+    LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
     ANIMATION_STORAGE_KEY = "chess-animation-style";
     BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
   }
@@ -3801,6 +3821,7 @@ var require_analyze = __commonJS({
     var analysisInProgress = false;
     var fullAnalysisInProgress = false;
     var focusMode = false;
+    var legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
     var animationStyle = localStorage.getItem("chess-animation-style") || "smooth";
     var bloodFxEnabled = localStorage.getItem("chess-blood-fx") === "on";
     var lastCheckFlashKey = null;
@@ -3889,6 +3910,11 @@ var require_analyze = __commonJS({
     window.addEventListener("bloodfxchange", (event) => {
       const customEvent = event;
       bloodFxEnabled = customEvent.detail.enabled;
+    });
+    window.addEventListener("legalmoveschange", (event) => {
+      const customEvent = event;
+      legalMovesEnabled = customEvent.detail.enabled;
+      renderBoard();
     });
     var arrowLayer = q("#arrowLayer");
     var boardEl = q("#board");
@@ -4315,7 +4341,7 @@ var require_analyze = __commonJS({
         btn.dataset.square = sq;
         btn.setAttribute("aria-label", sq);
         if (selectedSquare === sq) btn.classList.add("selected");
-        if (legalTargets.includes(sq)) btn.classList.add("legal");
+        if (legalMovesEnabled && legalTargets.includes(sq)) btn.classList.add("legal");
         if (lastMoveSquares.has(sq)) btn.classList.add("last-move");
         if (checkedKingSquare === sq) btn.classList.add("in-check");
         if (squareAnnotations.has(sq)) btn.classList.add("highlight-red");

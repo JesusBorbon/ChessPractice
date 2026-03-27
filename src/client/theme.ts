@@ -2,11 +2,23 @@ export type Theme = "forest" | "purple" | "walnut" | "refined";
 
 const THEME_STORAGE_KEY = "chess-theme";
 const THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
+const LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
 
 export type AnimationStyle = "smooth" | "epic";
 
 const ANIMATION_STORAGE_KEY = "chess-animation-style";
 const BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
+
+function setLegalMovesEnabled(enabled: boolean): void {
+  localStorage.setItem(LEGAL_MOVES_STORAGE_KEY, enabled ? "on" : "off");
+  document.querySelectorAll<HTMLElement>(".legal-btn").forEach((btn) => {
+    const isActive = (btn.dataset.legal === "on") === enabled;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  const event = new CustomEvent("legalmoveschange", { detail: { enabled } });
+  window.dispatchEvent(event);
+}
 
 function setTheme(theme: Theme): void {
   if (theme === "forest") {
@@ -61,6 +73,9 @@ export function mountThemeSwitcher(): void {
   
   const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
   const bloodFxEnabled = bloodFxRaw === "on";
+
+  const legalMovesRaw = localStorage.getItem(LEGAL_MOVES_STORAGE_KEY);
+  const legalMovesEnabled = legalMovesRaw === "on";
 
   const defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
   const initialCollapsed = collapsedRaw === null ? defaultCollapsed : collapsedRaw === "1";
@@ -123,6 +138,10 @@ export function mountThemeSwitcher(): void {
 
     const fxBtn = (e.target as Element).closest<HTMLButtonElement>(".fx-btn");
     if (fxBtn?.dataset.bloodfx) setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
+
+    const legalBtn = (e.target as Element).closest<HTMLButtonElement>(".legal-btn");
+    if (legalBtn?.dataset.legal) setLegalMovesEnabled(legalBtn.dataset.legal === "on");
+
   });
 
   document.querySelectorAll<HTMLElement>(".animation-btn").forEach((btn) => {
@@ -132,6 +151,12 @@ export function mountThemeSwitcher(): void {
 
   document.querySelectorAll<HTMLElement>(".fx-btn").forEach((btn) => {
     const isActive = (btn.dataset.bloodfx === "on") === bloodFxEnabled;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+
+  document.querySelectorAll<HTMLElement>(".legal-btn").forEach((btn) => {
+    const isActive = (btn.dataset.legal === "on") === legalMovesEnabled;
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-checked", String(isActive));
   });

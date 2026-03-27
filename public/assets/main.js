@@ -7103,6 +7103,16 @@ var init_styles = __esm({
 });
 
 // src/client/theme.ts
+function setLegalMovesEnabled(enabled) {
+  localStorage.setItem(LEGAL_MOVES_STORAGE_KEY, enabled ? "on" : "off");
+  document.querySelectorAll(".legal-btn").forEach((btn) => {
+    const isActive = btn.dataset.legal === "on" === enabled;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  const event = new CustomEvent("legalmoveschange", { detail: { enabled } });
+  window.dispatchEvent(event);
+}
 function setTheme(theme) {
   if (theme === "forest") {
     document.documentElement.removeAttribute("data-theme");
@@ -7149,6 +7159,8 @@ function mountThemeSwitcher() {
   const savedAnimationStyle = animationRaw === "epic" ? "epic" : "smooth";
   const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
   const bloodFxEnabled = bloodFxRaw === "on";
+  const legalMovesRaw = localStorage.getItem(LEGAL_MOVES_STORAGE_KEY);
+  const legalMovesEnabled = legalMovesRaw === "on";
   const defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
   const initialCollapsed = collapsedRaw === null ? defaultCollapsed : collapsedRaw === "1";
   setTheme(savedTheme);
@@ -7201,6 +7213,8 @@ function mountThemeSwitcher() {
     if (animBtn?.dataset.animation) setAnimationStyle(animBtn.dataset.animation);
     const fxBtn = e.target.closest(".fx-btn");
     if (fxBtn?.dataset.bloodfx) setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
+    const legalBtn = e.target.closest(".legal-btn");
+    if (legalBtn?.dataset.legal) setLegalMovesEnabled(legalBtn.dataset.legal === "on");
   });
   document.querySelectorAll(".animation-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
@@ -7211,13 +7225,19 @@ function mountThemeSwitcher() {
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-checked", String(isActive));
   });
+  document.querySelectorAll(".legal-btn").forEach((btn) => {
+    const isActive = btn.dataset.legal === "on" === legalMovesEnabled;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
 }
-var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY;
+var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, LEGAL_MOVES_STORAGE_KEY, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
     THEME_STORAGE_KEY = "chess-theme";
     THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
+    LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
     ANIMATION_STORAGE_KEY = "chess-animation-style";
     BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
   }
@@ -7275,7 +7295,8 @@ var require_main = __commonJS({
       bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on",
       gameMode: "multiplayer",
       viewCursor: null,
-      trailFxEnabled: localStorage.getItem("chess-trail-fx") === "on"
+      trailFxEnabled: localStorage.getItem("chess-trail-fx") === "on",
+      legalMovesEnabled: localStorage.getItem("chess-legal-moves") !== "off"
     };
     window.state = state;
     var lastAnimatedMoveKey = null;
@@ -7696,6 +7717,11 @@ var require_main = __commonJS({
     window.addEventListener("bloodfxchange", (event) => {
       const customEvent = event;
       state.bloodFxEnabled = customEvent.detail.enabled;
+    });
+    window.addEventListener("legalmoveschange", (event) => {
+      const customEvent = event;
+      state.legalMovesEnabled = customEvent.detail.enabled;
+      requestBoardRefresh(true);
     });
     var joinRoomButton = must("#joinRoomButton");
     var copyLinkButton = must("#copyLinkButton");
@@ -8508,7 +8534,7 @@ var require_main = __commonJS({
           liveNavLast.disabled = currentPos === maxMoves;
         }
         if (!isHistoryView && state.selectedSquare === square) button.classList.add("selected");
-        if (!isHistoryView && state.legalTargets.includes(square)) button.classList.add("legal");
+        if (!isHistoryView && state.legalMovesEnabled && state.legalTargets.includes(square)) button.classList.add("legal");
         if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
         if (checkedKingSquare === squareName) button.classList.add("in-check");
         if (square === ptrDragFrom) button.classList.add("dragging");
@@ -8790,7 +8816,7 @@ var require_main = __commonJS({
           continue;
         }
         squareButton.classList.toggle("selected", state.selectedSquare === square);
-        squareButton.classList.toggle("legal", state.legalTargets.includes(square));
+        squareButton.classList.toggle("legal", state.legalMovesEnabled && state.legalTargets.includes(square));
         squareButton.classList.toggle("dragging", square === ptrDragFrom);
       }
     }
