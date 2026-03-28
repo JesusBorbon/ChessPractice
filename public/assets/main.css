@@ -2831,7 +2831,7 @@ body.focus-mode.focus-analyze .nav-row button:hover {
 }
 @media (max-width: 640px) {
   body.focus-mode .focus-hud {
-    top: -120px !important;
+    top: -200px !important;
   }
 }
 /*# sourceMappingURL=main.css.map */

@@ -2858,7 +2858,7 @@ body.focus-mode.focus-analyze .nav-row button:hover {
 /* FOCUS HUD PHONE UPPPER */
 @media (max-width: 640px) {
   body.focus-mode .focus-hud {
-    top: -120px !important; /* Adjust this value to move it further up */
+    top: -200px !important; /* Adjust this value to move it further up */
   }
 }
 
