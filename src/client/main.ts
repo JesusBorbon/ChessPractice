@@ -839,7 +839,7 @@ confirmYesBtn.addEventListener("click", () => {
   }
 });
 
-backToMenuButton.addEventListener("click", () => {
+backToMenuButton.addEventListener("click", () => {  
   const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
   if (gameEnded) {
     socket.emit("room:leave");
@@ -2187,7 +2187,6 @@ moveList.addEventListener("click", (e) => {
   
   render();
 });
-
 function updateCaption(): void {
   const snapshot = state.snapshot;
   
@@ -2196,52 +2195,67 @@ function updateCaption(): void {
     return;
   }
 
-  // Aseguramos que fen existe
-  const fen = snapshot.fen || ""; 
   const myColor = state.role as PlayerRole;
+  const opColor = myColor === "w" ? "b" : "w";
   
-  const rawValue = materialFromPerspective(fen, myColor);
-  const netValue = Math.floor(rawValue / 100);
+  // FIX: Replay the server's authoritative move list on a temporary board.
+  // This completely sidesteps the "FEN wiping history" bug.
+  const movesToReplay = state.viewCursor !== null 
+    ? snapshot.moves.slice(0, state.viewCursor) 
+    : snapshot.moves;
 
-  // CORRECCIÓN 1: Añadimos || "" para evitar el undefined
-  const boardFen = fen.split(" ")[0] || ""; 
-  
-  const counts: Record<string, number> = {};
-  for (const char of boardFen) {
-    if (/[prnbqkPRNBQK]/.test(char)) {
-      counts[char] = (counts[char] || 0) + 1;
+  const replayBoard = new Chess();
+  const myCaptures: PieceSymbol[] = [];
+  const opCaptures: PieceSymbol[] = [];
+
+  for (const moveSummary of movesToReplay) {
+    const moveResult = replayBoard.move(moveSummary.san);
+    if (moveResult && moveResult.captured) {
+      if (moveResult.color === myColor) {
+        myCaptures.push(moveResult.captured); // We captured their piece
+      } else {
+        opCaptures.push(moveResult.captured); // They captured our piece
+      }
     }
   }
 
-  let advantageIcons = "";
-  // CORRECCIÓN 2: Tipamos explícitamente las piezas permitidas
-  const types: (keyof typeof PIECE_SYMBOLS_MAP)[] = ["q", "r", "b", "n", "p"];
-  
-  types.forEach(type => {
-    const whiteKey = type.toUpperCase();
-    const blackKey = type.toLowerCase();
-    
-    const myCount = myColor === "w" ? (counts[whiteKey] || 0) : (counts[blackKey] || 0);
-    const opCount = myColor === "w" ? (counts[blackKey] || 0) : (counts[whiteKey] || 0);
-    
-    const diff = myCount - opCount;
-    if (diff > 0) {
-      // Ahora TS sabe que PIECE_SYMBOLS_MAP[type] siempre existirá
-      advantageIcons += PIECE_SYMBOLS_MAP[type].repeat(diff) + " ";
-    }
+  // Sort captures: Queens first, then Rooks, Bishops, Knights, Pawns
+  const sortOrder: Record<PieceSymbol, number> = { q: 1, r: 2, b: 3, n: 4, p: 5, k: 6 };
+  myCaptures.sort((a, b) => sortOrder[a] - sortOrder[b]);
+  opCaptures.sort((a, b) => sortOrder[a] - sortOrder[b]);
+
+  let myCapturesHtml = "";
+  myCaptures.forEach(piece => {
+    myCapturesHtml += `<img src="${PIECES[`${opColor}${piece}` as keyof typeof PIECES]}" class="captured-icon" />`;
   });
 
-  if (netValue > 0) {
+  let opCapturesHtml = "";
+  opCaptures.forEach(piece => {
+    opCapturesHtml += `<img src="${PIECES[`${myColor}${piece}` as keyof typeof PIECES]}" class="captured-icon" />`;
+  });
+
+  const currentFen = replayBoard.fen();
+  const rawValue = materialFromPerspective(currentFen, myColor);
+  const netValue = Math.floor(rawValue / 100);
+
+  if (!myCapturesHtml && !opCapturesHtml && netValue === 0) {
+    boardCaption.innerHTML = `<span style="opacity: 0.6; font-weight: 500;">Material: Even</span>`;
+  } else {
     boardCaption.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 8px; justify-content: center;">
-        <span style="font-size: 1.3rem; letter-spacing: 2px;">${advantageIcons.trim()}</span>
-        <strong style="color: var(--accent); font-size: 1.1rem;">+${netValue}</strong>
+      <div class="captures-wrapper">
+        ${myCapturesHtml || netValue > 0 ? `
+        <div class="captures-row">
+          <div class="captures-icons">${myCapturesHtml}</div>
+          ${netValue > 0 ? `<strong class="material-score plus">+${netValue}</strong>` : ""}
+        </div>` : ""}
+        
+        ${opCapturesHtml || netValue < 0 ? `
+        <div class="captures-row">
+          <div class="captures-icons" style="opacity: 0.85;">${opCapturesHtml}</div>
+          ${netValue < 0 ? `<strong class="material-score minus">${netValue}</strong>` : ""}
+        </div>` : ""}
       </div>
     `;
-  } else if (netValue < 0) {
-    boardCaption.innerHTML = `<span style="opacity: 0.6;">Material: <b>${netValue}</b></span>`;
-  } else {
-    boardCaption.textContent = "Material: Even";
   }
 }
 
@@ -3254,76 +3268,84 @@ function formatElapsed(secondsTotal: number): string {
 }
 
 function updateFocusHud(): void {
-  // Ocultamos ambos HUDs si no estamos en modo focus
   if (!state.focusMode) {
     focusHud.hidden = true;
-    focusMaterialHud.hidden = true; // Ocultamos el nuevo HUD también
+    focusMaterialHud.hidden = true;
     return;
   }
 
-  // 1. Lógica del Cronómetro (Tu lógica original)
   const elapsedSeconds = focusTimerStartMs
     ? Math.max(0, Math.floor((Date.now() - focusTimerStartMs) / 1000))
     : 0;
   focusTimer.textContent = formatElapsed(elapsedSeconds);
 
-  // 2. Lógica de Material para el HUD (Reparada)
   const snapshot = state.snapshot;
   if (snapshot && state.role && state.role !== "spectator") {
-    const fen = snapshot.fen || "";
     const myColor = state.role as PlayerRole;
+    const opColor = myColor === "w" ? "b" : "w";
     
-    // Calculamos el valor neto
-    const rawValue = materialFromPerspective(fen, myColor);
-    const netValue = Math.floor(rawValue / 100);
+    // FIX: Apply the same robust replay logic to the Focus HUD
+    const movesToReplay = state.viewCursor !== null 
+      ? snapshot.moves.slice(0, state.viewCursor) 
+      : snapshot.moves;
 
-    // Contamos piezas para los iconos
-    const boardFen = fen.split(" ")[0] || "";
-    const counts: Record<string, number> = {};
-    for (const char of boardFen) {
-      if (/[prnbqkPRNBQK]/.test(char)) {
-        counts[char] = (counts[char] || 0) + 1;
+    const replayBoard = new Chess();
+    const myCaptures: PieceSymbol[] = [];
+    const opCaptures: PieceSymbol[] = [];
+
+    for (const moveSummary of movesToReplay) {
+      const moveResult = replayBoard.move(moveSummary.san);
+      if (moveResult && moveResult.captured) {
+        if (moveResult.color === myColor) {
+          myCaptures.push(moveResult.captured);
+        } else {
+          opCaptures.push(moveResult.captured);
+        }
       }
     }
 
-    let advantageIcons = "";
-    // Aseguramos que PIECE_SYMBOLS_MAP está definida con 'as const' para TypeScript
-    const types: (keyof typeof PIECE_SYMBOLS_MAP)[] = ["q", "r", "b", "n", "p"];
-    
-    types.forEach(type => {
-      const myCount = myColor === "w" ? (counts[type.toUpperCase()] || 0) : (counts[type.toLowerCase()] || 0);
-      const opCount = myColor === "w" ? (counts[type.toLowerCase()] || 0) : (counts[type.toUpperCase()] || 0);
-      const diff = myCount - opCount;
-      if (diff > 0) advantageIcons += PIECE_SYMBOLS_MAP[type].repeat(diff);
+    const sortOrder: Record<PieceSymbol, number> = { q: 1, r: 2, b: 3, n: 4, p: 5, k: 6 };
+    myCaptures.sort((a, b) => sortOrder[a] - sortOrder[b]);
+    opCaptures.sort((a, b) => sortOrder[a] - sortOrder[b]);
+
+    let myCapturesHtml = "";
+    myCaptures.forEach(piece => {
+      myCapturesHtml += `<img src="${PIECES[`${opColor}${piece}` as keyof typeof PIECES]}" class="captured-icon" />`;
     });
 
-    // Mostramos u ocultamos según el balance
-    if (netValue > 0) {
-      // Ventaja: Mostramos puntos e iconos (apilados por el CSS)
-      focusMaterialScore.textContent = `+${netValue}`;
-      focusMaterialIcons.textContent = advantageIcons;
-      focusMaterialScore.style.display = "block";
-      focusMaterialIcons.style.display = "block";
-      focusMaterialHud.hidden = false;
-    } else if (netValue < 0) {
-      // Desventaja: Solo mostramos el número
-      focusMaterialScore.textContent = `${netValue}`;
-      focusMaterialScore.style.display = "block";
-      focusMaterialIcons.style.display = "none";
+    let opCapturesHtml = "";
+    opCaptures.forEach(piece => {
+      opCapturesHtml += `<img src="${PIECES[`${myColor}${piece}` as keyof typeof PIECES]}" class="captured-icon" />`;
+    });
+
+    const currentFen = replayBoard.fen();
+    const rawValue = materialFromPerspective(currentFen, myColor);
+    const netValue = Math.floor(rawValue / 100);
+
+    if (myCapturesHtml || opCapturesHtml || netValue !== 0) {
+      focusMaterialHud.innerHTML = `
+        ${myCapturesHtml || netValue > 0 ? `
+        <div class="focus-capture-row">
+           <div class="focus-icons">${myCapturesHtml}</div>
+           ${netValue > 0 ? `<span class="focus-score plus">+${netValue}</span>` : ""}
+        </div>` : ""}
+        
+        ${opCapturesHtml || netValue < 0 ? `
+        <div class="focus-capture-row">
+           <div class="focus-icons" style="opacity: 0.85;">${opCapturesHtml}</div>
+           ${netValue < 0 ? `<span class="focus-score minus">${netValue}</span>` : ""}
+        </div>` : ""}
+      `;
       focusMaterialHud.hidden = false;
     } else {
-      // Igualdad: Ocultamos el HUD para limpiar la pantalla
       focusMaterialHud.hidden = true;
     }
   } else {
-    // Si no hay partida o somos espectadores, ocultamos el material
     focusMaterialHud.hidden = true;
   }
 
-  // Mostramos el timer (siempre visible en focus)
   focusHud.hidden = false;
 }
-
 function applyFocusMode(): void {
   document.body.classList.toggle("focus-mode", state.focusMode);
   document.body.classList.toggle("focus-multiplayer", state.focusMode);

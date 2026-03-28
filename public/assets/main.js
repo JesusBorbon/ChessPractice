@@ -7328,13 +7328,6 @@ var require_main = __commonJS({
       q: 900,
       k: 0
     };
-    var PIECE_SYMBOLS_MAP = {
-      p: "\u265F",
-      n: "\u265E",
-      b: "\u265D",
-      r: "\u265C",
-      q: "\u265B"
-    };
     var LIVE_CATEGORY_LABELS = {
       brilliant: "Brilliant",
       great: "Great",
@@ -8905,40 +8898,54 @@ var require_main = __commonJS({
         boardCaption.textContent = snapshot ? `Spectating room ${snapshot.roomId}` : "";
         return;
       }
-      const fen = snapshot.fen || "";
       const myColor = state.role;
-      const rawValue = materialFromPerspective(fen, myColor);
-      const netValue = Math.floor(rawValue / 100);
-      const boardFen = fen.split(" ")[0] || "";
-      const counts = {};
-      for (const char of boardFen) {
-        if (/[prnbqkPRNBQK]/.test(char)) {
-          counts[char] = (counts[char] || 0) + 1;
+      const opColor = myColor === "w" ? "b" : "w";
+      const movesToReplay = state.viewCursor !== null ? snapshot.moves.slice(0, state.viewCursor) : snapshot.moves;
+      const replayBoard = new Chess();
+      const myCaptures = [];
+      const opCaptures = [];
+      for (const moveSummary of movesToReplay) {
+        const moveResult = replayBoard.move(moveSummary.san);
+        if (moveResult && moveResult.captured) {
+          if (moveResult.color === myColor) {
+            myCaptures.push(moveResult.captured);
+          } else {
+            opCaptures.push(moveResult.captured);
+          }
         }
       }
-      let advantageIcons = "";
-      const types = ["q", "r", "b", "n", "p"];
-      types.forEach((type) => {
-        const whiteKey = type.toUpperCase();
-        const blackKey = type.toLowerCase();
-        const myCount = myColor === "w" ? counts[whiteKey] || 0 : counts[blackKey] || 0;
-        const opCount = myColor === "w" ? counts[blackKey] || 0 : counts[whiteKey] || 0;
-        const diff = myCount - opCount;
-        if (diff > 0) {
-          advantageIcons += PIECE_SYMBOLS_MAP[type].repeat(diff) + " ";
-        }
+      const sortOrder = { q: 1, r: 2, b: 3, n: 4, p: 5, k: 6 };
+      myCaptures.sort((a, b) => sortOrder[a] - sortOrder[b]);
+      opCaptures.sort((a, b) => sortOrder[a] - sortOrder[b]);
+      let myCapturesHtml = "";
+      myCaptures.forEach((piece) => {
+        myCapturesHtml += `<img src="${PIECES[`${opColor}${piece}`]}" class="captured-icon" />`;
       });
-      if (netValue > 0) {
+      let opCapturesHtml = "";
+      opCaptures.forEach((piece) => {
+        opCapturesHtml += `<img src="${PIECES[`${myColor}${piece}`]}" class="captured-icon" />`;
+      });
+      const currentFen = replayBoard.fen();
+      const rawValue = materialFromPerspective(currentFen, myColor);
+      const netValue = Math.floor(rawValue / 100);
+      if (!myCapturesHtml && !opCapturesHtml && netValue === 0) {
+        boardCaption.innerHTML = `<span style="opacity: 0.6; font-weight: 500;">Material: Even</span>`;
+      } else {
         boardCaption.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 8px; justify-content: center;">
-        <span style="font-size: 1.3rem; letter-spacing: 2px;">${advantageIcons.trim()}</span>
-        <strong style="color: var(--accent); font-size: 1.1rem;">+${netValue}</strong>
+      <div class="captures-wrapper">
+        ${myCapturesHtml || netValue > 0 ? `
+        <div class="captures-row">
+          <div class="captures-icons">${myCapturesHtml}</div>
+          ${netValue > 0 ? `<strong class="material-score plus">+${netValue}</strong>` : ""}
+        </div>` : ""}
+        
+        ${opCapturesHtml || netValue < 0 ? `
+        <div class="captures-row">
+          <div class="captures-icons" style="opacity: 0.85;">${opCapturesHtml}</div>
+          ${netValue < 0 ? `<strong class="material-score minus">${netValue}</strong>` : ""}
+        </div>` : ""}
       </div>
     `;
-      } else if (netValue < 0) {
-        boardCaption.innerHTML = `<span style="opacity: 0.6;">Material: <b>${netValue}</b></span>`;
-      } else {
-        boardCaption.textContent = "Material: Even";
       }
     }
     function materialFromPerspective(fen, color) {
@@ -9704,35 +9711,50 @@ var require_main = __commonJS({
       focusTimer.textContent = formatElapsed(elapsedSeconds);
       const snapshot = state.snapshot;
       if (snapshot && state.role && state.role !== "spectator") {
-        const fen = snapshot.fen || "";
         const myColor = state.role;
-        const rawValue = materialFromPerspective(fen, myColor);
-        const netValue = Math.floor(rawValue / 100);
-        const boardFen = fen.split(" ")[0] || "";
-        const counts = {};
-        for (const char of boardFen) {
-          if (/[prnbqkPRNBQK]/.test(char)) {
-            counts[char] = (counts[char] || 0) + 1;
+        const opColor = myColor === "w" ? "b" : "w";
+        const movesToReplay = state.viewCursor !== null ? snapshot.moves.slice(0, state.viewCursor) : snapshot.moves;
+        const replayBoard = new Chess();
+        const myCaptures = [];
+        const opCaptures = [];
+        for (const moveSummary of movesToReplay) {
+          const moveResult = replayBoard.move(moveSummary.san);
+          if (moveResult && moveResult.captured) {
+            if (moveResult.color === myColor) {
+              myCaptures.push(moveResult.captured);
+            } else {
+              opCaptures.push(moveResult.captured);
+            }
           }
         }
-        let advantageIcons = "";
-        const types = ["q", "r", "b", "n", "p"];
-        types.forEach((type) => {
-          const myCount = myColor === "w" ? counts[type.toUpperCase()] || 0 : counts[type.toLowerCase()] || 0;
-          const opCount = myColor === "w" ? counts[type.toLowerCase()] || 0 : counts[type.toUpperCase()] || 0;
-          const diff = myCount - opCount;
-          if (diff > 0) advantageIcons += PIECE_SYMBOLS_MAP[type].repeat(diff);
+        const sortOrder = { q: 1, r: 2, b: 3, n: 4, p: 5, k: 6 };
+        myCaptures.sort((a, b) => sortOrder[a] - sortOrder[b]);
+        opCaptures.sort((a, b) => sortOrder[a] - sortOrder[b]);
+        let myCapturesHtml = "";
+        myCaptures.forEach((piece) => {
+          myCapturesHtml += `<img src="${PIECES[`${opColor}${piece}`]}" class="captured-icon" />`;
         });
-        if (netValue > 0) {
-          focusMaterialScore.textContent = `+${netValue}`;
-          focusMaterialIcons.textContent = advantageIcons;
-          focusMaterialScore.style.display = "block";
-          focusMaterialIcons.style.display = "block";
-          focusMaterialHud.hidden = false;
-        } else if (netValue < 0) {
-          focusMaterialScore.textContent = `${netValue}`;
-          focusMaterialScore.style.display = "block";
-          focusMaterialIcons.style.display = "none";
+        let opCapturesHtml = "";
+        opCaptures.forEach((piece) => {
+          opCapturesHtml += `<img src="${PIECES[`${myColor}${piece}`]}" class="captured-icon" />`;
+        });
+        const currentFen = replayBoard.fen();
+        const rawValue = materialFromPerspective(currentFen, myColor);
+        const netValue = Math.floor(rawValue / 100);
+        if (myCapturesHtml || opCapturesHtml || netValue !== 0) {
+          focusMaterialHud.innerHTML = `
+        ${myCapturesHtml || netValue > 0 ? `
+        <div class="focus-capture-row">
+           <div class="focus-icons">${myCapturesHtml}</div>
+           ${netValue > 0 ? `<span class="focus-score plus">+${netValue}</span>` : ""}
+        </div>` : ""}
+        
+        ${opCapturesHtml || netValue < 0 ? `
+        <div class="focus-capture-row">
+           <div class="focus-icons" style="opacity: 0.85;">${opCapturesHtml}</div>
+           ${netValue < 0 ? `<span class="focus-score minus">${netValue}</span>` : ""}
+        </div>` : ""}
+      `;
           focusMaterialHud.hidden = false;
         } else {
           focusMaterialHud.hidden = true;

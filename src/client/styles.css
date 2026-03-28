@@ -901,7 +901,7 @@ button {
   /* Respetar el "notch" o agujero de cámara en móviles modernos */
   padding-top: calc(env(safe-area-inset-top) + 10px);
   padding-bottom: calc(env(safe-area-inset-bottom) + 10px);
-  z-index: 999; 
+  z-index: 9999; 
 }
 
 .focus-hud button, 
@@ -2484,7 +2484,7 @@ body.focus-mode #focusTimer {
 /* ── Global Nav Row Styles (For Main & Analyze) ── */
 .nav-row {
   display: flex;
-  gap: 8px;
+  gap: 8px; /* Space between buttons */
   margin-top: 14px;
   justify-content: center;
 }
@@ -2609,8 +2609,52 @@ body.focus-mode.focus-analyze .nav-row button:hover {
 }
 
 .color-opt-btn {
-  pointer-events: auto !important;
-  touch-action: manipulation; /* Improves responsiveness on Android */
+  padding: 12px 24px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--ink);
+}
+
+.color-opt-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.color-opt-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+}
+
+.color-opt-btn.selected {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent-strong);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* Optional: Ensure dark themes handle the glass effect properly */
+[data-theme="purple"] .color-opt-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+[data-theme="purple"] .color-opt-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+[data-theme="purple"] .color-opt-btn.selected {
+  background: var(--accent);
+  color: #fff;
 }
 
 /* ── Hide the yellow selection ring while dragging ── */
@@ -2623,3 +2667,199 @@ body.focus-mode.focus-analyze .nav-row button:hover {
 .square.dragging::before {
   display: none !important;
 }
+
+
+/* --- Material Captures UI (Standard & Mobile) --- */
+.captures-wrapper {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.captures-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(25, 35, 32, 0.05);
+  padding: 8px 14px;
+  border-radius: 12px;
+  flex: 1;
+}
+
+/* Theme compatibility */
+[data-theme="purple"] .captures-row { background: rgba(160, 100, 255, 0.1); }
+[data-theme="refined"] .captures-row { background: rgba(31, 93, 139, 0.08); }
+[data-theme="walnut"] .captures-row { background: rgba(139, 94, 52, 0.08); }
+
+.captures-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+}
+
+.captures-icons {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap; /* Safely wraps pawns to a new line */
+  gap: 0;
+}
+
+.captured-icon {
+  width: 20px;
+  height: 20px;
+  margin-right: -8px; /* Creates the overlapping stack effect */
+  filter: drop-shadow(0 2px 2px rgba(0,0,0,0.3));
+  position: relative;
+}
+
+.captures-icons .captured-icon:last-child {
+  margin-right: 0;
+}
+
+.material-score {
+  font-size: 1rem;
+  font-weight: 800;
+  margin-left: auto; /* Pushes the score counter to the far right */
+}
+
+.material-score.plus { color: var(--accent); }
+.material-score.minus { color: #d91f1f; }
+
+@media (max-width: 640px) { /* Mobile Layout: Stack the two players' captures vertically for better readability on narrow screens */
+  .captures-wrapper {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+}
+
+/* --- Focus Material HUD Overrides --- */
+#focusMaterialHud {
+  /* Aligns neatly next to the focus timer pill */
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.focus-capture-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: color-mix(in srgb, var(--paper-strong), black 50%);
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.focus-capture-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: rgba(255,255,255,0.7);
+  letter-spacing: 0.05em;
+}
+
+.focus-icons {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  max-width: 140px; /* Forces wrapping on mobile screens if pawns get too long */
+}
+
+.focus-icons .captured-icon {
+  width: 16px;
+  height: 16px;
+  margin-right: -6px;
+}
+
+.focus-score {
+  font-size: 0.95rem;
+  font-weight: bold;
+  margin-left: auto;
+}
+
+.focus-score.plus { color: #4ade80; }
+.focus-score.minus { color: #f87171; }
+
+/* Safely remove legacy properties from previous #focusMaterialHud versions */
+#focusMaterialHud {
+  position: static; 
+  bottom: auto;
+  right: auto;
+  transform: none;
+}
+
+/* =========================================
+   FINAL FIX: FOCUS HUD POSITIONING
+   ========================================= */
+
+/* 1. Reset the internal items so they stay neatly inside the pill */
+#focusMaterialHud {
+  position: static !important;
+  bottom: auto !important;
+  right: auto !important;
+  transform: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+  align-items: center !important;
+}
+
+#focusTimer {
+  position: static !important;
+  top: auto !important;
+  transform: none !important;
+  margin: 0 !important;
+}
+
+/* 2. Mobile Layout: Top Center (safely away from the bottom exit button) */
+@media (max-width: 640px) {
+  body.focus-mode .focus-hud {
+    top: max(16px, env(safe-area-inset-top)) !important;
+    left: 50% !important;
+    right: auto !important;
+    bottom: auto !important;
+    transform: translateX(-50%) !important;
+    flex-direction: column !important; /* Stack timer above captures */
+    gap: 10px !important;
+    border-radius: 24px !important;
+    width: max-content !important;
+  }
+}
+
+/* 3. PC Layout: Bottom Left (lifted slightly to avoid overlapping nav arrows) */
+@media (min-width: 641px) {
+  body.focus-mode .focus-hud {
+    top: auto !important;
+    right: auto !important;
+    bottom: 28px !important; /* Safely clears the playback arrows */
+    left: 28px !important;
+    flex-direction: row !important; /* Timer and captures side-by-side */
+    gap: 16px !important;
+  }
+}
+
+/* FOCUS HUD PC LOWER */
+
+@media (min-width: 641px) {
+  body.focus-mode .focus-hud {
+    bottom: -25px !important; /* Adjust this value to move it further down */
+  }
+}
+
+/* FOCUS HUD PHONE UPPPER */
+@media (max-width: 640px) {
+  body.focus-mode .focus-hud {
+    top: -120px !important; /* Adjust this value to move it further up */
+  }
+}
+
+
