@@ -503,6 +503,22 @@ function getActivePlayerSockets(room: GameRoom): string[] {
   return [room.white, room.black].filter((value): value is string => Boolean(value));
 }
 
+function getLiveRoomRole(room: GameRoom, socketId: string): RoomRole | null {
+  if (room.white === socketId) {
+    return "w";
+  }
+
+  if (room.black === socketId) {
+    return "b";
+  }
+
+  if (room.spectators.has(socketId)) {
+    return "spectator";
+  }
+
+  return null;
+}
+
 function isSquare(value: unknown): value is Square {
   return typeof value === "string" && /^[a-h][1-8]$/.test(value);
 }
@@ -711,9 +727,8 @@ const roomId = createRoomCode();
     (payload?: { from?: Square; to?: Square; promotion?: "q" | "r" | "b" | "n" }) => {
       const clientState = socket.data as ClientState;
       const roomId = clientState.roomId;
-      const role = clientState.role;
 
-      if (!roomId || !role || role === "spectator") {
+      if (!roomId) {
         socket.emit("room:error", { message: "Only seated players can move pieces." });
         return;
       }
@@ -722,6 +737,17 @@ const roomId = createRoomCode();
       if (!room) {
         socket.emit("room:error", { message: "The room is no longer available." });
         return;
+      }
+
+      const liveRole = getLiveRoomRole(room, socket.id);
+      if (!liveRole || liveRole === "spectator") {
+        socket.emit("room:error", { message: "Only seated players can move pieces." });
+        return;
+      }
+
+      // Keep socket state aligned with authoritative room seat mapping.
+      if (clientState.role !== liveRole) {
+        clientState.role = liveRole;
       }
 
    if (room.chess.isGameOver()) {
@@ -734,7 +760,7 @@ const roomId = createRoomCode();
         return;
       }
 
-      if (room.chess.turn() !== role) {
+      if (room.chess.turn() !== liveRole) {
         socket.emit("room:error", { message: "Wait for your turn." });
         return;
       }
@@ -772,7 +798,7 @@ const roomId = createRoomCode();
 
       room.rematchVotes.clear();
       room.analysisVotes.clear();
-      applyMoveIncrement(room, role);
+      applyMoveIncrement(room, liveRole);
       if (!room.winner && !room.chess.isGameOver() && room.isStarted && room.white && room.black) {
         room.clockActive = room.chess.turn();
         room.clockRunning = true;
