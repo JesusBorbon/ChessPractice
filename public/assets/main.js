@@ -7313,7 +7313,6 @@ var require_main = __commonJS({
     var activeGhostNode = null;
     var activeGhostDestinationPiece = null;
     var pendingBoardRefresh = false;
-    var focusTimerStartMs = null;
     var liveAnalyzer = null;
     var liveAnalysisToken = 0;
     var currentModalAction = null;
@@ -8250,9 +8249,6 @@ var require_main = __commonJS({
         requestBoardRefresh(true);
       }
       state.snapshot = snapshot;
-      if (!focusTimerStartMs || snapshot.moveCount < previousMoveCount) {
-        focusTimerStartMs = Date.now();
-      }
       chess.load(snapshot.fen);
       const isActuallyNewMove = _lastPlayedMoveCount !== -1 && snapshot.moveCount > _lastPlayedMoveCount;
       _lastPlayedMoveCount = snapshot.moveCount;
@@ -9733,7 +9729,6 @@ var require_main = __commonJS({
       state.pendingPromotion = null;
       state.premoves = [];
       state.gameMode = "multiplayer";
-      focusTimerStartMs = null;
       state.liveAnalysisSummary = "Live analysis disabled.";
       state.lastAnalyzedMoveKey = null;
       state.liveMoveGrades = {};
@@ -9773,11 +9768,6 @@ var require_main = __commonJS({
         inviteJoinCard.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
       });
     }
-    function formatElapsed(secondsTotal) {
-      const minutes = Math.floor(secondsTotal / 60);
-      const seconds = secondsTotal % 60;
-      return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-    }
     function formatClockMs(ms) {
       const totalSeconds = Math.max(0, Math.ceil(ms / 1e3));
       const minutes = Math.floor(totalSeconds / 60);
@@ -9792,14 +9782,24 @@ var require_main = __commonJS({
       const elapsed = Math.max(0, Date.now() - lastRoomStateReceivedAtMs);
       return Math.max(0, baseMs - elapsed);
     }
+    function getFocusTimerText() {
+      const snapshot = state.snapshot;
+      if (!snapshot) {
+        return "00:00";
+      }
+      if (state.role === "w" || state.role === "b") {
+        return formatClockMs(getDisplayClockMs(snapshot, state.role));
+      }
+      const activeColor = snapshot.clock.active ?? snapshot.turn;
+      return `${activeColor === "w" ? "W" : "B"} ${formatClockMs(getDisplayClockMs(snapshot, activeColor))}`;
+    }
     function updateFocusHud() {
       if (!state.focusMode) {
         focusHud.hidden = true;
         focusMaterialHud.hidden = true;
         return;
       }
-      const elapsedSeconds = focusTimerStartMs ? Math.max(0, Math.floor((Date.now() - focusTimerStartMs) / 1e3)) : 0;
-      focusTimer.textContent = formatElapsed(elapsedSeconds);
+      focusTimer.textContent = getFocusTimerText();
       const snapshot = state.snapshot;
       if (snapshot && state.role && state.role !== "spectator") {
         const myColor = state.role;

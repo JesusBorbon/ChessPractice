@@ -179,7 +179,6 @@ let activeGhostAnimation: Animation | null = null;
 let activeGhostNode: HTMLElement | null = null;
 let activeGhostDestinationPiece: HTMLElement | null = null;
 let pendingBoardRefresh = false;
-let focusTimerStartMs: number | null = null;
 let liveAnalyzer: StockfishBridge | null = null;
 let liveAnalysisToken = 0;
 let currentModalAction: "leave" | "resign" | "bot" | null = null;
@@ -1328,10 +1327,6 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
   }
 
   state.snapshot = snapshot;
-  
-  if (!focusTimerStartMs || snapshot.moveCount < previousMoveCount) {
-    focusTimerStartMs = Date.now();
-  }
   
   chess.load(snapshot.fen);
 
@@ -3308,7 +3303,6 @@ function clearLocalRoomState(): void {
 
   state.gameMode = "multiplayer"; 
 
-  focusTimerStartMs = null;
   state.liveAnalysisSummary = "Live analysis disabled.";
   state.lastAnalyzedMoveKey = null;
   state.liveMoveGrades = {};
@@ -3359,12 +3353,6 @@ function scrollToInviteJoinCardOnMobile(): void {
   });
 }
 
-function formatElapsed(secondsTotal: number): string {
-  const minutes = Math.floor(secondsTotal / 60);
-  const seconds = secondsTotal % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
 function formatClockMs(ms: number): string {
   const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -3382,6 +3370,20 @@ function getDisplayClockMs(snapshot: RoomSnapshot, color: PlayerRole): number {
   return Math.max(0, baseMs - elapsed);
 }
 
+function getFocusTimerText(): string {
+  const snapshot = state.snapshot;
+  if (!snapshot) {
+    return "00:00";
+  }
+
+  if (state.role === "w" || state.role === "b") {
+    return formatClockMs(getDisplayClockMs(snapshot, state.role));
+  }
+
+  const activeColor: PlayerRole = snapshot.clock.active ?? snapshot.turn;
+  return `${activeColor === "w" ? "W" : "B"} ${formatClockMs(getDisplayClockMs(snapshot, activeColor))}`;
+}
+
 function updateFocusHud(): void {
   if (!state.focusMode) {
     focusHud.hidden = true;
@@ -3389,10 +3391,7 @@ function updateFocusHud(): void {
     return;
   }
 
-  const elapsedSeconds = focusTimerStartMs
-    ? Math.max(0, Math.floor((Date.now() - focusTimerStartMs) / 1000))
-    : 0;
-  focusTimer.textContent = formatElapsed(elapsedSeconds);
+  focusTimer.textContent = getFocusTimerText();
 
   const snapshot = state.snapshot;
   if (snapshot && state.role && state.role !== "spectator") {
