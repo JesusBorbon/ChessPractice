@@ -9785,13 +9785,17 @@ var require_main = __commonJS({
     function getFocusTimerText() {
       const snapshot = state.snapshot;
       if (!snapshot) {
-        return "00:00";
+        return "W 00:00 | B 00:00";
       }
-      if (state.role === "w" || state.role === "b") {
-        return formatClockMs(getDisplayClockMs(snapshot, state.role));
+      const whiteText = formatClockMs(getDisplayClockMs(snapshot, "w"));
+      const blackText = formatClockMs(getDisplayClockMs(snapshot, "b"));
+      if (state.role === "w") {
+        return `You ${whiteText} | Opp ${blackText}`;
       }
-      const activeColor = snapshot.clock.active ?? snapshot.turn;
-      return `${activeColor === "w" ? "W" : "B"} ${formatClockMs(getDisplayClockMs(snapshot, activeColor))}`;
+      if (state.role === "b") {
+        return `You ${blackText} | Opp ${whiteText}`;
+      }
+      return `W ${whiteText} | B ${blackText}`;
     }
     function updateFocusHud() {
       if (!state.focusMode) {
