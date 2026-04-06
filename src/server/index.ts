@@ -58,6 +58,7 @@ type GameRoom = {
   chess: Chess;
   white?: string;
   black?: string;
+  spectators: Set<string>;
   winner?: PlayerRole | null;      
   statusOverride?: string;
   whiteDisconnectedAt?: number;
@@ -135,9 +136,7 @@ function buildShareUrl(socketId: string, roomId: string): string {
 }
 
 function getSpectatorCount(roomId: string, room: GameRoom): number {
-  const socketCount = io.sockets.adapter.rooms.get(roomId)?.size ?? 0;
-  const playerCount = Number(Boolean(room.white)) + Number(Boolean(room.black));
-  return Math.max(0, socketCount - playerCount);
+  return room.spectators.size;
 }
 
 function buildStatus(chess: Chess): { status: string; winner: PlayerRole | null } {
@@ -276,6 +275,10 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
       changed = true;
     }
 
+    if (room.spectators.delete(socketId)) {
+      changed = true;
+    }
+
     if (room.analysisEnabled && (!room.white || !room.black)) {
       room.analysisEnabled = false;
       room.analysisVotes.clear();
@@ -310,21 +313,24 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
 
 function assignRole(room: GameRoom, socketId: string): RoomRole {
   if (!room.white) {
+    room.spectators.delete(socketId);
     room.white = socketId;
     return "w";
   }
 
   if (!room.black) {
+    room.spectators.delete(socketId);
     room.black = socketId;
     return "b";
   }
 
+  room.spectators.add(socketId);
   return "spectator";
 }
 
 function getRoomForSocket(socketId: string): GameRoom | undefined {
   for (const room of rooms.values()) {
-    if (room.white === socketId || room.black === socketId || io.sockets.adapter.rooms.get(room.id)?.has(socketId)) {
+    if (room.white === socketId || room.black === socketId || room.spectators.has(socketId)) {
       return room;
     }
   }
@@ -388,6 +394,7 @@ const roomId = createRoomCode();
       id: roomId,
       chess: new Chess(),
       white: socket.id,
+      spectators: new Set(),
       rematchVotes: new Set(),
       analysisVotes: new Set(),
       analysisEnabled: false,
@@ -440,10 +447,12 @@ const roomId = createRoomCode();
     if (room.whiteDisconnectedAt && Date.now() - room.whiteDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS) {
       role = "w";
       room.white = socket.id;
+      room.spectators.delete(socket.id);
       delete room.whiteDisconnectedAt;
     } else if (room.blackDisconnectedAt && Date.now() - room.blackDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS) {
       role = "b";
       room.black = socket.id;
+      room.spectators.delete(socket.id);
       delete room.blackDisconnectedAt;
     } else {
       role = assignRole(room, socket.id);
