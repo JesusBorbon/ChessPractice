@@ -186,6 +186,13 @@ let animationFinished = true;
 let animatingToSquare: Square | null = null;
 let lastRoomStateReceivedAtMs = Date.now();
 
+const SMOOTH_MOVE_DURATION_MS = 620;
+const EPIC_MOVE_DURATION_MS = {
+  smash: 860,
+  spin: 760,
+  slide: 620,
+} as const;
+
 
 const LIVE_MATE_CP = 100000;
 const PIECE_VALUES: Record<string, number> = {
@@ -215,6 +222,11 @@ const LIVE_CATEGORY_LABELS: Record<MoveCategory, string> = {
 };
 const ROOM_CODE_LENGTH = 4;
 const ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
+
+function applyAnimationTiming(style: "smooth" | "epic"): void {
+  const cssDuration = style === "epic" ? 760 : SMOOTH_MOVE_DURATION_MS;
+  document.documentElement.style.setProperty("--move-duration", `${cssDuration}ms`);
+}
 
 class StockfishBridge {
   private readonly worker: Worker;
@@ -658,10 +670,12 @@ myPickBlack.addEventListener("click", () => socket.emit("pregame:select", { colo
 pregameReadyBtn.addEventListener("click", () => socket.emit("pregame:ready"));
 
 mountThemeSwitcher();
+applyAnimationTiming(state.animationStyle);
 
 window.addEventListener("animationchange", (event: Event) => {
   const customEvent = event as CustomEvent<{ style: "smooth" | "epic" }>;
   state.animationStyle = customEvent.detail.style;
+  applyAnimationTiming(state.animationStyle);
 });
 
 
@@ -1321,11 +1335,6 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
   const previousMoveCount = state.snapshot?.moveCount ?? 0;
   const previousFen = chess.fen();
   
-  const isNewMove = snapshot.moveCount > previousMoveCount;
-  if (isNewMove && activeGhostAnimation) {
-    requestBoardRefresh(true); 
-  }
-
   state.snapshot = snapshot;
   
   chess.load(snapshot.fen);
@@ -1385,9 +1394,9 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
     }
   }
 
-  // 2. THE FIX: Always force a refresh (true) when receiving room state.
-  // This kills any "ghost" hidden states from fast play or rejected moves.
-  requestBoardRefresh(true); 
+  // Never force-cancel active animations on routine room ticks.
+  // If an animation is active, requestBoardRefresh() queues a safe render.
+  requestBoardRefresh(); 
 
   renderSession();
   renderMoves();
@@ -2626,7 +2635,11 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   const toSquareButton   = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.to}"]`);
   const destinationPiece = toSquareButton?.querySelector<HTMLElement>(".piece");
   
-  if (!fromSquareButton || !toSquareButton || !destinationPiece) return;
+  if (!fromSquareButton || !toSquareButton || !destinationPiece) {
+    animationFinished = true;
+    animatingToSquare = null;
+    return;
+  }
 
   // 3. Calculate the distance (delta) for the animation
   const fromRect = fromSquareButton.getBoundingClientRect();
@@ -2662,12 +2675,15 @@ function animateLastMove(lastMove: MoveSummary | null): void {
       { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0)` },
       { transform: "translate3d(-50%, -50%, 0)" },
     ],
-    { duration: 700, easing: "cubic-bezier(0.22, 0.61, 0.36, 1)" }
+    { duration: SMOOTH_MOVE_DURATION_MS, easing: "cubic-bezier(0.22, 0.61, 0.36, 1)" }
   );
 
   activeGhostAnimation = animation;
 
+  let finalized = false;
   const onEnd = () => {
+  if (finalized) return;
+  finalized = true;
   ghostPiece.remove();
   destinationPiece.style.visibility = "";
   destinationPiece.style.opacity = "1";
@@ -2768,7 +2784,11 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   const fromSquareButton = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.from}"]`);
   const toSquareButton   = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.to}"]`);
   const destinationPiece = toSquareButton?.querySelector<HTMLElement>(".piece");
-  if (!fromSquareButton || !toSquareButton || !destinationPiece) return;
+  if (!fromSquareButton || !toSquareButton || !destinationPiece) {
+    animationFinished = true;
+    animatingToSquare = null;
+    return;
+  }
 
   const fromRect = fromSquareButton.getBoundingClientRect();
   const toRect = toSquareButton.getBoundingClientRect();
@@ -2807,11 +2827,11 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   else if (roll < 0.6) profile = "spin"; // 30% chance
 
   let keyframes: Keyframe[] = [];
-  let duration = 600; // Base duration
+  let duration: number = EPIC_MOVE_DURATION_MS.spin;
 
   if (profile === "smash") {
     // 1. THE SMASH (Massive Jump & Scale)
-    duration = 800 + Math.random() * 100;
+    duration = EPIC_MOVE_DURATION_MS.smash;
     const jump = 90 + Math.random() * 40;
     const scale = 1.25 + Math.random() * 0.15;
     const spin = (Math.random() * 15 + 10) * (Math.random() > 0.5 ? 1 : -1);
@@ -2825,7 +2845,7 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   } 
   else if (profile === "spin") {
     // 2. THE SPIN (360 Kickflip)
-    duration = 650 + Math.random() * 100;
+    duration = EPIC_MOVE_DURATION_MS.spin;
     const jump = 40 + Math.random() * 20;
     const spinDir = Math.random() > 0.5 ? 360 : -360;
     
@@ -2837,7 +2857,7 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   } 
   else {
     // 3. THE SLIDE (Fast, Low, Aggressive Tilt)
-    duration = 450 + Math.random() * 80; // Much faster
+    duration = EPIC_MOVE_DURATION_MS.slide;
     // Calculate tilt direction based on movement (deltaX is inverted: negative means moving right)
     const tilt = deltaX < 0 ? 18 : (deltaX > 0 ? -18 : 0); 
     
@@ -2858,7 +2878,10 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   
   startTrailSpawning();
 
+ let finalized = false;
  const onEnd = () => {
+  if (finalized) return;
+  finalized = true;
   ghostPiece.remove();
   destinationPiece.style.visibility = "";
   destinationPiece.style.opacity = "1";
@@ -3380,11 +3403,11 @@ function getFocusTimerText(): string {
   const blackText = formatClockMs(getDisplayClockMs(snapshot, "b"));
 
   if (state.role === "w") {
-    return `You ${whiteText} | Opp ${blackText}`;
+    return `${whiteText} | Opp ${blackText}`;
   }
 
   if (state.role === "b") {
-    return `You ${blackText} | Opp ${whiteText}`;
+    return `${blackText} | Opp ${whiteText}`;
   }
 
   return `W ${whiteText} | B ${blackText}`;

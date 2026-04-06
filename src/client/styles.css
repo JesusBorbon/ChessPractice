@@ -2904,7 +2904,44 @@ body.focus-mode.focus-analyze .nav-row button:hover {
 /* FOCUS HUD PHONE UPPPER */
 @media (max-width: 640px) {
   body.focus-mode .focus-hud {
-    top: -200px !important; /* Adjust this value to move it further up */
+    top: -150px !important; /* Adjust this value to move it further up */
+  }
+}
+
+/* FINAL DESKTOP HUD LAYOUT: captures left, timer right */
+@media (min-width: 641px) {
+  body.focus-mode .focus-hud {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    bottom: 20px !important;
+    width: 100% !important;
+    height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    pointer-events: none !important;
+  }
+
+  body.focus-mode #focusMaterialHud {
+    position: absolute !important;
+    left: 22px !important;
+    right: auto !important;
+    bottom: 0 !important;
+    align-items: flex-start !important;
+  }
+
+  body.focus-mode #focusTimer {
+    position: absolute !important;
+    right: 22px !important;
+    left: auto !important;
+    bottom: 0 !important;
+    top: auto !important;
+    transform: none !important;
+    margin: 0 !important;
   }
 }
 

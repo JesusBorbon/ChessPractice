@@ -7319,6 +7319,12 @@ var require_main = __commonJS({
     var animationFinished = true;
     var animatingToSquare = null;
     var lastRoomStateReceivedAtMs = Date.now();
+    var SMOOTH_MOVE_DURATION_MS = 620;
+    var EPIC_MOVE_DURATION_MS = {
+      smash: 860,
+      spin: 760,
+      slide: 620
+    };
     var LIVE_MATE_CP = 1e5;
     var PIECE_VALUES = {
       p: 100,
@@ -7339,6 +7345,10 @@ var require_main = __commonJS({
     };
     var ROOM_CODE_LENGTH = 4;
     var ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
+    function applyAnimationTiming(style) {
+      const cssDuration = style === "epic" ? 760 : SMOOTH_MOVE_DURATION_MS;
+      document.documentElement.style.setProperty("--move-duration", `${cssDuration}ms`);
+    }
     var StockfishBridge = class {
       worker;
       ready = false;
@@ -7731,9 +7741,11 @@ var require_main = __commonJS({
     myPickBlack.addEventListener("click", () => socket.emit("pregame:select", { color: "b" }));
     pregameReadyBtn.addEventListener("click", () => socket.emit("pregame:ready"));
     mountThemeSwitcher();
+    applyAnimationTiming(state.animationStyle);
     window.addEventListener("animationchange", (event) => {
       const customEvent = event;
       state.animationStyle = customEvent.detail.style;
+      applyAnimationTiming(state.animationStyle);
     });
     window.addEventListener("bloodfxchange", (event) => {
       const customEvent = event;
@@ -8244,10 +8256,6 @@ var require_main = __commonJS({
       lastRoomStateReceivedAtMs = Date.now();
       const previousMoveCount = state.snapshot?.moveCount ?? 0;
       const previousFen = chess.fen();
-      const isNewMove = snapshot.moveCount > previousMoveCount;
-      if (isNewMove && activeGhostAnimation) {
-        requestBoardRefresh(true);
-      }
       state.snapshot = snapshot;
       chess.load(snapshot.fen);
       const isActuallyNewMove = _lastPlayedMoveCount !== -1 && snapshot.moveCount > _lastPlayedMoveCount;
@@ -8291,7 +8299,7 @@ var require_main = __commonJS({
           }
         }
       }
-      requestBoardRefresh(true);
+      requestBoardRefresh();
       renderSession();
       renderMoves();
       updateCaption();
@@ -9218,7 +9226,11 @@ var require_main = __commonJS({
       const fromSquareButton = board.querySelector(`[data-square="${lastMove.from}"]`);
       const toSquareButton = board.querySelector(`[data-square="${lastMove.to}"]`);
       const destinationPiece = toSquareButton?.querySelector(".piece");
-      if (!fromSquareButton || !toSquareButton || !destinationPiece) return;
+      if (!fromSquareButton || !toSquareButton || !destinationPiece) {
+        animationFinished = true;
+        animatingToSquare = null;
+        return;
+      }
       const fromRect = fromSquareButton.getBoundingClientRect();
       const toRect = toSquareButton.getBoundingClientRect();
       const deltaX = fromRect.left + fromRect.width / 2 - (toRect.left + toRect.width / 2);
@@ -9245,10 +9257,13 @@ var require_main = __commonJS({
           { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0)` },
           { transform: "translate3d(-50%, -50%, 0)" }
         ],
-        { duration: 700, easing: "cubic-bezier(0.22, 0.61, 0.36, 1)" }
+        { duration: SMOOTH_MOVE_DURATION_MS, easing: "cubic-bezier(0.22, 0.61, 0.36, 1)" }
       );
       activeGhostAnimation = animation;
+      let finalized = false;
       const onEnd = () => {
+        if (finalized) return;
+        finalized = true;
         ghostPiece.remove();
         destinationPiece.style.visibility = "";
         destinationPiece.style.opacity = "1";
@@ -9322,7 +9337,11 @@ var require_main = __commonJS({
       const fromSquareButton = board.querySelector(`[data-square="${lastMove.from}"]`);
       const toSquareButton = board.querySelector(`[data-square="${lastMove.to}"]`);
       const destinationPiece = toSquareButton?.querySelector(".piece");
-      if (!fromSquareButton || !toSquareButton || !destinationPiece) return;
+      if (!fromSquareButton || !toSquareButton || !destinationPiece) {
+        animationFinished = true;
+        animatingToSquare = null;
+        return;
+      }
       const fromRect = fromSquareButton.getBoundingClientRect();
       const toRect = toSquareButton.getBoundingClientRect();
       const startX = fromRect.left + fromRect.width / 2 + window.scrollX;
@@ -9353,9 +9372,9 @@ var require_main = __commonJS({
       if (roll < 0.3) profile = "smash";
       else if (roll < 0.6) profile = "spin";
       let keyframes = [];
-      let duration = 600;
+      let duration = EPIC_MOVE_DURATION_MS.spin;
       if (profile === "smash") {
-        duration = 800 + Math.random() * 100;
+        duration = EPIC_MOVE_DURATION_MS.smash;
         const jump = 90 + Math.random() * 40;
         const scale = 1.25 + Math.random() * 0.15;
         const spin = (Math.random() * 15 + 10) * (Math.random() > 0.5 ? 1 : -1);
@@ -9366,7 +9385,7 @@ var require_main = __commonJS({
           { transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) scale(1)", filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 1 }
         ];
       } else if (profile === "spin") {
-        duration = 650 + Math.random() * 100;
+        duration = EPIC_MOVE_DURATION_MS.spin;
         const jump = 40 + Math.random() * 20;
         const spinDir = Math.random() > 0.5 ? 360 : -360;
         keyframes = [
@@ -9375,7 +9394,7 @@ var require_main = __commonJS({
           { transform: `translate3d(-50%, -50%, 0) rotateZ(${spinDir}deg)`, filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 1 }
         ];
       } else {
-        duration = 450 + Math.random() * 80;
+        duration = EPIC_MOVE_DURATION_MS.slide;
         const tilt = deltaX < 0 ? 18 : deltaX > 0 ? -18 : 0;
         keyframes = [
           { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) scale(1)`, filter: `brightness(1) ${aura}`, offset: 0 },
@@ -9391,7 +9410,10 @@ var require_main = __commonJS({
       });
       activeGhostAnimation = animation;
       startTrailSpawning();
+      let finalized = false;
       const onEnd = () => {
+        if (finalized) return;
+        finalized = true;
         ghostPiece.remove();
         destinationPiece.style.visibility = "";
         destinationPiece.style.opacity = "1";
@@ -9790,10 +9812,10 @@ var require_main = __commonJS({
       const whiteText = formatClockMs(getDisplayClockMs(snapshot, "w"));
       const blackText = formatClockMs(getDisplayClockMs(snapshot, "b"));
       if (state.role === "w") {
-        return `You ${whiteText} | Opp ${blackText}`;
+        return `${whiteText} | Opp ${blackText}`;
       }
       if (state.role === "b") {
-        return `You ${blackText} | Opp ${whiteText}`;
+        return `${blackText} | Opp ${whiteText}`;
       }
       return `W ${whiteText} | B ${blackText}`;
     }
