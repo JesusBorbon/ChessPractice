@@ -7319,6 +7319,7 @@ var require_main = __commonJS({
     var currentModalAction = null;
     var animationFinished = true;
     var animatingToSquare = null;
+    var lastRoomStateReceivedAtMs = Date.now();
     var LIVE_MATE_CP = 1e5;
     var PIECE_VALUES = {
       p: 100,
@@ -7518,6 +7519,15 @@ var require_main = __commonJS({
           </div>
           <div id="pregameSelection" hidden>
             <h2>Choose Your Color</h2>
+            <div class="mode-row">
+              <strong>Game mode</strong>
+              <div class="mode-options" id="modeOptions">
+                <button class="mode-opt-btn" id="modeBlitz3" type="button">3-minute Blitz</button>
+                <button class="mode-opt-btn" id="modeRapid10" type="button">10-minute Rapid</button>
+                <button class="mode-opt-btn" id="modeBlitz3p2" type="button">3+2 Blitz</button>
+              </div>
+              <p class="muted" id="modeHint">Room creator selects the timer. Color choice and ready are still required.</p>
+            </div>
             <div class="selection-grid">
               <div class="selection-col">
                 <strong>You</strong>
@@ -7595,10 +7605,12 @@ var require_main = __commonJS({
             <article class="seat">
               <strong>White</strong>
               <span class="muted" id="whiteSeat">Waiting for player</span>
+              <span class="clock-pill" id="whiteClock">03:00</span>
             </article>
             <article class="seat">
               <strong>Black</strong>
               <span class="muted" id="blackSeat">Waiting for player</span>
+              <span class="clock-pill" id="blackClock">03:00</span>
             </article>
           </div>
           <div class="meta-grid" style="margin-top: 14px;">
@@ -7699,6 +7711,10 @@ var require_main = __commonJS({
     var gameNav = must("#gameNav");
     var pregameWaiting = must("#pregameWaiting");
     var pregameSelection = must("#pregameSelection");
+    var modeBlitz3 = must("#modeBlitz3");
+    var modeRapid10 = must("#modeRapid10");
+    var modeBlitz3p2 = must("#modeBlitz3p2");
+    var modeHint = must("#modeHint");
     var myPickWhite = must("#myPickWhite");
     var myPickBlack = must("#myPickBlack");
     var opPickWhite = must("#opPickWhite");
@@ -7707,6 +7723,11 @@ var require_main = __commonJS({
     var opReadyBadge = must("#opReadyBadge");
     var pregameReadyBtn = must("#pregameReadyBtn");
     var pregameConflictWarning = must("#pregameConflictWarning");
+    var whiteClock = must("#whiteClock");
+    var blackClock = must("#blackClock");
+    modeBlitz3.addEventListener("click", () => socket.emit("pregame:mode", { mode: "blitz3" }));
+    modeRapid10.addEventListener("click", () => socket.emit("pregame:mode", { mode: "rapid10" }));
+    modeBlitz3p2.addEventListener("click", () => socket.emit("pregame:mode", { mode: "blitz3p2" }));
     myPickWhite.addEventListener("click", () => socket.emit("pregame:select", { color: "w" }));
     myPickBlack.addEventListener("click", () => socket.emit("pregame:select", { color: "b" }));
     pregameReadyBtn.addEventListener("click", () => socket.emit("pregame:ready"));
@@ -8221,6 +8242,7 @@ var require_main = __commonJS({
       render();
     });
     socket.on("room:state", (snapshot) => {
+      lastRoomStateReceivedAtMs = Date.now();
       const previousMoveCount = state.snapshot?.moveCount ?? 0;
       const previousFen = chess.fen();
       const isNewMove = snapshot.moveCount > previousMoveCount;
@@ -8354,6 +8376,7 @@ var require_main = __commonJS({
     function renderSession() {
       const snapshot = state.snapshot;
       const hasRoom = Boolean(state.roomId);
+      const isCreator = Boolean(snapshot?.ownerId && socket.id && snapshot.ownerId === socket.id);
       const isMultiplayer = state.gameMode === "multiplayer";
       const bothConnected = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
       const isGameActive = Boolean(
@@ -8396,6 +8419,11 @@ var require_main = __commonJS({
         turnMeta.textContent = "White";
         movesMeta.textContent = "0";
         spectatorMeta.textContent = "0";
+        whiteClock.textContent = "03:00";
+        blackClock.textContent = "03:00";
+        whiteClock.classList.remove("is-low");
+        blackClock.classList.remove("is-low");
+        modeHint.textContent = "Room creator selects the timer. Color choice and ready are still required.";
         summaryText.textContent = "Ready to play.";
         liveAnalysisText.textContent = "Live analysis disabled.";
         updateFocusHud();
@@ -8403,29 +8431,56 @@ var require_main = __commonJS({
       }
       pregamePlaceholder.hidden = isGameActive;
       if (isMultiplayer && !isGameActive) {
-        if (bothConnected) {
-          pregameWaiting.hidden = true;
-          pregameSelection.hidden = false;
-          const isP1 = state.role === "w";
-          const myChoice = isP1 ? snapshot.pregame.p1Choice : snapshot.pregame.p2Choice;
-          const opChoice = isP1 ? snapshot.pregame.p2Choice : snapshot.pregame.p1Choice;
-          const myReady = isP1 ? snapshot.pregame.p1Ready : snapshot.pregame.p2Ready;
-          const opReady = isP1 ? snapshot.pregame.p2Ready : snapshot.pregame.p1Ready;
+        const canConfigurePregame = state.role === "w" || state.role === "b";
+        pregameSelection.hidden = !canConfigurePregame;
+        pregameWaiting.hidden = canConfigurePregame;
+        if (canConfigurePregame) {
+          const isWhiteSeat = state.role === "w";
+          const myChoice = isWhiteSeat ? snapshot.pregame.p1Choice : snapshot.pregame.p2Choice;
+          const opChoice = isWhiteSeat ? snapshot.pregame.p2Choice : snapshot.pregame.p1Choice;
+          const myReady = isWhiteSeat ? snapshot.pregame.p1Ready : snapshot.pregame.p2Ready;
+          const opReady = isWhiteSeat ? snapshot.pregame.p2Ready : snapshot.pregame.p1Ready;
+          const opponentConnected = isWhiteSeat ? snapshot.players.blackConnected : snapshot.players.whiteConnected;
+          const selectedMode = snapshot.timeControl.id;
+          modeBlitz3.classList.toggle("selected", selectedMode === "blitz3");
+          modeRapid10.classList.toggle("selected", selectedMode === "rapid10");
+          modeBlitz3p2.classList.toggle("selected", selectedMode === "blitz3p2");
+          modeBlitz3.disabled = !isCreator;
+          modeRapid10.disabled = !isCreator;
+          modeBlitz3p2.disabled = !isCreator;
+          if (isCreator) {
+            modeHint.textContent = `You are the room creator. Current mode: ${snapshot.timeControl.label}.`;
+          } else {
+            modeHint.textContent = `Room creator controls mode. Current mode: ${snapshot.timeControl.label}.`;
+          }
           myPickWhite.classList.toggle("selected", myChoice === "w");
           myPickBlack.classList.toggle("selected", myChoice === "b");
           opPickWhite.classList.toggle("selected", opChoice === "w");
           opPickBlack.classList.toggle("selected", opChoice === "b");
+          opPickWhite.classList.toggle("disabled", !opponentConnected);
+          opPickBlack.classList.toggle("disabled", !opponentConnected);
           myReadyBadge.classList.toggle("is-ready", myReady);
           opReadyBadge.classList.toggle("is-ready", opReady);
-          const hasConflict = myChoice !== null && myChoice === opChoice;
+          const hasConflict = myChoice !== null && opChoice !== null && myChoice === opChoice;
           pregameConflictWarning.hidden = !hasConflict;
-          pregameReadyBtn.disabled = myChoice === null || hasConflict || myReady;
-          pregameReadyBtn.textContent = myReady ? "Waiting for Opponent..." : "Ready to Play";
-          if (state.role === "spectator") pregameReadyBtn.hidden = true;
+          pregameReadyBtn.hidden = false;
+          pregameReadyBtn.disabled = !bothConnected || myChoice === null || hasConflict || myReady;
+          if (!bothConnected || myReady) {
+            pregameReadyBtn.textContent = "Waiting for Opponent...";
+          } else {
+            pregameReadyBtn.textContent = "Ready to Play";
+          }
+          if (!bothConnected) {
+            pregameConflictWarning.hidden = true;
+          }
         } else {
-          pregameWaiting.hidden = false;
-          pregameSelection.hidden = true;
+          pregameReadyBtn.hidden = true;
         }
+      } else {
+        modeBlitz3.disabled = true;
+        modeRapid10.disabled = true;
+        modeBlitz3p2.disabled = true;
+        pregameReadyBtn.hidden = state.role === "spectator";
       }
       matchStatus.textContent = snapshot.status;
       whiteSeat.textContent = snapshot.players.whiteConnected ? seatLabel("w") : "Waiting for player";
@@ -8433,6 +8488,12 @@ var require_main = __commonJS({
       turnMeta.textContent = snapshot.turn === "w" ? "White" : "Black";
       movesMeta.textContent = String(snapshot.moveCount);
       spectatorMeta.textContent = String(snapshot.players.spectatorCount);
+      const whiteMs = getDisplayClockMs(snapshot, "w");
+      const blackMs = getDisplayClockMs(snapshot, "b");
+      whiteClock.textContent = formatClockMs(whiteMs);
+      blackClock.textContent = formatClockMs(blackMs);
+      whiteClock.classList.toggle("is-low", snapshot.isStarted && whiteMs <= snapshot.clock.lowTimeThresholdMs);
+      blackClock.classList.toggle("is-low", snapshot.isStarted && blackMs <= snapshot.clock.lowTimeThresholdMs);
       const roleDescription = state.role === "spectator" ? "Spectating." : state.role ? `Playing ${state.role === "w" ? "White" : "Black"}.` : "Not seated.";
       const lastMoveDescription = snapshot.lastMove ? ` Last move: ${snapshot.lastMove.san} (${snapshot.lastMove.from} to ${snapshot.lastMove.to}).` : "";
       const rematchDescription = state.gameMode === "multiplayer" && snapshot.rematchVotes > 0 ? ` Rematch votes: ${snapshot.rematchVotes}/2.` : "";
@@ -9471,6 +9532,7 @@ var require_main = __commonJS({
       chess.reset();
       state.snapshot = {
         roomId: "LOCAL",
+        ownerId: null,
         fen: chess.fen(),
         turn: chess.turn(),
         status: "Active",
@@ -9485,7 +9547,21 @@ var require_main = __commonJS({
         rematchVotes: 0,
         analysis: { enabled: false, votes: 0 },
         isStarted: true,
-        pregame: { p1Choice: "w", p2Choice: "b", p1Ready: true, p2Ready: true }
+        pregame: { p1Choice: "w", p2Choice: "b", p1Ready: true, p2Ready: true },
+        timeControl: {
+          id: "blitz3",
+          label: "3-minute Blitz",
+          initialMs: 18e4,
+          incrementMs: 0
+        },
+        clock: {
+          whiteMs: 18e4,
+          blackMs: 18e4,
+          active: null,
+          running: false,
+          lowTimeThresholdMs: 2e4,
+          serverNowMs: Date.now()
+        }
       };
       showToast("Bot mode active. You are White!");
       render();
@@ -9662,6 +9738,7 @@ var require_main = __commonJS({
       state.lastAnalyzedMoveKey = null;
       state.liveMoveGrades = {};
       liveAnalysisToken += 1;
+      lastRoomStateReceivedAtMs = Date.now();
       localStorage.removeItem("chess_roomId");
       cancelCurrentDrag();
       clearArrows();
@@ -9700,6 +9777,20 @@ var require_main = __commonJS({
       const minutes = Math.floor(secondsTotal / 60);
       const seconds = secondsTotal % 60;
       return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    }
+    function formatClockMs(ms) {
+      const totalSeconds = Math.max(0, Math.ceil(ms / 1e3));
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    }
+    function getDisplayClockMs(snapshot, color) {
+      const baseMs = color === "w" ? snapshot.clock.whiteMs : snapshot.clock.blackMs;
+      if (!snapshot.clock.running || snapshot.clock.active !== color) {
+        return baseMs;
+      }
+      const elapsed = Math.max(0, Date.now() - lastRoomStateReceivedAtMs);
+      return Math.max(0, baseMs - elapsed);
     }
     function updateFocusHud() {
       if (!state.focusMode) {
@@ -9791,6 +9882,12 @@ var require_main = __commonJS({
     }
     render();
     window.setInterval(updateFocusHud, 1e3);
+    window.setInterval(() => {
+      if (state.gameMode !== "multiplayer" || !state.snapshot || !state.snapshot.clock.running) {
+        return;
+      }
+      renderSession();
+    }, 250);
     window.addEventListener("beforeunload", () => {
       liveAnalyzer?.terminate();
     });

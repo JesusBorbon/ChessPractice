@@ -7,6 +7,14 @@ import { Server } from "socket.io";
 
 type PlayerRole = "w" | "b";
 type RoomRole = PlayerRole | "spectator";
+type TimeControlPresetId = "blitz3" | "rapid10" | "blitz3p2";
+
+type TimeControlPreset = {
+  id: TimeControlPresetId;
+  label: string;
+  initialMs: number;
+  incrementMs: number;
+};
 
 type ClientState = {
   roomId?: string;
@@ -23,6 +31,7 @@ type MoveSummary = {
 
 type RoomSnapshot = {
   roomId: string;
+  ownerId: string | null;
   fen: string;
   turn: PlayerRole;
   status: string;
@@ -51,6 +60,15 @@ type RoomSnapshot = {
     p1Ready: boolean;
     p2Ready: boolean;
   };
+  timeControl: TimeControlPreset;
+  clock: {
+    whiteMs: number;
+    blackMs: number;
+    active: PlayerRole | null;
+    running: boolean;
+    lowTimeThresholdMs: number;
+    serverNowMs: number;
+  };
 };
 
 type GameRoom = {
@@ -58,6 +76,8 @@ type GameRoom = {
   chess: Chess;
   white?: string;
   black?: string;
+  ownerId?: string;
+  ownerDisconnectedAt?: number;
   spectators: Set<string>;
   winner?: PlayerRole | null;      
   statusOverride?: string;
@@ -71,6 +91,12 @@ type GameRoom = {
   isStarted: boolean;
   colorChoices: Map<string, "w" | "b">;
   readyPlayers: Set<string>;
+  timeControl: TimeControlPresetId;
+  clockWhiteMs: number;
+  clockBlackMs: number;
+  clockActive: PlayerRole | null;
+  clockRunning: boolean;
+  clockLastUpdatedAt: number;
 };
 
 const app = express();
@@ -90,6 +116,13 @@ const ROOM_CODE_LENGTH = 4;
 const ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
 const ROOM_TTL_MS = 1000 * 60 * 60 * 4;
 const PLAYER_DISCONNECT_GRACE_MS = 1000 * 60 * 3; // 3 minutos para reconectarse
+const LOW_TIME_THRESHOLD_MS = 20_000;
+
+const TIME_CONTROL_PRESETS: Record<TimeControlPresetId, TimeControlPreset> = {
+  blitz3: { id: "blitz3", label: "3-minute Blitz", initialMs: 3 * 60_000, incrementMs: 0 },
+  rapid10: { id: "rapid10", label: "10-minute Rapid", initialMs: 10 * 60_000, incrementMs: 0 },
+  blitz3p2: { id: "blitz3p2", label: "3+2 Blitz", initialMs: 3 * 60_000, incrementMs: 2_000 },
+};
 
 const projectRoot = process.cwd();
 const publicDir =
@@ -139,6 +172,88 @@ function getSpectatorCount(roomId: string, room: GameRoom): number {
   return room.spectators.size;
 }
 
+function getTimeControlPreset(id: TimeControlPresetId): TimeControlPreset {
+  return TIME_CONTROL_PRESETS[id];
+}
+
+function isTimeControlPresetId(value: unknown): value is TimeControlPresetId {
+  return typeof value === "string" && value in TIME_CONTROL_PRESETS;
+}
+
+function syncActiveClock(room: GameRoom, now = Date.now()): void {
+  if (!room.clockRunning || !room.clockActive || room.winner || room.chess.isGameOver()) {
+    room.clockLastUpdatedAt = now;
+    return;
+  }
+
+  const elapsed = Math.max(0, now - room.clockLastUpdatedAt);
+  room.clockLastUpdatedAt = now;
+  if (elapsed === 0) {
+    return;
+  }
+
+  if (room.clockActive === "w") {
+    room.clockWhiteMs = Math.max(0, room.clockWhiteMs - elapsed);
+    if (room.clockWhiteMs === 0) {
+      room.winner = "b";
+      room.statusOverride = "White loses on time.";
+      room.clockRunning = false;
+      room.clockActive = null;
+    }
+    return;
+  }
+
+  room.clockBlackMs = Math.max(0, room.clockBlackMs - elapsed);
+  if (room.clockBlackMs === 0) {
+    room.winner = "w";
+    room.statusOverride = "Black loses on time.";
+    room.clockRunning = false;
+    room.clockActive = null;
+  }
+}
+
+function pauseClock(room: GameRoom, now = Date.now()): void {
+  syncActiveClock(room, now);
+  room.clockRunning = false;
+  room.clockActive = null;
+}
+
+function startClock(room: GameRoom, now = Date.now()): void {
+  if (room.winner || room.chess.isGameOver() || !room.isStarted || !room.white || !room.black) {
+    room.clockRunning = false;
+    room.clockActive = null;
+    room.clockLastUpdatedAt = now;
+    return;
+  }
+
+  room.clockRunning = true;
+  room.clockActive = room.chess.turn();
+  room.clockLastUpdatedAt = now;
+}
+
+function resetRoomClock(room: GameRoom): void {
+  const preset = getTimeControlPreset(room.timeControl);
+  room.clockWhiteMs = preset.initialMs;
+  room.clockBlackMs = preset.initialMs;
+  room.clockActive = null;
+  room.clockRunning = false;
+  room.clockLastUpdatedAt = Date.now();
+}
+
+function applyMoveIncrement(room: GameRoom, mover: PlayerRole): void {
+  const incrementMs = getTimeControlPreset(room.timeControl).incrementMs;
+  if (incrementMs <= 0) {
+    return;
+  }
+
+  if (mover === "w") {
+    room.clockWhiteMs += incrementMs;
+    return;
+  }
+
+  room.clockBlackMs += incrementMs;
+}
+
 function buildStatus(chess: Chess): { status: string; winner: PlayerRole | null } {
   if (chess.isCheckmate()) {
     const winner = chess.turn() === "w" ? "b" : "w";
@@ -181,6 +296,8 @@ function toMoveSummary(move: Move): MoveSummary {
 
 function buildSnapshot(room: GameRoom): RoomSnapshot {
   const verboseHistory = room.chess.history({ verbose: true }).map(toMoveSummary);
+  const now = Date.now();
+  const preset = getTimeControlPreset(room.timeControl);
   
   let { status, winner } = buildStatus(room.chess);
 
@@ -191,6 +308,7 @@ function buildSnapshot(room: GameRoom): RoomSnapshot {
 
 return {
     roomId: room.id,
+  ownerId: room.ownerId ?? null,
     fen: room.chess.fen(),
     turn: room.chess.turn(),
     status,
@@ -217,13 +335,42 @@ return {
       p2Choice: room.black ? (room.colorChoices.get(room.black) || null) : null,
       p1Ready: room.white ? room.readyPlayers.has(room.white) : false,
       p2Ready: room.black ? room.readyPlayers.has(room.black) : false,
-    }
+    },
+    timeControl: preset,
+    clock: {
+      whiteMs: room.clockWhiteMs,
+      blackMs: room.clockBlackMs,
+      active: room.clockActive,
+      running: room.clockRunning,
+      lowTimeThresholdMs: LOW_TIME_THRESHOLD_MS,
+      serverNowMs: now,
+    },
   };
 }
 
 function emitRoomState(room: GameRoom): void {
+  syncActiveClock(room);
   room.updatedAt = Date.now();
   io.to(room.id).emit("room:state", buildSnapshot(room));
+}
+
+function closeRoom(room: GameRoom): void {
+  const socketsInRoom = io.sockets.adapter.rooms.get(room.id);
+  if (socketsInRoom) {
+    for (const socketId of socketsInRoom) {
+      const memberSocket = io.sockets.sockets.get(socketId);
+      if (!memberSocket) {
+        continue;
+      }
+
+      memberSocket.leave(room.id);
+      resetSocketState(socketId);
+      memberSocket.emit("session:left");
+      memberSocket.emit("room:error", { message: "Room closed because both players left." });
+    }
+  }
+
+  rooms.delete(room.id);
 }
 
 function resetSocketState(socketId: string): void {
@@ -263,6 +410,15 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
       changed = true;
     }
 
+    if (room.ownerId === socketId && !immediate) {
+      room.ownerDisconnectedAt = Date.now();
+      changed = true;
+    } else if (room.ownerId === socketId && immediate) {
+      delete room.ownerId;
+      delete room.ownerDisconnectedAt;
+      changed = true;
+    }
+
     if (room.rematchVotes.delete(socketId)) {
       changed = true;
     }
@@ -285,6 +441,11 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
       changed = true;
     }
 
+    if (!room.white || !room.black) {
+      pauseClock(room);
+      changed = true;
+    }
+
     if (!changed) {
       continue;
     }
@@ -299,8 +460,8 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
     const bothDisconnected = !room.white && !room.black;
     const noSpectators = getSpectatorCount(room.id, room) === 0;
 
-    if (bothDisconnected && noSpectators) {
-      rooms.delete(room.id);
+    if (bothDisconnected && (immediate || noSpectators)) {
+      closeRoom(room);
       resetSocketState(socketId);
       continue;
     }
@@ -365,6 +526,17 @@ const cleanupTimer = setInterval(() => {
       changed = true;
     }
 
+    if (room.ownerDisconnectedAt && now - room.ownerDisconnectedAt > PLAYER_DISCONNECT_GRACE_MS) {
+      delete room.ownerId;
+      delete room.ownerDisconnectedAt;
+      changed = true;
+    }
+
+    if (!room.white || !room.black) {
+      pauseClock(room, now);
+      changed = true;
+    }
+
     if (changed) {
       emitRoomState(room);
     }
@@ -384,6 +556,18 @@ const cleanupTimer = setInterval(() => {
 
 cleanupTimer.unref();
 
+const clockTimer = setInterval(() => {
+  for (const room of rooms.values()) {
+    if (!room.isStarted || !room.clockRunning || room.winner || room.chess.isGameOver()) {
+      continue;
+    }
+
+    emitRoomState(room);
+  }
+}, 1_000);
+
+clockTimer.unref();
+
 io.on("connection", (socket) => {
   socket.emit("connection:status", { connected: true });
 
@@ -394,6 +578,7 @@ const roomId = createRoomCode();
       id: roomId,
       chess: new Chess(),
       white: socket.id,
+      ownerId: socket.id,
       spectators: new Set(),
       rematchVotes: new Set(),
       analysisVotes: new Set(),
@@ -402,6 +587,12 @@ const roomId = createRoomCode();
       isStarted: false,
       colorChoices: new Map(),
       readyPlayers: new Set(),
+      timeControl: "blitz3",
+      clockWhiteMs: TIME_CONTROL_PRESETS.blitz3.initialMs,
+      clockBlackMs: TIME_CONTROL_PRESETS.blitz3.initialMs,
+      clockActive: null,
+      clockRunning: false,
+      clockLastUpdatedAt: Date.now(),
     };
 
     rooms.set(roomId, room);
@@ -444,14 +635,25 @@ const roomId = createRoomCode();
     
     // Intentar reconectarse si está dentro del grace period
     let role: RoomRole = "spectator";
+    const ownerWasWhite = room.ownerId && room.white === room.ownerId;
+    const ownerWasBlack = room.ownerId && room.black === room.ownerId;
+
     if (room.whiteDisconnectedAt && Date.now() - room.whiteDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS) {
       role = "w";
       room.white = socket.id;
+      if (ownerWasWhite) {
+        room.ownerId = socket.id;
+        delete room.ownerDisconnectedAt;
+      }
       room.spectators.delete(socket.id);
       delete room.whiteDisconnectedAt;
     } else if (room.blackDisconnectedAt && Date.now() - room.blackDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS) {
       role = "b";
       room.black = socket.id;
+      if (ownerWasBlack) {
+        room.ownerId = socket.id;
+        delete room.ownerDisconnectedAt;
+      }
       room.spectators.delete(socket.id);
       delete room.blackDisconnectedAt;
     } else {
@@ -478,8 +680,30 @@ const roomId = createRoomCode();
     }
 
     socket.leave(room.id);
-    removeFromRoom(socket.id);
+    removeFromRoom(socket.id, true);
     socket.emit("session:left");
+  });
+
+  socket.on("pregame:mode", (payload?: { mode?: TimeControlPresetId }) => {
+    if (!payload || !isTimeControlPresetId(payload.mode)) {
+      socket.emit("room:error", { message: "Invalid game mode." });
+      return;
+    }
+
+    const room = getRoomForSocket(socket.id);
+    if (!room || room.isStarted) {
+      return;
+    }
+
+    if (room.ownerId !== socket.id) {
+      socket.emit("room:error", { message: "Only the room creator can change game mode." });
+      return;
+    }
+
+    room.timeControl = payload.mode;
+    room.readyPlayers.clear();
+    resetRoomClock(room);
+    emitRoomState(room);
   });
 
   socket.on(
@@ -515,6 +739,13 @@ const roomId = createRoomCode();
         return;
       }
 
+      syncActiveClock(room);
+      if (room.winner) {
+        emitRoomState(room);
+        socket.emit("room:error", { message: "Time is over. The game already ended." });
+        return;
+      }
+
       const from = payload?.from;
       const to = payload?.to;
       if (!isSquare(from) || !isSquare(to)) {
@@ -541,6 +772,15 @@ const roomId = createRoomCode();
 
       room.rematchVotes.clear();
       room.analysisVotes.clear();
+      applyMoveIncrement(room, role);
+      if (!room.winner && !room.chess.isGameOver() && room.isStarted && room.white && room.black) {
+        room.clockActive = room.chess.turn();
+        room.clockRunning = true;
+        room.clockLastUpdatedAt = Date.now();
+      } else {
+        room.clockActive = null;
+        room.clockRunning = false;
+      }
       emitRoomState(room);
     },
   );
@@ -558,6 +798,8 @@ const roomId = createRoomCode();
     // El ganador es el oponente del que se rinde
     room.winner = role === "w" ? "b" : "w";
     room.statusOverride = `${role === "w" ? "White" : "Black"} resigned.`;
+    room.clockRunning = false;
+    room.clockActive = null;
     
     emitRoomState(room);
   });
@@ -607,8 +849,27 @@ const roomId = createRoomCode();
 
   socket.on("pregame:select", (payload?: { color: "w" | "b" }) => {
     if (!payload || (payload.color !== "w" && payload.color !== "b")) return;
+
+    const clientState = socket.data as ClientState;
+    if (!clientState.roomId || !clientState.role || clientState.role === "spectator") {
+      socket.emit("room:error", { message: "Only seated players can choose a color." });
+      return;
+    }
+
     const room = getRoomForSocket(socket.id);
     if (!room || room.isStarted) return;
+
+    if (room.white !== socket.id && room.black !== socket.id) {
+      socket.emit("room:error", { message: "Only seated players can choose a color." });
+      return;
+    }
+
+    const opponentId = room.white === socket.id ? room.black : room.white;
+    const opponentChoice = opponentId ? room.colorChoices.get(opponentId) : null;
+    if (opponentChoice === payload.color) {
+      socket.emit("room:error", { message: "Both players cannot select the same color." });
+      return;
+    }
 
     room.colorChoices.set(socket.id, payload.color);
     room.readyPlayers.delete(socket.id); // Un-ready them if they switch colors
@@ -616,11 +877,32 @@ const roomId = createRoomCode();
   });
 
   socket.on("pregame:ready", () => {
+    const clientState = socket.data as ClientState;
+    if (!clientState.roomId || !clientState.role || clientState.role === "spectator") {
+      socket.emit("room:error", { message: "Only seated players can click ready." });
+      return;
+    }
+
     const room = getRoomForSocket(socket.id);
     if (!room || room.isStarted) return;
 
+    if (room.white !== socket.id && room.black !== socket.id) {
+      socket.emit("room:error", { message: "Only seated players can click ready." });
+      return;
+    }
+
     const choice = room.colorChoices.get(socket.id);
-    if (!choice) return;
+    if (!choice) {
+      socket.emit("room:error", { message: "Choose a color first." });
+      return;
+    }
+
+    const opponentId = room.white === socket.id ? room.black : room.white;
+    const opponentChoice = opponentId ? room.colorChoices.get(opponentId) : null;
+    if (opponentChoice && opponentChoice === choice) {
+      socket.emit("room:error", { message: "Both players cannot select the same color." });
+      return;
+    }
 
     room.readyPlayers.add(socket.id);
 
@@ -629,6 +911,7 @@ const roomId = createRoomCode();
       const c2 = room.colorChoices.get(room.black);
       if (c1 && c2 && c1 !== c2) {
         room.isStarted = true;
+        resetRoomClock(room);
         
         // If the creator actually chose black, swap their seats globally
       if (c1 === "b" && room.white && room.black) {
@@ -645,6 +928,8 @@ const roomId = createRoomCode();
           const bData = io.sockets.sockets.get(room.black)?.data as ClientState | undefined;
           if (bData) bData.role = "b";
         }
+
+        startClock(room);
       }
     }
     emitRoomState(room);
@@ -675,6 +960,7 @@ socket.on("game:rematch", () => {
       delete room.winner;      
       delete room.statusOverride; 
       room.rematchVotes.clear();
+      resetRoomClock(room);
 
     
       if (room.white && room.black) {
@@ -694,6 +980,8 @@ socket.on("game:rematch", () => {
         if (bData) bData.role = "b";
         io.sockets.sockets.get(room.black)?.emit("session:joined", { roomId: room.id, role: "b", shareUrl: buildShareUrl(room.black, room.id) });
       }
+
+      startClock(room);
     }
 
     emitRoomState(room);

@@ -2588,6 +2588,30 @@ body.focus-mode.focus-analyze .nav-row button:hover {
 
 /* ── Pregame Color Selection ── */
 #pregameSelection { text-align: center; }
+.mode-row { margin: 0 auto 18px; max-width: 560px; }
+.mode-options { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 10px; }
+.mode-opt-btn {
+  padding: 10px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(25, 35, 32, 0.14);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--ink);
+  font-weight: 700;
+  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+.mode-opt-btn:hover:enabled {
+  transform: translateY(-1px);
+  border-color: rgba(25, 35, 32, 0.28);
+}
+.mode-opt-btn.selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+.mode-opt-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .selection-grid { display: flex; gap: 40px; justify-content: center; margin-top: 20px; flex-wrap: wrap; }
 .selection-col { display: flex; flex-direction: column; gap: 10px; align-items: center; }
 .color-options { display: flex; gap: 8px; }
@@ -2597,6 +2621,28 @@ body.focus-mode.focus-analyze .nav-row button:hover {
 .ready-badge { font-size: 0.85rem; font-weight: bold; color: var(--accent); opacity: 0; transition: 0.2s; transform: translateY(-5px); }
 .ready-badge.is-ready { opacity: 1; transform: translateY(0); }
 #pregameConflictWarning { color: #e35b52; margin-top: 12px; font-weight: bold; font-size: 0.95rem; }
+
+.clock-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 8px;
+  min-width: 78px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
+  background: rgba(25, 35, 32, 0.06);
+  color: var(--ink);
+  border: 1px solid rgba(25, 35, 32, 0.12);
+}
+
+.clock-pill.is-low {
+  color: #8f1818;
+  border-color: rgba(203, 58, 58, 0.45);
+  background: rgba(255, 112, 112, 0.16);
+}
 /* Prevent the capture ring/dot from showing on the piece you are currently moving */
 .square.selected::after {
   display: none !important;

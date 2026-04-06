@@ -4,10 +4,16 @@ import { io } from "socket.io-client";
 import { BoardOrientation, SquareName, buildSquareList, isLightSquare } from "../../engine";
 import "./styles.css";
 import { mountThemeSwitcher } from "./theme";
-import { request } from "node:http";
 
 type PlayerRole = "w" | "b";
 type RoomRole = PlayerRole | "spectator";
+type TimeControlPresetId = "blitz3" | "rapid10" | "blitz3p2";
+type TimeControlPreset = {
+  id: TimeControlPresetId;
+  label: string;
+  initialMs: number;
+  incrementMs: number;
+};
 type PromotionPiece = "q" | "r" | "b" | "n";
 type MoveCategory = "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder";
 type QualityResult = {
@@ -25,6 +31,7 @@ type MoveSummary = {
 
 type RoomSnapshot = {
   roomId: string;
+  ownerId: string | null;
   fen: string;
   turn: PlayerRole;
   status: string;
@@ -52,6 +59,15 @@ type RoomSnapshot = {
     p2Choice: "w" | "b" | null;
     p1Ready: boolean;
     p2Ready: boolean;
+  };
+  timeControl: TimeControlPreset;
+  clock: {
+    whiteMs: number;
+    blackMs: number;
+    active: PlayerRole | null;
+    running: boolean;
+    lowTimeThresholdMs: number;
+    serverNowMs: number;
   };
 };
 
@@ -169,6 +185,7 @@ let liveAnalysisToken = 0;
 let currentModalAction: "leave" | "resign" | "bot" | null = null;
 let animationFinished = true; 
 let animatingToSquare: Square | null = null;
+let lastRoomStateReceivedAtMs = Date.now();
 
 
 const LIVE_MATE_CP = 100000;
@@ -422,6 +439,15 @@ app.innerHTML = `
           </div>
           <div id="pregameSelection" hidden>
             <h2>Choose Your Color</h2>
+            <div class="mode-row">
+              <strong>Game mode</strong>
+              <div class="mode-options" id="modeOptions">
+                <button class="mode-opt-btn" id="modeBlitz3" type="button">3-minute Blitz</button>
+                <button class="mode-opt-btn" id="modeRapid10" type="button">10-minute Rapid</button>
+                <button class="mode-opt-btn" id="modeBlitz3p2" type="button">3+2 Blitz</button>
+              </div>
+              <p class="muted" id="modeHint">Room creator selects the timer. Color choice and ready are still required.</p>
+            </div>
             <div class="selection-grid">
               <div class="selection-col">
                 <strong>You</strong>
@@ -499,10 +525,12 @@ app.innerHTML = `
             <article class="seat">
               <strong>White</strong>
               <span class="muted" id="whiteSeat">Waiting for player</span>
+              <span class="clock-pill" id="whiteClock">03:00</span>
             </article>
             <article class="seat">
               <strong>Black</strong>
               <span class="muted" id="blackSeat">Waiting for player</span>
+              <span class="clock-pill" id="blackClock">03:00</span>
             </article>
           </div>
           <div class="meta-grid" style="margin-top: 14px;">
@@ -607,6 +635,10 @@ const gameNav = must<HTMLElement>("#gameNav");
 
 const pregameWaiting = must<HTMLDivElement>("#pregameWaiting");
 const pregameSelection = must<HTMLDivElement>("#pregameSelection");
+const modeBlitz3 = must<HTMLButtonElement>("#modeBlitz3");
+const modeRapid10 = must<HTMLButtonElement>("#modeRapid10");
+const modeBlitz3p2 = must<HTMLButtonElement>("#modeBlitz3p2");
+const modeHint = must<HTMLParagraphElement>("#modeHint");
 const myPickWhite = must<HTMLButtonElement>("#myPickWhite");
 const myPickBlack = must<HTMLButtonElement>("#myPickBlack");
 const opPickWhite = must<HTMLButtonElement>("#opPickWhite");
@@ -615,6 +647,12 @@ const myReadyBadge = must<HTMLDivElement>("#myReadyBadge");
 const opReadyBadge = must<HTMLDivElement>("#opReadyBadge");
 const pregameReadyBtn = must<HTMLButtonElement>("#pregameReadyBtn");
 const pregameConflictWarning = must<HTMLDivElement>("#pregameConflictWarning");
+const whiteClock = must<HTMLSpanElement>("#whiteClock");
+const blackClock = must<HTMLSpanElement>("#blackClock");
+
+modeBlitz3.addEventListener("click", () => socket.emit("pregame:mode", { mode: "blitz3" }));
+modeRapid10.addEventListener("click", () => socket.emit("pregame:mode", { mode: "rapid10" }));
+modeBlitz3p2.addEventListener("click", () => socket.emit("pregame:mode", { mode: "blitz3p2" }));
 
 myPickWhite.addEventListener("click", () => socket.emit("pregame:select", { color: "w" }));
 myPickBlack.addEventListener("click", () => socket.emit("pregame:select", { color: "b" }));
@@ -1280,6 +1318,7 @@ socket.on("session:left", () => {
 });
 
 socket.on("room:state", (snapshot: RoomSnapshot) => {
+  lastRoomStateReceivedAtMs = Date.now();
   const previousMoveCount = state.snapshot?.moveCount ?? 0;
   const previousFen = chess.fen();
   
@@ -1462,6 +1501,7 @@ function createTrailParticle(sourceNode: HTMLElement): void {
 function renderSession(): void {
   const snapshot = state.snapshot;
   const hasRoom = Boolean(state.roomId);
+  const isCreator = Boolean(snapshot?.ownerId && socket.id && snapshot.ownerId === socket.id);
   
   // 1. Core State Calculations
   const isMultiplayer = state.gameMode === "multiplayer";
@@ -1520,6 +1560,11 @@ function renderSession(): void {
     turnMeta.textContent = "White";
     movesMeta.textContent = "0";
     spectatorMeta.textContent = "0";
+    whiteClock.textContent = "03:00";
+    blackClock.textContent = "03:00";
+    whiteClock.classList.remove("is-low");
+    blackClock.classList.remove("is-low");
+    modeHint.textContent = "Room creator selects the timer. Color choice and ready are still required.";
     summaryText.textContent = "Ready to play.";
     liveAnalysisText.textContent = "Live analysis disabled.";
     updateFocusHud();
@@ -1530,35 +1575,65 @@ function renderSession(): void {
   pregamePlaceholder.hidden = isGameActive;
 
   if (isMultiplayer && !isGameActive) {
-    if (bothConnected) {
-       pregameWaiting.hidden = true;
-       pregameSelection.hidden = false;
+     const canConfigurePregame = state.role === "w" || state.role === "b";
+     pregameSelection.hidden = !canConfigurePregame;
+     pregameWaiting.hidden = canConfigurePregame;
 
-       const isP1 = state.role === "w";
-       const myChoice = isP1 ? snapshot.pregame.p1Choice : snapshot.pregame.p2Choice;
-       const opChoice = isP1 ? snapshot.pregame.p2Choice : snapshot.pregame.p1Choice;
-       const myReady = isP1 ? snapshot.pregame.p1Ready : snapshot.pregame.p2Ready;
-       const opReady = isP1 ? snapshot.pregame.p2Ready : snapshot.pregame.p1Ready;
+     if (canConfigurePregame) {
+       const isWhiteSeat = state.role === "w";
+       const myChoice = isWhiteSeat ? snapshot.pregame.p1Choice : snapshot.pregame.p2Choice;
+       const opChoice = isWhiteSeat ? snapshot.pregame.p2Choice : snapshot.pregame.p1Choice;
+       const myReady = isWhiteSeat ? snapshot.pregame.p1Ready : snapshot.pregame.p2Ready;
+       const opReady = isWhiteSeat ? snapshot.pregame.p2Ready : snapshot.pregame.p1Ready;
+       const opponentConnected = isWhiteSeat ? snapshot.players.blackConnected : snapshot.players.whiteConnected;
+
+       const selectedMode = snapshot.timeControl.id;
+       modeBlitz3.classList.toggle("selected", selectedMode === "blitz3");
+       modeRapid10.classList.toggle("selected", selectedMode === "rapid10");
+       modeBlitz3p2.classList.toggle("selected", selectedMode === "blitz3p2");
+
+       modeBlitz3.disabled = !isCreator;
+       modeRapid10.disabled = !isCreator;
+       modeBlitz3p2.disabled = !isCreator;
+
+       if (isCreator) {
+         modeHint.textContent = `You are the room creator. Current mode: ${snapshot.timeControl.label}.`;
+       } else {
+         modeHint.textContent = `Room creator controls mode. Current mode: ${snapshot.timeControl.label}.`;
+       }
 
        myPickWhite.classList.toggle("selected", myChoice === "w");
        myPickBlack.classList.toggle("selected", myChoice === "b");
        opPickWhite.classList.toggle("selected", opChoice === "w");
        opPickBlack.classList.toggle("selected", opChoice === "b");
+       opPickWhite.classList.toggle("disabled", !opponentConnected);
+       opPickBlack.classList.toggle("disabled", !opponentConnected);
 
        myReadyBadge.classList.toggle("is-ready", myReady);
        opReadyBadge.classList.toggle("is-ready", opReady);
 
-       const hasConflict = myChoice !== null && myChoice === opChoice;
+       const hasConflict = myChoice !== null && opChoice !== null && myChoice === opChoice;
        pregameConflictWarning.hidden = !hasConflict;
 
-       pregameReadyBtn.disabled = myChoice === null || hasConflict || myReady;
-       pregameReadyBtn.textContent = myReady ? "Waiting for Opponent..." : "Ready to Play";
-       
-       if (state.role === "spectator") pregameReadyBtn.hidden = true;
+       pregameReadyBtn.hidden = false;
+       pregameReadyBtn.disabled = !bothConnected || myChoice === null || hasConflict || myReady;
+       if (!bothConnected || myReady) {
+         pregameReadyBtn.textContent = "Waiting for Opponent...";
+       } else {
+         pregameReadyBtn.textContent = "Ready to Play";
+       }
+
+       if (!bothConnected) {
+         pregameConflictWarning.hidden = true;
+       }
     } else {
-       pregameWaiting.hidden = false;
-       pregameSelection.hidden = true;
+       pregameReadyBtn.hidden = true;
     }
+  } else {
+    modeBlitz3.disabled = true;
+    modeRapid10.disabled = true;
+    modeBlitz3p2.disabled = true;
+    pregameReadyBtn.hidden = state.role === "spectator";
   }
 
   // 5. Live Game Data
@@ -1568,6 +1643,13 @@ function renderSession(): void {
   turnMeta.textContent = snapshot.turn === "w" ? "White" : "Black";
   movesMeta.textContent = String(snapshot.moveCount);
   spectatorMeta.textContent = String(snapshot.players.spectatorCount);
+
+  const whiteMs = getDisplayClockMs(snapshot, "w");
+  const blackMs = getDisplayClockMs(snapshot, "b");
+  whiteClock.textContent = formatClockMs(whiteMs);
+  blackClock.textContent = formatClockMs(blackMs);
+  whiteClock.classList.toggle("is-low", snapshot.isStarted && whiteMs <= snapshot.clock.lowTimeThresholdMs);
+  blackClock.classList.toggle("is-low", snapshot.isStarted && blackMs <= snapshot.clock.lowTimeThresholdMs);
 
   // 6. Text Summary
   const roleDescription = state.role === "spectator"
@@ -2970,6 +3052,7 @@ function startBotGame() {
   // Initialize snapshot manually to bypass server socket
  state.snapshot = {
     roomId: "LOCAL",
+   ownerId: null,
     fen: chess.fen(),
     turn: chess.turn(),
     status: "Active",
@@ -2984,7 +3067,21 @@ function startBotGame() {
     rematchVotes: 0,
     analysis: { enabled: false, votes: 0 },
     isStarted: true,
-    pregame: { p1Choice: "w", p2Choice: "b", p1Ready: true, p2Ready: true }
+    pregame: { p1Choice: "w", p2Choice: "b", p1Ready: true, p2Ready: true },
+    timeControl: {
+      id: "blitz3",
+      label: "3-minute Blitz",
+      initialMs: 180_000,
+      incrementMs: 0,
+    },
+    clock: {
+      whiteMs: 180_000,
+      blackMs: 180_000,
+      active: null,
+      running: false,
+      lowTimeThresholdMs: 20_000,
+      serverNowMs: Date.now(),
+    },
   };
 
   showToast("Bot mode active. You are White!");
@@ -3216,6 +3313,7 @@ function clearLocalRoomState(): void {
   state.lastAnalyzedMoveKey = null;
   state.liveMoveGrades = {};
   liveAnalysisToken += 1;
+  lastRoomStateReceivedAtMs = Date.now();
   
   localStorage.removeItem("chess_roomId");
   
@@ -3265,6 +3363,23 @@ function formatElapsed(secondsTotal: number): string {
   const minutes = Math.floor(secondsTotal / 60);
   const seconds = secondsTotal % 60;
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatClockMs(ms: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function getDisplayClockMs(snapshot: RoomSnapshot, color: PlayerRole): number {
+  const baseMs = color === "w" ? snapshot.clock.whiteMs : snapshot.clock.blackMs;
+  if (!snapshot.clock.running || snapshot.clock.active !== color) {
+    return baseMs;
+  }
+
+  const elapsed = Math.max(0, Date.now() - lastRoomStateReceivedAtMs);
+  return Math.max(0, baseMs - elapsed);
 }
 
 function updateFocusHud(): void {
@@ -3378,6 +3493,13 @@ function showToast(message: string): void {
 
 render();
 window.setInterval(updateFocusHud, 1000);
+window.setInterval(() => {
+  if (state.gameMode !== "multiplayer" || !state.snapshot || !state.snapshot.clock.running) {
+    return;
+  }
+
+  renderSession();
+}, 250);
 
 window.addEventListener("beforeunload", () => {
   liveAnalyzer?.terminate();
