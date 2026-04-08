@@ -7096,6 +7096,18 @@ var init_engine = __esm({
   }
 });
 
+// src/client/theme-palette.css
+var init_theme_palette = __esm({
+  "src/client/theme-palette.css"() {
+  }
+});
+
+// src/client/button-animations.css
+var init_button_animations = __esm({
+  "src/client/button-animations.css"() {
+  }
+});
+
 // src/client/styles.css
 var init_styles = __esm({
   "src/client/styles.css"() {
@@ -7257,6 +7269,8 @@ var require_main = __commonJS({
     init_chess();
     init_esm5();
     init_engine();
+    init_theme_palette();
+    init_button_animations();
     init_styles();
     init_theme();
     var PIECES = {
@@ -7757,6 +7771,7 @@ var require_main = __commonJS({
       requestBoardRefresh(true);
     });
     var joinRoomButton = must("#joinRoomButton");
+    var joinGrid = must(".join-grid");
     var copyLinkButton = must("#copyLinkButton");
     var leaveRoomButton = must("#leaveRoomButton");
     var flipBoardButton = must("#flipBoardButton");
@@ -7891,27 +7906,6 @@ var require_main = __commonJS({
       }
       confirmDialog.hidden = !show;
     };
-    confirmYesBtn.addEventListener("click", () => {
-      const action = currentModalAction;
-      document.body.classList.remove("modal-open");
-      toggleConfirmModal(false);
-      if (action === "bot") {
-        socket.emit("room:leave");
-        startBotGame();
-      } else if (action === "resign") {
-        if (state.gameMode === "multiplayer") {
-          socket.emit("game:resign");
-        } else if (state.snapshot) {
-          state.snapshot.winner = state.role === "w" ? "b" : "w";
-          state.snapshot.status = "Resigned";
-          render();
-        }
-      } else if (action === "leave") {
-        socket.emit("room:leave");
-        clearLocalRoomState();
-        render();
-      }
-    });
     backToMenuButton.addEventListener("click", () => {
       const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
       if (gameEnded) {
@@ -7932,6 +7926,13 @@ var require_main = __commonJS({
         clearLocalRoomState();
         startBotGame();
       } else if (action === "resign") {
+        if (state.gameMode === "multiplayer") {
+          socket.emit("game:resign");
+        } else if (state.snapshot) {
+          state.snapshot.winner = state.role === "w" ? "b" : "w";
+          state.snapshot.status = "Resigned";
+          render();
+        }
       } else if (action === "leave") {
         socket.emit("room:leave");
         clearLocalRoomState();
@@ -8399,6 +8400,7 @@ var require_main = __commonJS({
       createRoomButton.hidden = isGameActive;
       playBotButton.hidden = isGameActive;
       leaveRoomButton.hidden = !hasRoom;
+      joinGrid.hidden = hasRoom;
       copyLinkButton.hidden = !state.shareUrl || isGameActive;
       flipBoardButton.hidden = !isGameActive;
       focusModeButton.hidden = !isGameActive;
@@ -9744,16 +9746,50 @@ var require_main = __commonJS({
       window.history.replaceState({}, "", url2);
     }
     function clearLocalRoomState() {
+      if (activeGhostAnimation) {
+        const animation = activeGhostAnimation;
+        activeGhostAnimation = null;
+        animation.cancel();
+      }
+      if (activeGhostNode) {
+        activeGhostNode.remove();
+        activeGhostNode = null;
+      }
+      if (activeGhostDestinationPiece) {
+        activeGhostDestinationPiece.style.visibility = "";
+        activeGhostDestinationPiece.style.opacity = "1";
+        activeGhostDestinationPiece = null;
+      }
+      if (trailRafId !== null) {
+        cancelAnimationFrame(trailRafId);
+        trailRafId = null;
+      }
       state.roomId = null;
       state.role = null;
       state.shareUrl = "";
       state.snapshot = null;
       state.pendingPromotion = null;
       state.premoves = [];
+      state.selectedSquare = null;
+      state.legalTargets = [];
+      state.viewCursor = null;
+      state.focusMode = false;
       state.gameMode = "multiplayer";
       state.liveAnalysisSummary = "Live analysis disabled.";
       state.lastAnalyzedMoveKey = null;
       state.liveMoveGrades = {};
+      currentModalAction = null;
+      suppressAnimationForMove = null;
+      lastAnimatedMoveKey = null;
+      pendingBoardRefresh = false;
+      animationFinished = true;
+      animatingToSquare = null;
+      _lastPlayedMoveCount = -1;
+      roomInput.value = "";
+      for (const audio of Object.values(_audioCache)) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
       liveAnalysisToken += 1;
       lastRoomStateReceivedAtMs = Date.now();
       localStorage.removeItem("chess_roomId");

@@ -2,6 +2,8 @@ import { Chess, Move, PieceSymbol, Square } from "chess.js";
 import { io } from "socket.io-client";
 
 import { BoardOrientation, SquareName, buildSquareList, isLightSquare } from "../../engine";
+import "./theme-palette.css";
+import "./button-animations.css";
 import "./styles.css";
 import { mountThemeSwitcher } from "./theme";
 
@@ -693,6 +695,7 @@ window.addEventListener("legalmoveschange" , (event: Event) => {
 
 
 const joinRoomButton = must<HTMLButtonElement>("#joinRoomButton");
+const joinGrid = must<HTMLElement>(".join-grid");
 const copyLinkButton = must<HTMLButtonElement>("#copyLinkButton");
 const leaveRoomButton = must<HTMLButtonElement>("#leaveRoomButton");
 const flipBoardButton = must<HTMLButtonElement>("#flipBoardButton");
@@ -860,36 +863,6 @@ const toggleConfirmModal = (show: boolean, type?: "leave" | "resign" | "bot") =>
   confirmDialog.hidden = !show;
 };
 
-// Ensure we also clear the lock when the user actually leaves
-// main.ts
-
-confirmYesBtn.addEventListener("click", () => {
-  const action = currentModalAction;
-  document.body.classList.remove("modal-open");
-  toggleConfirmModal(false);
-
-  if (action === "bot") {
-    // Leave the multiplayer room correctly
-    socket.emit("room:leave");
-    
-    // We don't call clearLocalRoomState here because startBotGame 
-    // will set up its own local state snapshots.
-    startBotGame();
-  } else if (action === "resign") {
-    if (state.gameMode === "multiplayer") {
-      socket.emit("game:resign");
-    } else if (state.snapshot) {
-      state.snapshot.winner = (state.role === "w" ? "b" : "w") as any;
-      state.snapshot.status = "Resigned"; 
-      render();
-    }
-  } else if (action === "leave") {
-    socket.emit("room:leave");
-    clearLocalRoomState();
-    render();
-  }
-});
-
 backToMenuButton.addEventListener("click", () => {  
   const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
   if (gameEnded) {
@@ -920,7 +893,13 @@ confirmYesBtn.addEventListener("click", () => {
     // 3. Start the bot game immediately (Direct transition)
     startBotGame();
   } else if (action === "resign") {
-    // ... existing resign logic ...
+    if (state.gameMode === "multiplayer") {
+      socket.emit("game:resign");
+    } else if (state.snapshot) {
+      state.snapshot.winner = (state.role === "w" ? "b" : "w") as any;
+      state.snapshot.status = "Resigned";
+      render();
+    }
   } else if (action === "leave") {
     socket.emit("room:leave");
     clearLocalRoomState();
@@ -1535,6 +1514,8 @@ function renderSession(): void {
   playBotButton.hidden = isGameActive;
 
   leaveRoomButton.hidden = !hasRoom;
+  // Join controls are main-menu only to avoid room-switch conflicts while already in a room.
+  joinGrid.hidden = hasRoom;
   copyLinkButton.hidden = !state.shareUrl || isGameActive;
   flipBoardButton.hidden = !isGameActive;
   focusModeButton.hidden = !isGameActive;
@@ -3317,18 +3298,58 @@ function syncUrl(roomId: string | null): void {
 }
 
 function clearLocalRoomState(): void {  
+  if (activeGhostAnimation) {
+    const animation = activeGhostAnimation;
+    activeGhostAnimation = null;
+    animation.cancel();
+  }
+
+  if (activeGhostNode) {
+    activeGhostNode.remove();
+    activeGhostNode = null;
+  }
+
+  if (activeGhostDestinationPiece) {
+    activeGhostDestinationPiece.style.visibility = "";
+    activeGhostDestinationPiece.style.opacity = "1";
+    activeGhostDestinationPiece = null;
+  }
+
+  if (trailRafId !== null) {
+    cancelAnimationFrame(trailRafId);
+    trailRafId = null;
+  }
+
   state.roomId = null;
   state.role = null;
   state.shareUrl = "";
   state.snapshot = null;
   state.pendingPromotion = null;
   state.premoves = [];
+  state.selectedSquare = null;
+  state.legalTargets = [];
+  state.viewCursor = null;
+  state.focusMode = false;
 
   state.gameMode = "multiplayer"; 
 
   state.liveAnalysisSummary = "Live analysis disabled.";
   state.lastAnalyzedMoveKey = null;
   state.liveMoveGrades = {};
+  currentModalAction = null;
+  suppressAnimationForMove = null;
+  lastAnimatedMoveKey = null;
+  pendingBoardRefresh = false;
+  animationFinished = true;
+  animatingToSquare = null;
+  _lastPlayedMoveCount = -1;
+  roomInput.value = "";
+
+  for (const audio of Object.values(_audioCache)) {
+    audio.pause();
+    audio.currentTime = 0;
+  }
+
   liveAnalysisToken += 1;
   lastRoomStateReceivedAtMs = Date.now();
   

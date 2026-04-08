@@ -588,8 +588,10 @@ io.on("connection", (socket) => {
   socket.emit("connection:status", { connected: true });
 
   socket.on("room:create", () => {
-    removeFromRoom(socket.id);
-const roomId = createRoomCode();
+    // Creating a new room is an intentional leave from any previous room.
+    // Detach immediately to avoid stale seat/owner references across rooms.
+    removeFromRoom(socket.id, true);
+    const roomId = createRoomCode();
     const room: GameRoom = {
       id: roomId,
       chess: new Chess(),
@@ -645,7 +647,8 @@ const roomId = createRoomCode();
       return;
     }
 
-    removeFromRoom(socket.id);
+    // Joining another room is also an intentional leave from the current one.
+    removeFromRoom(socket.id, true);
 
     socket.join(roomId);
     
@@ -708,6 +711,12 @@ const roomId = createRoomCode();
 
     const room = getRoomForSocket(socket.id);
     if (!room || room.isStarted) {
+      return;
+    }
+
+    const liveRole = getLiveRoomRole(room, socket.id);
+    if (!liveRole || liveRole === "spectator") {
+      socket.emit("room:error", { message: "Only seated players can set the game mode." });
       return;
     }
 
@@ -1010,7 +1019,7 @@ socket.on("game:rematch", () => {
       startClock(room);
     }
 
-    emitRoomState(room);
+    emitRoomState(room); 
   });
 
   socket.on("disconnect", () => {
