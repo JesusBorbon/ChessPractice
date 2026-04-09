@@ -690,20 +690,24 @@ body.focus-mode.focus-analyze .analyze-move-list {
   transform: translate(-50%, -50%);
   width: 25%; 
   height: 25%;
-  background-color: var(--legal-dot-color, rgba(0, 0, 0, 0.2));
+  background-color: var(--legal-dot-color, rgba(60, 255, 120, 0.7));
   border-radius: 50%;
   pointer-events: none; /* CRITICAL: Allows drag-and-drop to pass through the dot */
   z-index: 5;
+  box-shadow: 0 0 12px 2px var(--legal-dot-color, rgba(60, 255, 120, 0.7));
   transition: transform 0.1s ease-out;
 }
 
 /* The "Capture Ring" for occupied squares */
 /* Automatically detects if the target square has an opponent's image */
-.square.legal:has(img)::after {
-  width: 85%;
-  height: 85%;
+.square.legal:has(.piece)::after, .square.legal:has(img)::after {
+  width: 86%;
+  height: 86%;
   background-color: transparent;
-  border: 5px solid var(--legal-dot-color, rgba(0, 0, 0, 0.2));
+
+  border: 3.5px solid rgba(255,65,65,0.9) !important;
+
+  box-shadow: 0 0 12px rgba(255, 50, 50, 0.65), inset 0 0 12px rgba(255, 50, 50, 0.65) !important;
   box-sizing: border-box;
 }
 
@@ -712,22 +716,6 @@ body.focus-mode.focus-analyze .analyze-move-list {
   transform: translate(-50%, -50%) scale(1.15);
 }
 
-/* ── Theme-Specific Palette Colors ── */
-
-/* Classic, Emerald, Wood (Dark dots on light squares) */
-[data-theme="classic"], [data-theme="emerald"], [data-theme="wood"] {
-  --legal-dot-color: rgba(0, 0, 0, 0.22);
-}
-
-/* Refined (Clean blue-steel indicator) */
-[data-theme="refined"] {
-  --legal-dot-color: rgba(45, 75, 110, 0.3);
-}
-
-/* Walnut (Glowing white dots to stand out against dark wood) */
-[data-theme="walnut"] {
-  --legal-dot-color: rgba(255, 255, 255, 0.4);
-}
 /* ── Per-theme overrides (analysis page) ───────────────────────────────────── */
 
 /* Purple: ghost/nav buttons */
