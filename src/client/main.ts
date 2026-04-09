@@ -203,6 +203,8 @@ let currentModalAction: "leave" | "resign" | "bot" | null = null;
 let animationFinished = true; 
 let animatingToSquare: Square | null = null;
 let lastRoomStateReceivedAtMs = Date.now();
+let lastLiveQualityCalloutKey: string | null = null;
+let activeLiveQualityCallout: HTMLDivElement | null = null;
 
 const SMOOTH_MOVE_DURATION_MS = 620;
 const EPIC_MOVE_DURATION_MS = {
@@ -644,6 +646,7 @@ app.innerHTML = `
 
 
 const board = must<HTMLDivElement>("#board");
+const boardWrap = board.parentElement as HTMLDivElement | null;
 const pregamePlaceholder = must<HTMLDivElement>("#pregamePlaceholder");
 const inviteJoinCard = must<HTMLElement>("#inviteJoinCard");
 const roomInput = must<HTMLInputElement>("#roomInput");
@@ -1933,6 +1936,11 @@ function renderBoard(): void {
   const liveMarkerSquare = (!isHistoryView && liveGrade && state.snapshot?.lastMove) 
     ? state.snapshot.lastMove.to 
     : null;
+  const showQualityCallout = !isHistoryView && liveGrade && liveMarkerSquare
+    && (liveGrade.category === "great" || liveGrade.category === "brilliant");
+  const liveQualityCalloutKey = showQualityCallout
+    ? `${state.snapshot?.moveCount ?? 0}:${liveGrade!.category}:${liveMarkerSquare}`
+    : null;
 
   for (const squareName of squares) {
     const square = squareName as Square;
@@ -1947,6 +1955,8 @@ function renderBoard(): void {
   if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
   if (checkedKingSquare === squareName) button.classList.add("in-check");
   if (squareAnnotations.has(squareName)) button.classList.add("highlight-red"); // NEW
+  if (liveGrade?.category === "great" && liveMarkerSquare === squareName) button.classList.add("great-move-highlight");
+  if (liveGrade?.category === "brilliant" && liveMarkerSquare === squareName) button.classList.add("brilliant-move-highlight");
   
   // Also inside renderBoard(), anywhere outside the loop:
   if (!gameNavRow.hidden) {
@@ -2023,6 +2033,11 @@ function renderBoard(): void {
   }
 
   board.replaceChildren(fragment);
+
+  if (showQualityCallout && liveQualityCalloutKey && lastLiveQualityCalloutKey !== liveQualityCalloutKey) {
+    lastLiveQualityCalloutKey = liveQualityCalloutKey;
+    showLiveQualityMoveCallout(liveGrade.category, liveMarkerSquare);
+  }
 
   if (!isHistoryView) {
     const isPremoveExecution = suppressAnimationForMove && 
@@ -2135,6 +2150,35 @@ function squareCenter(square: Square): { x: number; y: number } {
     x: col * 100 + 50,
     y: row * 100 + 50,
   };
+}
+
+function showLiveQualityMoveCallout(category: MoveCategory, square: Square): void {
+  if (!boardWrap) {
+    return;
+  }
+
+  activeLiveQualityCallout?.remove();
+  activeLiveQualityCallout = null;
+
+  const center = squareCenter(square);
+  const callout = document.createElement("div");
+  callout.className = `move-quality-callout move-quality-callout--${category}`;
+  callout.textContent = category === "great" ? "Great Move" : "Brilliant Move";
+  callout.style.left = `${(center.x / 800) * 100}%`;
+  callout.style.top = `${(center.y / 800) * 100}%`;
+
+  boardWrap.append(callout);
+  activeLiveQualityCallout = callout;
+
+  const clearCallout = () => {
+    if (activeLiveQualityCallout === callout) {
+      activeLiveQualityCallout = null;
+    }
+    callout.remove();
+  };
+
+  callout.addEventListener("animationend", clearCallout, { once: true });
+  window.setTimeout(clearCallout, 2000);
 }
 
 function countFenPieces(fen: string): number {

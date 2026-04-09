@@ -3979,6 +3979,9 @@ var require_analyze = __commonJS({
     var variationReturnCursor = 0;
     var analysisProgressCompleted = 0;
     var analysisProgressTotal = 0;
+    var moveTimestampHistory = [];
+    var lastQualityCalloutCursor = -1;
+    var activeQualityCallout = null;
     var focusMode = false;
     var legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
     var animationStyle = localStorage.getItem("chess-animation-style") || "smooth";
@@ -4089,6 +4092,7 @@ var require_analyze = __commonJS({
     });
     var arrowLayer = q("#arrowLayer");
     var boardEl = q("#board");
+    var boardWrap = q(".board-wrap");
     var statusBar = q("#statusBar");
     var fenDisplay = q("#fenDisplay");
     var moveList = q("#moveList");
@@ -4109,6 +4113,12 @@ var require_analyze = __commonJS({
     var bestMovesToggleButton = q("#bestMovesToggleBtn");
     var returnGameLineButton = q("#returnGameLineBtn");
     var focusModeButton = q("#focusModeBtn");
+    analysisLoadingOverlay.addEventListener("wheel", (event) => {
+      event.preventDefault();
+    }, { passive: false });
+    analysisLoadingOverlay.addEventListener("touchmove", (event) => {
+      event.preventDefault();
+    }, { passive: false });
     q("#resetBtn").addEventListener("click", () => {
       cancelAnalysis();
       chess.reset();
@@ -4457,6 +4467,7 @@ var require_analyze = __commonJS({
       if (bloodFxEnabled && move.captured) {
         spawnBloodSplatter(to, move.captured);
       }
+      registerMoveTimestamp();
       render();
       void analyzeLatestMove();
     }
@@ -4537,6 +4548,8 @@ var require_analyze = __commonJS({
         if (lastMoveSquares.has(sq)) btn.classList.add("last-move");
         if (checkedKingSquare === sq) btn.classList.add("in-check");
         if (squareAnnotations.has(sq)) btn.classList.add("highlight-red");
+        if (selectedMoveEval?.category === "great" && selectedMoveTo === sq) btn.classList.add("great-move-highlight");
+        if (selectedMoveEval?.category === "brilliant" && selectedMoveTo === sq) btn.classList.add("brilliant-move-highlight");
         if (piece) {
           const span = document.createElement("span");
           span.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
@@ -4558,12 +4571,38 @@ var require_analyze = __commonJS({
         fragment.append(btn);
       }
       boardEl.replaceChildren(fragment);
-      if (animationStyle === "epic") {
-        animateLastMoveEpic(lastMove);
+      const paceProfile = getMovePaceProfile();
+      if (animationStyle === "epic" && paceProfile.tempo !== "fast") {
+        animateLastMoveEpic(lastMove, paceProfile);
       } else {
-        animateLastMove(lastMove);
+        animateLastMove(lastMove, paceProfile);
+      }
+      if (selectedMoveEval && selectedMoveTo && (selectedMoveEval.category === "great" || selectedMoveEval.category === "brilliant") && lastQualityCalloutCursor !== cursor) {
+        lastQualityCalloutCursor = cursor;
+        showQualityMoveCallout(selectedMoveEval.category, selectedMoveTo);
       }
       renderArrows();
+    }
+    function showQualityMoveCallout(category, square) {
+      activeQualityCallout?.remove();
+      activeQualityCallout = null;
+      const center = squareCenter(square);
+      const label = category === "great" ? "Great Move" : "Brilliant Move";
+      const callout = document.createElement("div");
+      callout.className = `move-quality-callout move-quality-callout--${category}`;
+      callout.textContent = label;
+      callout.style.left = `${center.x / 800 * 100}%`;
+      callout.style.top = `${center.y / 800 * 100}%`;
+      boardWrap.append(callout);
+      activeQualityCallout = callout;
+      const clearCallout = () => {
+        if (activeQualityCallout === callout) {
+          activeQualityCallout = null;
+        }
+        callout.remove();
+      };
+      callout.addEventListener("animationend", clearCallout, { once: true });
+      window.setTimeout(clearCallout, 2e3);
     }
     function syncBoardInteractionState() {
       for (const squareButton of boardEl.querySelectorAll(".square")) {
@@ -4670,6 +4709,47 @@ var require_analyze = __commonJS({
       analysisLoadingStatus.textContent = `${completed} / ${total} moves analyzed (${percent}%)`;
       analysisLoadingFill.style.width = `${percent}%`;
       analysisLoadingOverlay.hidden = !fullAnalysisInProgress;
+      document.body.classList.toggle("analysis-loading-active", fullAnalysisInProgress);
+    }
+    function getMovePaceProfile() {
+      if (moveTimestampHistory.length < 2) {
+        return {
+          tempo: "normal",
+          speedMultiplier: 1,
+          easing: "cubic-bezier(0.22, 0.61, 0.36, 1)"
+        };
+      }
+      const recentTimestamps = moveTimestampHistory.slice(-6);
+      const intervals = [];
+      for (let index = 1; index < recentTimestamps.length; index += 1) {
+        intervals.push(recentTimestamps[index] - recentTimestamps[index - 1]);
+      }
+      const averageMs = intervals.reduce((sum, current) => sum + current, 0) / intervals.length;
+      if (averageMs < 1700) {
+        return {
+          tempo: "fast",
+          speedMultiplier: 0.72,
+          easing: "cubic-bezier(0.32, 0.06, 0.66, 1)"
+        };
+      }
+      if (averageMs > 4800) {
+        return {
+          tempo: "slow",
+          speedMultiplier: 1.24,
+          easing: "cubic-bezier(0.16, 0.84, 0.2, 1)"
+        };
+      }
+      return {
+        tempo: "normal",
+        speedMultiplier: 1,
+        easing: "cubic-bezier(0.22, 0.61, 0.36, 1)"
+      };
+    }
+    function registerMoveTimestamp(nowMs = Date.now()) {
+      moveTimestampHistory.push(nowMs);
+      if (moveTimestampHistory.length > 20) {
+        moveTimestampHistory = moveTimestampHistory.slice(-20);
+      }
     }
     function getCheckedKingSquare() {
       if (!chess.isCheck()) {
@@ -4685,7 +4765,7 @@ var require_analyze = __commonJS({
       }
       return null;
     }
-    function animateLastMove(lastMove) {
+    function animateLastMove(lastMove, paceProfile) {
       if (!lastMove || cursor === 0) {
         lastAnimatedMoveKey = null;
         return;
@@ -4760,8 +4840,8 @@ var require_analyze = __commonJS({
           { transform: "translate3d(-50%, -50%, 0)", offset: 1 }
         ],
         {
-          duration: 900,
-          easing: "cubic-bezier(0.22, 0.61, 0.36, 1)"
+          duration: Math.max(360, Math.round(900 * paceProfile.speedMultiplier)),
+          easing: paceProfile.easing
         }
       );
       activeGhostAnimation = animation;
@@ -4792,7 +4872,7 @@ var require_analyze = __commonJS({
         }
       });
     }
-    function animateLastMoveEpic(lastMove) {
+    function animateLastMoveEpic(lastMove, paceProfile) {
       if (!lastMove || cursor === 0) {
         lastAnimatedMoveKey = null;
         return;
@@ -4848,10 +4928,11 @@ var require_analyze = __commonJS({
       const spinMid = motionProfile === "spin" ? randomRotation * 0.46 * spinDirection : motionProfile === "inertia" ? settleWobble * 0.72 * spinDirection : -settleWobble * 0.92 * spinDirection;
       const spinPeak = motionProfile === "spin" ? randomRotation * 0.68 * spinDirection : motionProfile === "inertia" ? settleWobble * 1.05 * spinDirection : settleWobble * 0.55 * spinDirection;
       const pullX = motionProfile === "inertia" ? deltaX * (0.14 + Math.random() * 0.1) * (Math.random() > 0.5 ? 1 : -1) : deltaX * (0.02 + Math.random() * 0.05) * (Math.random() > 0.5 ? 1 : -1);
-      const pullY = motionProfile === "inertia" ? 20 + Math.random() * 22 : 8 + Math.random() * 12;
-      const jumpA = motionProfile === "inertia" ? 62 + Math.random() * 36 : 74 + Math.random() * 44;
-      const jumpB = motionProfile === "spin" ? 100 + Math.random() * 32 : 84 + Math.random() * 28;
-      const duration = 900 + Math.floor(Math.random() * 170);
+      const paceJumpScale = paceProfile.tempo === "slow" ? 1.18 : paceProfile.tempo === "fast" ? 0.82 : 1;
+      const pullY = (motionProfile === "inertia" ? 20 + Math.random() * 22 : 8 + Math.random() * 12) * paceJumpScale;
+      const jumpA = (motionProfile === "inertia" ? 62 + Math.random() * 36 : 74 + Math.random() * 44) * paceJumpScale;
+      const jumpB = (motionProfile === "spin" ? 100 + Math.random() * 32 : 84 + Math.random() * 28) * paceJumpScale;
+      const duration = Math.max(420, Math.round((900 + Math.floor(Math.random() * 170)) * paceProfile.speedMultiplier));
       Object.assign(ghostPiece.style, {
         position: "absolute",
         left: `${endX}px`,
@@ -4911,7 +4992,7 @@ var require_analyze = __commonJS({
       ];
       const animation = ghostPiece.animate(keyframes, {
         duration,
-        easing: "cubic-bezier(0.22, 0.61, 0.36, 1)"
+        easing: paceProfile.easing
       });
       activeGhostAnimation = animation;
       animation.addEventListener("finish", () => {
@@ -5026,8 +5107,8 @@ var require_analyze = __commonJS({
       flash.addEventListener("animationend", () => flash.remove(), { once: true });
     }
     function spawnBloodSplatter(square, capturedPiece) {
-      const boardWrap = boardEl.parentElement;
-      if (!boardWrap) {
+      const boardWrap2 = boardEl.parentElement;
+      if (!boardWrap2) {
         return;
       }
       const intensityByPiece = {
@@ -5069,7 +5150,7 @@ var require_analyze = __commonJS({
         drop.style.setProperty("--blood-color", `rgba(${red},${green},${blue},${opacity})`);
         splatter.append(drop);
       }
-      boardWrap.append(splatter);
+      boardWrap2.append(splatter);
       if (Math.random() > 0.52 && document.querySelectorAll(".capture-blood-pool").length < 3) {
         const pool = document.createElement("div");
         pool.className = "capture-blood-pool";
@@ -5082,7 +5163,7 @@ var require_analyze = __commonJS({
         pool.style.setProperty("--pool-blur", `${1.8 + Math.random() * 1.8}px`);
         pool.style.setProperty("--pool-rotate", `${Math.random() * 360}deg`);
         pool.style.transform = `translate(-50%, -50%) rotate(${Math.random() * 360}deg)`;
-        boardWrap.append(pool);
+        boardWrap2.append(pool);
         setTimeout(() => {
           pool.classList.add("capture-blood-pool-fade");
           setTimeout(() => pool.remove(), 2200 + Math.random() * 1200);

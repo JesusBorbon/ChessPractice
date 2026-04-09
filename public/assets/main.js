@@ -7459,6 +7459,8 @@ var require_main = __commonJS({
     var animationFinished = true;
     var animatingToSquare = null;
     var lastRoomStateReceivedAtMs = Date.now();
+    var lastLiveQualityCalloutKey = null;
+    var activeLiveQualityCallout = null;
     var SMOOTH_MOVE_DURATION_MS = 620;
     var EPIC_MOVE_DURATION_MS = {
       smash: 860,
@@ -7839,6 +7841,7 @@ var require_main = __commonJS({
   <div class="toast" id="toast"></div>
 `;
     var board = must("#board");
+    var boardWrap = board.parentElement;
     var pregamePlaceholder = must("#pregamePlaceholder");
     var inviteJoinCard = must("#inviteJoinCard");
     var roomInput = must("#roomInput");
@@ -8830,6 +8833,8 @@ var require_main = __commonJS({
       }
       const liveGrade = state.snapshot && (state.snapshot.analysis.enabled || state.snapshot.analysis.labelsOnly) && state.snapshot.lastMove ? state.liveMoveGrades[state.snapshot.moveCount] : void 0;
       const liveMarkerSquare = !isHistoryView && liveGrade && state.snapshot?.lastMove ? state.snapshot.lastMove.to : null;
+      const showQualityCallout = !isHistoryView && liveGrade && liveMarkerSquare && (liveGrade.category === "great" || liveGrade.category === "brilliant");
+      const liveQualityCalloutKey = showQualityCallout ? `${state.snapshot?.moveCount ?? 0}:${liveGrade.category}:${liveMarkerSquare}` : null;
       for (const squareName of squares) {
         const square = squareName;
         const piece = displayBoard.get(square);
@@ -8841,6 +8846,8 @@ var require_main = __commonJS({
         if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
         if (checkedKingSquare === squareName) button.classList.add("in-check");
         if (squareAnnotations.has(squareName)) button.classList.add("highlight-red");
+        if (liveGrade?.category === "great" && liveMarkerSquare === squareName) button.classList.add("great-move-highlight");
+        if (liveGrade?.category === "brilliant" && liveMarkerSquare === squareName) button.classList.add("brilliant-move-highlight");
         if (!gameNavRow.hidden) {
           const isHistoryView2 = state.viewCursor !== null;
           const maxMoves = state.snapshot?.moves.length ?? 0;
@@ -8898,6 +8905,10 @@ var require_main = __commonJS({
         fragment.append(button);
       }
       board.replaceChildren(fragment);
+      if (showQualityCallout && liveQualityCalloutKey && lastLiveQualityCalloutKey !== liveQualityCalloutKey) {
+        lastLiveQualityCalloutKey = liveQualityCalloutKey;
+        showLiveQualityMoveCallout(liveGrade.category, liveMarkerSquare);
+      }
       if (!isHistoryView) {
         const isPremoveExecution = suppressAnimationForMove && lastMove && lastMove.from === suppressAnimationForMove.from && lastMove.to === suppressAnimationForMove.to;
         if (isPremoveExecution) {
@@ -8987,6 +8998,29 @@ var require_main = __commonJS({
         y: row * 100 + 50
       };
     }
+    function showLiveQualityMoveCallout(category, square) {
+      if (!boardWrap) {
+        return;
+      }
+      activeLiveQualityCallout?.remove();
+      activeLiveQualityCallout = null;
+      const center = squareCenter(square);
+      const callout = document.createElement("div");
+      callout.className = `move-quality-callout move-quality-callout--${category}`;
+      callout.textContent = category === "great" ? "Great Move" : "Brilliant Move";
+      callout.style.left = `${center.x / 800 * 100}%`;
+      callout.style.top = `${center.y / 800 * 100}%`;
+      boardWrap.append(callout);
+      activeLiveQualityCallout = callout;
+      const clearCallout = () => {
+        if (activeLiveQualityCallout === callout) {
+          activeLiveQualityCallout = null;
+        }
+        callout.remove();
+      };
+      callout.addEventListener("animationend", clearCallout, { once: true });
+      window.setTimeout(clearCallout, 2e3);
+    }
     function countFenPieces(fen) {
       const boardFen = fen.split(" ")[0] ?? "";
       let count = 0;
@@ -9018,8 +9052,8 @@ var require_main = __commonJS({
       flash.addEventListener("animationend", () => flash.remove(), { once: true });
     }
     function spawnBloodSplatter(square, capturedPiece) {
-      const boardWrap = board.parentElement;
-      if (!boardWrap) return;
+      const boardWrap2 = board.parentElement;
+      if (!boardWrap2) return;
       const intensityByPiece = {
         p: 0.6,
         n: 0.8,
@@ -9048,7 +9082,7 @@ var require_main = __commonJS({
         drop.style.setProperty("--delay", `${Math.random() * 50}ms`);
         splatter.append(drop);
       }
-      boardWrap.append(splatter);
+      boardWrap2.append(splatter);
       setTimeout(() => splatter.remove(), 2500);
     }
     function toggleArrow(from, to) {

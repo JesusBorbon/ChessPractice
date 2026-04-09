@@ -33,6 +33,12 @@ type MoveAnalysis = {
   afterCp: number;
 };
 
+type MovePaceProfile = {
+  tempo: "fast" | "normal" | "slow";
+  speedMultiplier: number;
+  easing: string;
+};
+
 const CATEGORY_LABELS: Record<MoveCategory, string> = {
   brilliant: "Brilliant",
   great: "Great",
@@ -260,6 +266,9 @@ let variationBranchPly: number | null = null;
 let variationReturnCursor = 0;
 let analysisProgressCompleted = 0;
 let analysisProgressTotal = 0;
+let moveTimestampHistory: number[] = [];
+let lastQualityCalloutCursor = -1;
+let activeQualityCallout: HTMLDivElement | null = null;
 let focusMode = false;
 let legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
 let animationStyle: "smooth" | "epic" = (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth";
@@ -381,6 +390,7 @@ window.addEventListener("legalmoveschange", (event: Event) => {
 // ── Element refs ───────────────────────────────────────────────────────────────
 const arrowLayer = q<SVGSVGElement>("#arrowLayer");
 const boardEl    = q<HTMLDivElement>("#board");
+const boardWrap  = q<HTMLDivElement>(".board-wrap");
 const statusBar  = q<HTMLDivElement>("#statusBar");
 const fenDisplay = q<HTMLTextAreaElement>("#fenDisplay");
 const moveList   = q<HTMLDivElement>("#moveList");
@@ -401,6 +411,14 @@ const stopAnalyzeBtn = q<HTMLButtonElement>("#stopAnalyzeBtn");
 const bestMovesToggleButton = q<HTMLButtonElement>("#bestMovesToggleBtn");
 const returnGameLineButton = q<HTMLButtonElement>("#returnGameLineBtn");
 const focusModeButton = q<HTMLButtonElement>("#focusModeBtn");
+
+analysisLoadingOverlay.addEventListener("wheel", (event) => {
+  event.preventDefault();
+}, { passive: false });
+
+analysisLoadingOverlay.addEventListener("touchmove", (event) => {
+  event.preventDefault();
+}, { passive: false });
 
 
 // ── Button wiring ──────────────────────────────────────────────────────────────
@@ -827,6 +845,7 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
   if (bloodFxEnabled && move.captured) {
     spawnBloodSplatter(to, move.captured as PieceSymbol);
   }
+  registerMoveTimestamp();
   render();
   void analyzeLatestMove();
 }
@@ -924,6 +943,8 @@ function renderBoard(): void {
     if (lastMoveSquares.has(sq))     btn.classList.add("last-move");
     if (checkedKingSquare === sq)    btn.classList.add("in-check");
     if (squareAnnotations.has(sq))   btn.classList.add("highlight-red");
+    if (selectedMoveEval?.category === "great" && selectedMoveTo === sq) btn.classList.add("great-move-highlight");
+    if (selectedMoveEval?.category === "brilliant" && selectedMoveTo === sq) btn.classList.add("brilliant-move-highlight");
 
     if (piece) {
       const span = document.createElement("span");
@@ -950,14 +971,51 @@ function renderBoard(): void {
   }
 
   boardEl.replaceChildren(fragment);
-  if (animationStyle === "epic") {
-    animateLastMoveEpic(lastMove);
+  const paceProfile = getMovePaceProfile();
+  if (animationStyle === "epic" && paceProfile.tempo !== "fast") {
+    animateLastMoveEpic(lastMove, paceProfile);
   } else {
-    animateLastMove(lastMove);
+    animateLastMove(lastMove, paceProfile);
+  }
+
+  if (
+    selectedMoveEval &&
+    selectedMoveTo &&
+    (selectedMoveEval.category === "great" || selectedMoveEval.category === "brilliant") &&
+    lastQualityCalloutCursor !== cursor
+  ) {
+    lastQualityCalloutCursor = cursor;
+    showQualityMoveCallout(selectedMoveEval.category, selectedMoveTo);
   }
 
   
   renderArrows();
+}
+
+function showQualityMoveCallout(category: MoveCategory, square: Square): void {
+  activeQualityCallout?.remove();
+  activeQualityCallout = null;
+
+  const center = squareCenter(square);
+  const label = category === "great" ? "Great Move" : "Brilliant Move";
+  const callout = document.createElement("div");
+  callout.className = `move-quality-callout move-quality-callout--${category}`;
+  callout.textContent = label;
+  callout.style.left = `${(center.x / 800) * 100}%`;
+  callout.style.top = `${(center.y / 800) * 100}%`;
+
+  boardWrap.append(callout);
+  activeQualityCallout = callout;
+
+  const clearCallout = () => {
+    if (activeQualityCallout === callout) {
+      activeQualityCallout = null;
+    }
+    callout.remove();
+  };
+
+  callout.addEventListener("animationend", clearCallout, { once: true });
+  window.setTimeout(clearCallout, 2000);
 }
 
 function syncBoardInteractionState(): void {
@@ -1087,6 +1145,53 @@ function updateAnalysisLoadingOverlay(): void {
   analysisLoadingStatus.textContent = `${completed} / ${total} moves analyzed (${percent}%)`;
   analysisLoadingFill.style.width = `${percent}%`;
   analysisLoadingOverlay.hidden = !fullAnalysisInProgress;
+  document.body.classList.toggle("analysis-loading-active", fullAnalysisInProgress);
+}
+
+function getMovePaceProfile(): MovePaceProfile {
+  if (moveTimestampHistory.length < 2) {
+    return {
+      tempo: "normal",
+      speedMultiplier: 1,
+      easing: "cubic-bezier(0.22, 0.61, 0.36, 1)",
+    };
+  }
+
+  const recentTimestamps = moveTimestampHistory.slice(-6);
+  const intervals: number[] = [];
+  for (let index = 1; index < recentTimestamps.length; index += 1) {
+    intervals.push(recentTimestamps[index]! - recentTimestamps[index - 1]!);
+  }
+
+  const averageMs = intervals.reduce((sum, current) => sum + current, 0) / intervals.length;
+  if (averageMs < 1700) {
+    return {
+      tempo: "fast",
+      speedMultiplier: 0.72,
+      easing: "cubic-bezier(0.32, 0.06, 0.66, 1)",
+    };
+  }
+
+  if (averageMs > 4800) {
+    return {
+      tempo: "slow",
+      speedMultiplier: 1.24,
+      easing: "cubic-bezier(0.16, 0.84, 0.2, 1)",
+    };
+  }
+
+  return {
+    tempo: "normal",
+    speedMultiplier: 1,
+    easing: "cubic-bezier(0.22, 0.61, 0.36, 1)",
+  };
+}
+
+function registerMoveTimestamp(nowMs = Date.now()): void {
+  moveTimestampHistory.push(nowMs);
+  if (moveTimestampHistory.length > 20) {
+    moveTimestampHistory = moveTimestampHistory.slice(-20);
+  }
 }
 
 function getCheckedKingSquare(): Square | null {
@@ -1106,7 +1211,7 @@ function getCheckedKingSquare(): Square | null {
   return null;
 }
 
-function animateLastMove(lastMove: Move | undefined): void {
+function animateLastMove(lastMove: Move | undefined, paceProfile: MovePaceProfile): void {
   if (!lastMove || cursor === 0) {
     lastAnimatedMoveKey = null;
     return;
@@ -1192,8 +1297,8 @@ function animateLastMove(lastMove: Move | undefined): void {
       { transform: "translate3d(-50%, -50%, 0)", offset: 1 },
     ],
     {
-      duration: 900,
-      easing: "cubic-bezier(0.22, 0.61, 0.36, 1)",
+      duration: Math.max(360, Math.round(900 * paceProfile.speedMultiplier)),
+      easing: paceProfile.easing,
     },
   );
 
@@ -1228,7 +1333,7 @@ function animateLastMove(lastMove: Move | undefined): void {
   });
 }
 
-function animateLastMoveEpic(lastMove: Move | undefined): void {
+function animateLastMoveEpic(lastMove: Move | undefined, paceProfile: MovePaceProfile): void {
   if (!lastMove || cursor === 0) {
     lastAnimatedMoveKey = null;
     return;
@@ -1310,12 +1415,13 @@ function animateLastMoveEpic(lastMove: Move | undefined): void {
   const pullX = motionProfile === "inertia"
     ? deltaX * (0.14 + Math.random() * 0.1) * (Math.random() > 0.5 ? 1 : -1)
     : deltaX * (0.02 + Math.random() * 0.05) * (Math.random() > 0.5 ? 1 : -1);
-  const pullY = motionProfile === "inertia"
+  const paceJumpScale = paceProfile.tempo === "slow" ? 1.18 : paceProfile.tempo === "fast" ? 0.82 : 1;
+  const pullY = (motionProfile === "inertia"
     ? 20 + Math.random() * 22
-    : 8 + Math.random() * 12;
-  const jumpA = motionProfile === "inertia" ? 62 + Math.random() * 36 : 74 + Math.random() * 44;
-  const jumpB = motionProfile === "spin" ? 100 + Math.random() * 32 : 84 + Math.random() * 28;
-  const duration = 900 + Math.floor(Math.random() * 170);
+    : 8 + Math.random() * 12) * paceJumpScale;
+  const jumpA = (motionProfile === "inertia" ? 62 + Math.random() * 36 : 74 + Math.random() * 44) * paceJumpScale;
+  const jumpB = (motionProfile === "spin" ? 100 + Math.random() * 32 : 84 + Math.random() * 28) * paceJumpScale;
+  const duration = Math.max(420, Math.round((900 + Math.floor(Math.random() * 170)) * paceProfile.speedMultiplier));
 
   Object.assign(ghostPiece.style, {
     position: "absolute",
@@ -1379,7 +1485,7 @@ function animateLastMoveEpic(lastMove: Move | undefined): void {
 
   const animation = ghostPiece.animate(keyframes, {
     duration,
-    easing: "cubic-bezier(0.22, 0.61, 0.36, 1)",
+    easing: paceProfile.easing,
   });
 
   activeGhostAnimation = animation;
