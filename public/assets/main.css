@@ -98,6 +98,7 @@
   --radius-md: 14px;
   --move-duration: 600ms;
   --legal-dot-color: rgba(60, 255, 120, 0.7);
+  --text-on-accent-strong: #353535;
 }
 [data-theme=purple] {
   --bg: #120d1e;
@@ -194,6 +195,7 @@
   --radius-lg: 20px;
   --radius-md: 14px;
   --legal-dot-color: rgba(255, 60, 225, 0.75);
+  --text-on-accent-strong: #efefef;
 }
 [data-theme=walnut] {
   --bg: #f2e8d4;
@@ -291,6 +293,7 @@
   --radius-lg: 20px;
   --radius-md: 14px;
   --legal-dot-color: rgba(255, 195, 60, 0.8);
+  --text-on-accent-strong: #353535;
 }
 [data-theme=refined] {
   --bg: #e8eef5;
@@ -388,6 +391,7 @@
   --radius-lg: 20px;
   --radius-md: 14px;
   --legal-dot-color: rgba(60, 200, 255, 0.75);
+  --text-on-accent-strong: #353535;
 }
 [data-theme=purple] body {
   background:
@@ -712,8 +716,8 @@
       rgba(10, 127, 147, 0.35),
       rgba(0, 229, 255, 0.25));
   border: 1px solid rgba(0, 229, 255, 0.3);
-  color: #f0fbff;
-  box-shadow: 0 12px 24px rgba(0, 150, 180, 0.15);
+  color: #e4e5e6;
+  box-shadow: 0 12px 24px rgba(233, 237, 233, 0.15);
 }
 .action.cta-turquoise:hover {
   background:
@@ -721,12 +725,40 @@
       135deg,
       rgba(10, 127, 147, 0.45),
       rgba(0, 229, 255, 0.35));
-  box-shadow: 0 16px 32px rgba(0, 180, 220, 0.25);
   border-color: rgba(0, 229, 255, 0.5);
 }
 .action.cta-turquoise:focus {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.3), 0 12px 24px rgba(0, 150, 180, 0.2);
+}
+#createRoomButton {
+  background: color-mix(in srgb, var(--accent-strong) 25%, transparent) !important;
+  color: var(--text-on-accent-strong) !important;
+  border: 1px solid color-mix(in srgb, var(--accent-strong) 35%, transparent) !important;
+  font-weight: 700 !important;
+  transition: all 0.2s ease !important;
+  padding: 10px 20px !important;
+  border-radius: 25px !important;
+  backdrop-filter: blur(8px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(140%) !important;
+}
+#createRoomButton:hover {
+  background: color-mix(in srgb, var(--accent-strong) 35%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent-strong) 50%, transparent) !important;
+}
+#leaveRoomButton {
+  background: rgba(217, 31, 31, 0.12) !important;
+  color: #d91f1f !important;
+  border: 1px solid rgba(217, 31, 31, 0.2) !important;
+  font-weight: 700 !important;
+  transition: all 0.2s ease !important;
+  padding: 10px 20px !important;
+  border-radius: 25px !important;
+  backdrop-filter: blur(8px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(140%) !important;
+}
+#leaveRoomButton:hover {
+  background: rgba(217, 31, 31, 0.2) !important;
+  border-color: rgba(217, 31, 31, 0.4) !important;
 }
 
 /* src/client/styles.css */
@@ -972,6 +1004,9 @@ button {
 .chip:focus,
 .promotion-button:focus {
   box-shadow: 0 12px 24px rgba(25, 63, 48, 0.18), 0 0 0 3px rgba(25, 63, 48, 0.1);
+}
+#board {
+  border-radius: 12px;
 }
 .board-wrap {
   position: relative;

@@ -249,10 +249,14 @@ button {
 .promotion-button:focus {
   box-shadow: 0 12px 24px rgba(25, 63, 48, 0.18), 0 0 0 3px rgba(25, 63, 48, 0.1);
 }
-
+#board {
+  border-radius: 12px;
+}
 .board-wrap {
   position: relative;
 }
+
+
 
 .check-flash-overlay {
   position: fixed;

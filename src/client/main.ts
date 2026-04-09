@@ -1819,8 +1819,6 @@ function renderBoard(): void {
       const isTargetOfActiveAnimation = square === animatingToSquare && !animationFinished;
       const isBeingDragged = square === ptrDragFrom;
 
-      // FIX: Only hide the piece if there is an ACTUAL active ghost node existing.
-      // If the animation was force-cancelled, activeGhostNode is null, so we show the piece.
       const shouldHide = (isTargetOfActiveAnimation && activeGhostNode) || isBeingDragged;
 
       if (shouldHide && !isMyPremove && !isHistoryView) {
@@ -1828,7 +1826,7 @@ function renderBoard(): void {
         pieceElement.style.visibility = "hidden";
         pieceElement.style.pointerEvents = "none";
       } else {
-        // Explicitly force visibility back to normal
+      
         pieceElement.style.opacity = "1";
         pieceElement.style.visibility = "";
         pieceElement.style.pointerEvents = "";
@@ -1856,7 +1854,6 @@ function renderBoard(): void {
 
   board.replaceChildren(fragment);
 
-  // --- 3. ANIMATION SCHEDULING ---
   if (!isHistoryView) {
     const isPremoveExecution = suppressAnimationForMove && 
                                lastMove && 
@@ -2078,7 +2075,6 @@ function spawnBloodSplatter(square: Square, capturedPiece: PieceSymbol): void {
   splatter.style.top = `${(center.y / 800) * 100}%`;
   splatter.style.setProperty("--intensity", String(intensity));
 
-  // OPTIMIZATION 1: Drastically reduce maximum drops (from ~60 down to ~4-10)
   const dropCount = Math.floor(4 + Math.random() * 6 * intensity);
   
   for (let index = 0; index < dropCount; index += 1) {
@@ -2097,7 +2093,6 @@ function spawnBloodSplatter(square: Square, capturedPiece: PieceSymbol): void {
 
   boardWrap.append(splatter);
   
-  // OPTIMIZATION 2: Use setTimeout instead of animationend to prevent layout thrashing
   setTimeout(() => splatter.remove(), 2500); 
 }
 
