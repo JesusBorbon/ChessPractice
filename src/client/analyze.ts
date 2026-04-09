@@ -258,6 +258,8 @@ let gameLineAnalysisByPly: Array<MoveAnalysis | undefined> = [];
 let isVariationMode = false;
 let variationBranchPly: number | null = null;
 let variationReturnCursor = 0;
+let analysisProgressCompleted = 0;
+let analysisProgressTotal = 0;
 let focusMode = false;
 let legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
 let animationStyle: "smooth" | "epic" = (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth";
@@ -344,6 +346,17 @@ app.innerHTML = `
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div class="analysis-loading-overlay" id="analysisLoadingOverlay" hidden>
+  <div class="analysis-loading-card" role="status" aria-live="polite" aria-atomic="true">
+    <h2>Analyzing game...</h2>
+    <p class="analysis-loading-status" id="analysisLoadingStatus">0 / 0 moves analyzed</p>
+    <div class="analysis-loading-track" aria-hidden="true">
+      <div class="analysis-loading-fill" id="analysisLoadingFill"></div>
+    </div>
+    <p class="analysis-loading-note">Navigation is disabled until analysis is complete.</p>
+  </div>
+</div>
 `;
 
 // ── Element refs ───────────────────────────────────────────────────────────────
@@ -376,6 +389,9 @@ const turnDot    = q<HTMLDivElement>("#turnDot");
 const turnLabel  = q<HTMLSpanElement>("#turnLabel");
 const promoDialog= q<HTMLDivElement>("#promoDialog");
 const toast      = q<HTMLDivElement>("#toast");
+const analysisLoadingOverlay = q<HTMLDivElement>("#analysisLoadingOverlay");
+const analysisLoadingStatus = q<HTMLParagraphElement>("#analysisLoadingStatus");
+const analysisLoadingFill = q<HTMLDivElement>("#analysisLoadingFill");
 const navFirst   = q<HTMLButtonElement>("#navFirst");
 const navPrev    = q<HTMLButtonElement>("#navPrev");
 const navNext    = q<HTMLButtonElement>("#navNext");
@@ -472,9 +488,17 @@ window.addEventListener("keydown", (event) => {
   if (isTypingTarget(event.target)) return;
 
   if (event.key === "ArrowLeft") {
+    if (fullAnalysisInProgress) {
+      event.preventDefault();
+      return;
+    }
     event.preventDefault();
     goTo(cursor - 1);
   } else if (event.key === "ArrowRight") {
+    if (fullAnalysisInProgress) {
+      event.preventDefault();
+      return;
+    }
     event.preventDefault();
     goTo(cursor + 1);
   } else if (event.key.toLowerCase() === "z") {
@@ -490,6 +514,10 @@ navNext.addEventListener("click",  () => goTo(cursor + 1));
 navLast.addEventListener("click",  () => goTo(fenHistory.length - 1));
 
 function goTo(index: number): void {
+  if (fullAnalysisInProgress) {
+    return;
+  }
+
   const clamped = Math.max(0, Math.min(fenHistory.length - 1, index));
   if (clamped === cursor) return;
   cursor = clamped;
@@ -716,6 +744,10 @@ promoDialog.addEventListener("click", (e) => {
 
 // Move-list click (navigate to that half-move)
 moveList.addEventListener("click", (e) => {
+  if (fullAnalysisInProgress) {
+    return;
+  }
+
   const span = (e.target as HTMLElement).closest<HTMLSpanElement>("span[data-idx]");
   if (!span) return;
   const idx = Number(span.dataset.idx);
@@ -1033,10 +1065,28 @@ function renderMoveList(): void {
 }
 
 function renderNav(): void {
+  if (fullAnalysisInProgress) {
+    navFirst.disabled = true;
+    navPrev.disabled = true;
+    navNext.disabled = true;
+    navLast.disabled = true;
+    return;
+  }
+
   navFirst.disabled = cursor === 0;
   navPrev.disabled  = cursor === 0;
   navNext.disabled  = cursor === fenHistory.length - 1;
   navLast.disabled  = cursor === fenHistory.length - 1;
+}
+
+function updateAnalysisLoadingOverlay(): void {
+  const total = Math.max(analysisProgressTotal, 0);
+  const completed = Math.max(0, Math.min(analysisProgressCompleted, total || analysisProgressCompleted));
+  const percent = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+
+  analysisLoadingStatus.textContent = `${completed} / ${total} moves analyzed (${percent}%)`;
+  analysisLoadingFill.style.width = `${percent}%`;
+  analysisLoadingOverlay.hidden = !fullAnalysisInProgress;
 }
 
 function getCheckedKingSquare(): Square | null {
@@ -1650,7 +1700,11 @@ async function runGameAnalysis(): Promise<void> {
   const runId = analysisRunId;
   analysisInProgress = true;
   fullAnalysisInProgress = true;
+  analysisProgressCompleted = 0;
+  analysisProgressTotal = moveHistory.length;
+  updateAnalysisLoadingOverlay();
   renderSide();
+  renderNav();
 
   try {
     const engine = ensureStockfish();
@@ -1675,6 +1729,8 @@ async function runGameAnalysis(): Promise<void> {
       }
 
       analysisByPly[ply] = classifyMove(ply, move, before, after, beforeFen, afterFen);
+      analysisProgressCompleted = ply;
+      updateAnalysisLoadingOverlay();
       if (cursor === ply) {
         requestBoardRefresh();
       }
@@ -1691,7 +1747,9 @@ async function runGameAnalysis(): Promise<void> {
     if (runId === analysisRunId) {
       analysisInProgress = false;
       fullAnalysisInProgress = false;
+      updateAnalysisLoadingOverlay();
       renderSide();
+      renderNav();
     }
   }
 }
@@ -1756,6 +1814,10 @@ function cancelAnalysis(): void {
   analysisRunId += 1;
   analysisInProgress = false;
   fullAnalysisInProgress = false;
+  analysisProgressCompleted = 0;
+  analysisProgressTotal = 0;
+  updateAnalysisLoadingOverlay();
+  renderNav();
 }
 
 function classifyMove(
@@ -2056,3 +2118,4 @@ if (postGameMovesStr) {
 }
 syncGameLineFromCurrent();
 render();
+updateAnalysisLoadingOverlay();

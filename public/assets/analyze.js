@@ -3977,6 +3977,8 @@ var require_analyze = __commonJS({
     var isVariationMode = false;
     var variationBranchPly = null;
     var variationReturnCursor = 0;
+    var analysisProgressCompleted = 0;
+    var analysisProgressTotal = 0;
     var focusMode = false;
     var legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
     var animationStyle = localStorage.getItem("chess-animation-style") || "smooth";
@@ -4059,6 +4061,17 @@ var require_analyze = __commonJS({
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div class="analysis-loading-overlay" id="analysisLoadingOverlay" hidden>
+  <div class="analysis-loading-card" role="status" aria-live="polite" aria-atomic="true">
+    <h2>Analyzing game...</h2>
+    <p class="analysis-loading-status" id="analysisLoadingStatus">0 / 0 moves analyzed</p>
+    <div class="analysis-loading-track" aria-hidden="true">
+      <div class="analysis-loading-fill" id="analysisLoadingFill"></div>
+    </div>
+    <p class="analysis-loading-note">Navigation is disabled until analysis is complete.</p>
+  </div>
+</div>
 `;
     mountThemeSwitcher();
     window.addEventListener("animationchange", (event) => {
@@ -4084,6 +4097,9 @@ var require_analyze = __commonJS({
     var turnLabel = q("#turnLabel");
     var promoDialog = q("#promoDialog");
     var toast = q("#toast");
+    var analysisLoadingOverlay = q("#analysisLoadingOverlay");
+    var analysisLoadingStatus = q("#analysisLoadingStatus");
+    var analysisLoadingFill = q("#analysisLoadingFill");
     var navFirst = q("#navFirst");
     var navPrev = q("#navPrev");
     var navNext = q("#navNext");
@@ -4165,9 +4181,17 @@ var require_analyze = __commonJS({
     window.addEventListener("keydown", (event) => {
       if (isTypingTarget(event.target)) return;
       if (event.key === "ArrowLeft") {
+        if (fullAnalysisInProgress) {
+          event.preventDefault();
+          return;
+        }
         event.preventDefault();
         goTo(cursor - 1);
       } else if (event.key === "ArrowRight") {
+        if (fullAnalysisInProgress) {
+          event.preventDefault();
+          return;
+        }
         event.preventDefault();
         goTo(cursor + 1);
       } else if (event.key.toLowerCase() === "z") {
@@ -4180,6 +4204,9 @@ var require_analyze = __commonJS({
     navNext.addEventListener("click", () => goTo(cursor + 1));
     navLast.addEventListener("click", () => goTo(fenHistory.length - 1));
     function goTo(index) {
+      if (fullAnalysisInProgress) {
+        return;
+      }
       const clamped = Math.max(0, Math.min(fenHistory.length - 1, index));
       if (clamped === cursor) return;
       cursor = clamped;
@@ -4363,6 +4390,9 @@ var require_analyze = __commonJS({
       promoDialog.hidden = true;
     });
     moveList.addEventListener("click", (e) => {
+      if (fullAnalysisInProgress) {
+        return;
+      }
       const span = e.target.closest("span[data-idx]");
       if (!span) return;
       const idx = Number(span.dataset.idx);
@@ -4621,10 +4651,25 @@ var require_analyze = __commonJS({
       }
     }
     function renderNav() {
+      if (fullAnalysisInProgress) {
+        navFirst.disabled = true;
+        navPrev.disabled = true;
+        navNext.disabled = true;
+        navLast.disabled = true;
+        return;
+      }
       navFirst.disabled = cursor === 0;
       navPrev.disabled = cursor === 0;
       navNext.disabled = cursor === fenHistory.length - 1;
       navLast.disabled = cursor === fenHistory.length - 1;
+    }
+    function updateAnalysisLoadingOverlay() {
+      const total = Math.max(analysisProgressTotal, 0);
+      const completed = Math.max(0, Math.min(analysisProgressCompleted, total || analysisProgressCompleted));
+      const percent = total > 0 ? Math.min(100, Math.round(completed / total * 100)) : 0;
+      analysisLoadingStatus.textContent = `${completed} / ${total} moves analyzed (${percent}%)`;
+      analysisLoadingFill.style.width = `${percent}%`;
+      analysisLoadingOverlay.hidden = !fullAnalysisInProgress;
     }
     function getCheckedKingSquare() {
       if (!chess.isCheck()) {
@@ -5136,7 +5181,11 @@ var require_analyze = __commonJS({
       const runId = analysisRunId;
       analysisInProgress = true;
       fullAnalysisInProgress = true;
+      analysisProgressCompleted = 0;
+      analysisProgressTotal = moveHistory.length;
+      updateAnalysisLoadingOverlay();
       renderSide();
+      renderNav();
       try {
         const engine = ensureStockfish();
         for (let ply = 1; ply <= moveHistory.length; ply += 1) {
@@ -5155,6 +5204,8 @@ var require_analyze = __commonJS({
             return;
           }
           analysisByPly[ply] = classifyMove(ply, move, before, after, beforeFen, afterFen);
+          analysisProgressCompleted = ply;
+          updateAnalysisLoadingOverlay();
           if (cursor === ply) {
             requestBoardRefresh();
           }
@@ -5170,7 +5221,9 @@ var require_analyze = __commonJS({
         if (runId === analysisRunId) {
           analysisInProgress = false;
           fullAnalysisInProgress = false;
+          updateAnalysisLoadingOverlay();
           renderSide();
+          renderNav();
         }
       }
     }
@@ -5224,6 +5277,10 @@ var require_analyze = __commonJS({
       analysisRunId += 1;
       analysisInProgress = false;
       fullAnalysisInProgress = false;
+      analysisProgressCompleted = 0;
+      analysisProgressTotal = 0;
+      updateAnalysisLoadingOverlay();
+      renderNav();
     }
     function classifyMove(ply, move, before, after, beforeFen, afterFen) {
       const playedMove = toUci(move);
@@ -5430,6 +5487,7 @@ var require_analyze = __commonJS({
     }
     syncGameLineFromCurrent();
     render();
+    updateAnalysisLoadingOverlay();
   }
 });
 export default require_analyze();
