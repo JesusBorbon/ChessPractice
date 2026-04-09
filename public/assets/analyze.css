@@ -210,53 +210,81 @@
   box-shadow: 0 0 10px rgba(180, 30, 30, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.3);
 }
 .piece-quality-marker {
+  --marker-glow: rgba(96, 126, 108, 0.24);
+  --marker-border: rgba(96, 126, 108, 0.72);
   position: absolute;
-  top: 6px;
-  right: 6px;
-  min-width: 28px;
-  height: 28px;
-  padding: 0 7px;
-  border-radius: 999px;
+  top: clamp(2px, 0.45vmin, 6px);
+  right: clamp(2px, 0.45vmin, 6px);
+  min-width: clamp(20px, 32%, 30px);
+  max-width: 40%;
+  height: clamp(18px, 32%, 30px);
+  padding: 0 clamp(2px, 0.5vmin, 6px);
+  border-radius: clamp(6px, 0.9vmin, 10px);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.9rem;
+  font-size: clamp(0.5rem, 1.15vmin, 0.84rem);
   font-weight: 800;
   line-height: 1;
-  border: 2px solid rgba(255, 255, 255, 0.98);
-  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.26);
+  border: 1px solid var(--marker-border);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--marker-border) 35%, transparent),
+    0 0 10px var(--marker-glow),
+    0 4px 10px rgba(0, 0, 0, 0.24);
   z-index: 4;
   pointer-events: none;
+}
+.piece-quality-marker-icon {
+  width: clamp(10px, 72%, 18px);
+  height: clamp(10px, 72%, 18px);
+  display: block;
 }
 .piece-quality-marker.brilliant {
   background: #d9f8de;
   color: #0f6b25;
+  --marker-glow: rgba(15, 107, 37, 0.35);
+  --marker-border: rgba(88, 170, 106, 0.82);
 }
 .piece-quality-marker.great {
   background: #dbf3ff;
   color: #0d4f8e;
+  --marker-glow: rgba(13, 79, 142, 0.35);
+  --marker-border: rgba(78, 147, 199, 0.82);
 }
 .piece-quality-marker.excellent {
   background: #e8f2d7;
   color: #3f5f19;
+  --marker-glow: rgba(63, 95, 25, 0.35);
+  --marker-border: rgba(84, 146, 52, 0.84);
 }
 .piece-quality-marker.good {
   background: #f2f1d7;
   color: #686214;
+  --marker-glow: rgba(104, 98, 20, 0.35);
+  --marker-border: rgba(96, 184, 152, 0.82);
 }
 .piece-quality-marker.inaccuracy {
   background: #fff2d8;
   color: #8a5b12;
+  --marker-glow: rgba(138, 91, 18, 0.35);
+  --marker-border: rgba(212, 150, 62, 0.84);
 }
 .piece-quality-marker.mistake {
   background: #ffe3d6;
   color: #94381f;
+  --marker-glow: rgba(148, 56, 31, 0.35);
+  --marker-border: rgba(216, 108, 98, 0.84);
 }
 .piece-quality-marker.blunder {
   background: #d91f1f;
   color: #ffffff;
-  transform: scale(1.15);
-  box-shadow: 0 5px 16px rgba(160, 0, 0, 0.45);
+  --marker-glow: rgba(217, 31, 31, 0.5);
+  --marker-border: rgba(226, 92, 92, 0.88);
+  transform: scale(1.08);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+    0 0 13px var(--marker-glow),
+    0 5px 12px rgba(120, 0, 0, 0.35);
 }
 .engine-feedback {
   display: grid;
@@ -413,14 +441,22 @@ body.focus-mode.focus-analyze .analyze-move-list {
     padding-top: 14px;
   }
   .piece-quality-marker {
-    top: 3px;
-    right: 3px;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 4px;
-    font-size: 0.62rem;
-    border-width: 1.5px;
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.22);
+    top: clamp(1px, 0.4vmin, 3px);
+    right: clamp(1px, 0.4vmin, 3px);
+    min-width: clamp(16px, 30%, 24px);
+    max-width: 38%;
+    height: clamp(14px, 30%, 22px);
+    padding: 0 clamp(1px, 0.4vmin, 4px);
+    font-size: clamp(0.44rem, 2vw, 0.66rem);
+    border-width: 1px;
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+      0 0 7px var(--marker-glow),
+      0 2px 6px rgba(0, 0, 0, 0.2);
+  }
+  .piece-quality-marker-icon {
+    width: clamp(8px, 66%, 13px);
+    height: clamp(8px, 66%, 13px);
   }
   .piece-quality-marker.blunder {
     transform: none;
@@ -702,5 +738,84 @@ body.focus-mode.focus-analyze .analyze-move-list {
   to {
     opacity: 0.92;
   }
+}
+
+/* src/client/badge-icon-colors.css */
+.piece-quality-marker {
+  --marker-icon-filter: none;
+  --marker-border: var(--marker-border, #2f6d50);
+}
+.piece-quality-marker.brilliant {
+  --marker-border: color-mix(in srgb, var(--quality-brilliant-fg) 80%, transparent);
+  border-color: color-mix(in srgb, var(--quality-brilliant-fg) 70%, var(--quality-brilliant-bg) 30%) !important;
+}
+.piece-quality-marker.great {
+  --marker-border: color-mix(in srgb, var(--quality-great-fg) 80%, transparent);
+  border-color: color-mix(in srgb, var(--quality-great-fg) 70%, var(--quality-great-bg) 30%) !important;
+}
+.piece-quality-marker.excellent {
+  --marker-border: color-mix(in srgb, var(--quality-excellent-fg) 80%, transparent);
+  border-color: color-mix(in srgb, var(--quality-excellent-fg) 70%, var(--quality-excellent-bg) 30%) !important;
+}
+.piece-quality-marker.good {
+  --marker-border: color-mix(in srgb, var(--quality-good-fg) 80%, transparent);
+  border-color: color-mix(in srgb, var(--quality-good-fg) 70%, var(--quality-good-bg) 30%) !important;
+}
+.piece-quality-marker.inaccuracy {
+  --marker-border: color-mix(in srgb, var(--quality-inaccuracy-fg) 80%, transparent);
+  border-color: color-mix(in srgb, var(--quality-inaccuracy-fg) 70%, var(--quality-inaccuracy-bg) 30%) !important;
+}
+.piece-quality-marker.mistake {
+  --marker-border: color-mix(in srgb, var(--quality-mistake-fg) 80%, transparent);
+  border-color: color-mix(in srgb, var(--quality-mistake-fg) 70%, var(--quality-mistake-bg) 30%) !important;
+}
+.piece-quality-marker.blunder {
+  --marker-border: color-mix(in srgb, var(--quality-blunder-fg) 86%, transparent);
+  border-color: color-mix(in srgb, var(--quality-blunder-fg) 65%, var(--quality-blunder-bg) 35%) !important;
+}
+.piece-quality-marker-icon {
+  filter: var(--marker-icon-filter, none);
+  transition: filter 180ms ease;
+}
+.piece-quality-marker.excellent .piece-quality-marker-icon,
+.piece-quality-marker.good .piece-quality-marker-icon,
+.piece-quality-marker.mistake .piece-quality-marker-icon {
+  filter: var(--marker-icon-filter, none);
+}
+.piece-quality-marker.excellent {
+  --marker-icon-filter: brightness(0) saturate(100%) invert(34%) sepia(64%) saturate(615%) hue-rotate(62deg) brightness(96%) contrast(94%) drop-shadow(0 0 4px rgba(110, 172, 58, 0.5));
+}
+.piece-quality-marker.good {
+  --marker-icon-filter: brightness(0) saturate(100%) invert(56%) sepia(76%) saturate(748%) hue-rotate(108deg) brightness(100%) contrast(102%) drop-shadow(0 0 4px rgba(92, 225, 166, 0.58));
+}
+.piece-quality-marker.mistake {
+  --marker-icon-filter: brightness(0) saturate(100%) invert(63%) sepia(92%) saturate(889%) hue-rotate(322deg) brightness(103%) contrast(101%) drop-shadow(0 0 4px rgba(255, 124, 148, 0.6));
+}
+[data-theme=purple] .piece-quality-marker.excellent {
+  --marker-icon-filter: brightness(0) saturate(100%) invert(48%) sepia(96%) saturate(1963%) hue-rotate(283deg) brightness(104%) contrast(103%) drop-shadow(0 0 4px rgba(255, 84, 214, 0.68));
+}
+[data-theme=purple] .piece-quality-marker.good {
+  --marker-icon-filter: brightness(0) saturate(100%) invert(73%) sepia(64%) saturate(486%) hue-rotate(110deg) brightness(103%) contrast(102%) drop-shadow(0 0 4px rgba(120, 255, 206, 0.62));
+}
+[data-theme=purple] .piece-quality-marker.mistake {
+  --marker-icon-filter: brightness(0) saturate(100%) invert(66%) sepia(95%) saturate(878%) hue-rotate(321deg) brightness(105%) contrast(102%) drop-shadow(0 0 4px rgba(255, 132, 168, 0.64));
+}
+[data-theme=walnut] .piece-quality-marker.excellent {
+  --marker-icon-filter: brightness(0) saturate(100%) invert(63%) sepia(86%) saturate(724%) hue-rotate(350deg) brightness(102%) contrast(98%) drop-shadow(0 0 4px rgba(236, 165, 78, 0.6));
+}
+[data-theme=walnut] .piece-quality-marker.good {
+  --marker-icon-filter: brightness(0) saturate(100%) invert(70%) sepia(81%) saturate(560%) hue-rotate(98deg) brightness(101%) contrast(101%) drop-shadow(0 0 4px rgba(126, 236, 176, 0.58));
+}
+[data-theme=walnut] .piece-quality-marker.mistake {
+  --marker-icon-filter: brightness(0) saturate(100%) invert(62%) sepia(80%) saturate(1025%) hue-rotate(340deg) brightness(102%) contrast(103%) drop-shadow(0 0 4px rgba(238, 128, 98, 0.62));
+}
+[data-theme=refined] .piece-quality-marker.excellent {
+  --marker-icon-filter: brightness(0) saturate(100%) invert(56%) sepia(89%) saturate(985%) hue-rotate(176deg) brightness(100%) contrast(103%) drop-shadow(0 0 4px rgba(96, 190, 255, 0.62));
+}
+[data-theme=refined] .piece-quality-marker.good {
+  --marker-icon-filter: brightness(0) saturate(100%) invert(60%) sepia(61%) saturate(715%) hue-rotate(108deg) brightness(102%) contrast(101%) drop-shadow(0 0 4px rgba(118, 232, 176, 0.6));
+}
+[data-theme=refined] .piece-quality-marker.mistake {
+  --marker-icon-filter: brightness(0) saturate(100%) invert(61%) sepia(76%) saturate(1112%) hue-rotate(324deg) brightness(104%) contrast(103%) drop-shadow(0 0 4px rgba(255, 118, 148, 0.62));
 }
 /*# sourceMappingURL=analyze.css.map */

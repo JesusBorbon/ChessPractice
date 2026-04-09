@@ -560,59 +560,86 @@ button {
 
 .piece-quality-marker {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  min-width: 28px;
-  height: 28px;
-  padding: 0 7px;
-  border-radius: 999px;
+  top: clamp(2px, 0.45vmin, 6px);
+  right: clamp(2px, 0.45vmin, 6px);
+  min-width: clamp(20px, 32%, 30px);
+  max-width: 40%;
+  height: clamp(18px, 32%, 30px);
+  padding: 0 clamp(2px, 0.5vmin, 6px);
+  border-radius: clamp(6px, 0.9vmin, 10px);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.9rem;
+  font-size: clamp(0.5rem, 1.15vmin, 0.84rem);
   font-weight: 800;
   line-height: 1;
-  border: 2px solid rgba(255, 255, 255, 0.98);
-  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.26);
+  border: 1px solid var(--marker-border);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--marker-border) 35%, transparent),
+    0 0 10px var(--marker-glow),
+    0 4px 10px rgba(0, 0, 0, 0.24);
   z-index: 4;
   pointer-events: none;
+}
+
+.piece-quality-marker-icon {
+  width: clamp(10px, 72%, 18px);
+  height: clamp(10px, 72%, 18px);
+  display: block;
 }
 
 .piece-quality-marker.excellent {
   background: var(--quality-excellent-bg);
   color: var(--quality-excellent-fg);
+  --marker-glow: color-mix(in srgb, var(--quality-excellent-fg) 45%, transparent);
+  --marker-border: color-mix(in srgb, var(--quality-excellent-fg) 78%, transparent);
 }
 
 .piece-quality-marker.brilliant {
   background: var(--quality-brilliant-bg);
   color: var(--quality-brilliant-fg);
+  --marker-glow: color-mix(in srgb, var(--quality-brilliant-fg) 45%, transparent);
+  --marker-border: color-mix(in srgb, var(--quality-brilliant-fg) 78%, transparent);
 }
 
 .piece-quality-marker.great {
   background: var(--quality-great-bg);
   color: var(--quality-great-fg);
+  --marker-glow: color-mix(in srgb, var(--quality-great-fg) 45%, transparent);
+  --marker-border: color-mix(in srgb, var(--quality-great-fg) 78%, transparent);
 }
 
 .piece-quality-marker.good {
   background: var(--quality-good-bg);
   color: var(--quality-good-fg);
+  --marker-glow: color-mix(in srgb, var(--quality-good-fg) 45%, transparent);
+  --marker-border: color-mix(in srgb, var(--quality-good-fg) 78%, transparent);
 }
 
 .piece-quality-marker.inaccuracy {
   background: var(--quality-inaccuracy-bg);
   color: var(--quality-inaccuracy-fg);
+  --marker-glow: color-mix(in srgb, var(--quality-inaccuracy-fg) 45%, transparent);
+  --marker-border: color-mix(in srgb, var(--quality-inaccuracy-fg) 78%, transparent);
 }
 
 .piece-quality-marker.mistake {
   background: var(--quality-mistake-bg);
   color: var(--quality-mistake-fg);
+  --marker-glow: color-mix(in srgb, var(--quality-mistake-fg) 45%, transparent);
+  --marker-border: color-mix(in srgb, var(--quality-mistake-fg) 78%, transparent);
 }
 
 .piece-quality-marker.blunder {
   background: var(--quality-blunder-bg);
   color: var(--quality-blunder-fg);
-  transform: scale(1.15);
-  box-shadow: 0 5px 16px rgba(160, 0, 0, 0.45);
+  --marker-glow: color-mix(in srgb, var(--quality-blunder-bg) 55%, transparent);
+  --marker-border: color-mix(in srgb, var(--quality-blunder-bg) 82%, transparent);
+  transform: scale(1.08);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+    0 0 13px var(--marker-glow),
+    0 5px 12px rgba(120, 0, 0, 0.35);
 }
 
 @keyframes check-pulse {
@@ -934,14 +961,25 @@ button {
   }
 
   .piece-quality-marker {
-    top: 3px;
-    right: 3px;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 4px;
-    font-size: 0.62rem;
-    border-width: 1.5px;
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.22);
+    /*poner el color del borde al color actual de la paleta, purple, walnut etc*/
+    border-color: cyan;
+    top: clamp(1px, 0.4vmin, 3px);
+    right: clamp(1px, 0.4vmin, 3px);
+    min-width: clamp(16px, 30%, 24px);
+    max-width: 38%;
+    height: clamp(14px, 30%, 22px);
+    padding: 0 clamp(1px, 0.4vmin, 4px);
+    font-size: clamp(0.44rem, 2vw, 0.66rem);
+    border-width: 1px;
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+      0 0 7px var(--marker-glow),
+      0 2px 6px rgba(0, 0, 0, 0.2);
+  }
+
+  .piece-quality-marker-icon {
+    width: clamp(8px, 66%, 13px);
+    height: clamp(8px, 66%, 13px);
   }
 
   .piece-quality-marker.blunder {

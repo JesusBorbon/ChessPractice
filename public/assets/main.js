@@ -7120,6 +7120,12 @@ var init_styles = __esm({
   }
 });
 
+// src/client/badge-icon-colors.css
+var init_badge_icon_colors = __esm({
+  "src/client/badge-icon-colors.css"() {
+  }
+});
+
 // src/client/arrow-geometry.ts
 function buildArrowPath(start, end, options = {}) {
   const shaftWidth = options.shaftWidth ?? 14;
@@ -7386,6 +7392,7 @@ var require_main = __commonJS({
     init_button_animations();
     init_arrows();
     init_styles();
+    init_badge_icon_colors();
     init_arrow_render();
     init_best_move_arrow();
     init_theme();
@@ -7475,6 +7482,20 @@ var require_main = __commonJS({
       inaccuracy: "Inaccuracy",
       mistake: "Mistake",
       blunder: "Blunder"
+    };
+    var LIVE_CATEGORY_TEXT_SYMBOLS = {
+      brilliant: "!!",
+      great: "!",
+      excellent: "\u2605",
+      good: "\u2713",
+      inaccuracy: "?!",
+      mistake: "x",
+      blunder: "??"
+    };
+    var LIVE_CATEGORY_BADGE_ICON_PATHS = {
+      excellent: "/assets/labelBadges/excellent.svg",
+      good: "/assets/labelBadges/good.svg",
+      mistake: "/assets/labelBadges/mistake.svg"
     };
     var ROOM_CODE_LENGTH = 4;
     var ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
@@ -8870,7 +8891,7 @@ var require_main = __commonJS({
           if (liveGrade && liveMarkerSquare === squareName) {
             const marker = document.createElement("span");
             marker.className = `piece-quality-marker ${liveGrade.category}`;
-            marker.textContent = symbolForLiveCategory(liveGrade.category);
+            appendLiveCategoryMarkerContent(marker, liveGrade.category);
             button.append(marker);
           }
         }
@@ -9297,13 +9318,20 @@ var require_main = __commonJS({
       return { category: "blunder", label: LIVE_CATEGORY_LABELS.blunder };
     }
     function symbolForLiveCategory(category) {
-      if (category === "brilliant") return "!!";
-      if (category === "great") return "!";
-      if (category === "excellent") return "\u2605";
-      if (category === "good") return "\u2713";
-      if (category === "inaccuracy") return "?!";
-      if (category === "mistake") return "x";
-      return "??";
+      return LIVE_CATEGORY_TEXT_SYMBOLS[category];
+    }
+    function appendLiveCategoryMarkerContent(marker, category) {
+      const iconPath = LIVE_CATEGORY_BADGE_ICON_PATHS[category];
+      if (iconPath) {
+        const icon = document.createElement("img");
+        icon.className = "piece-quality-marker-icon";
+        icon.src = iconPath;
+        icon.alt = `${LIVE_CATEGORY_LABELS[category]} move`;
+        icon.draggable = false;
+        marker.append(icon);
+        return;
+      }
+      marker.textContent = symbolForLiveCategory(category);
     }
     function summarizeLiveMove(label, cpl, san) {
       return `${label}: ${san} (${cpl} CPL)`;

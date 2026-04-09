@@ -3505,6 +3505,12 @@ var init_arrows = __esm({
   }
 });
 
+// src/client/badge-icon-colors.css
+var init_badge_icon_colors = __esm({
+  "src/client/badge-icon-colors.css"() {
+  }
+});
+
 // src/client/arrow-geometry.ts
 function buildArrowPath(start, end, options = {}) {
   const shaftWidth = options.shaftWidth ?? 14;
@@ -3765,6 +3771,7 @@ var require_analyze = __commonJS({
     init_engine();
     init_analyze();
     init_arrows();
+    init_badge_icon_colors();
     init_arrow_render();
     init_best_move_arrow();
     init_theme();
@@ -3777,14 +3784,19 @@ var require_analyze = __commonJS({
       mistake: "Mistake",
       blunder: "Blunder"
     };
-    var CATEGORY_SYMBOLS = {
+    var CATEGORY_TEXT_SYMBOLS = {
       brilliant: "!!",
       great: "!",
-      excellent: "\u2605",
+      excellent: "\u{1F44D}",
       good: "\u2713",
       inaccuracy: "?!",
       mistake: "x",
       blunder: "??"
+    };
+    var CATEGORY_BADGE_ICON_PATHS = {
+      excellent: "/assets/labelBadges/excellent.svg",
+      good: "/assets/labelBadges/good.svg",
+      mistake: "/assets/labelBadges/mistake.svg"
     };
     var PIECE_VALUES = {
       p: 100,
@@ -3891,6 +3903,19 @@ var require_analyze = __commonJS({
         return { cp, mate: value, pv };
       }
       return { cp: value, mate: null, pv };
+    }
+    function appendCategoryMarkerContent(marker, category) {
+      const iconPath = CATEGORY_BADGE_ICON_PATHS[category];
+      if (iconPath) {
+        const icon = document.createElement("img");
+        icon.className = "piece-quality-marker-icon";
+        icon.src = iconPath;
+        icon.alt = `${CATEGORY_LABELS[category]} move`;
+        icon.draggable = false;
+        marker.append(icon);
+        return;
+      }
+      marker.textContent = CATEGORY_TEXT_SYMBOLS[category];
     }
     var _audioCache = {};
     function playSound(name) {
@@ -4495,7 +4520,7 @@ var require_analyze = __commonJS({
           if (selectedMoveEval && selectedMoveTo === sq) {
             const marker = document.createElement("span");
             marker.className = `piece-quality-marker ${selectedMoveEval.category}`;
-            marker.textContent = CATEGORY_SYMBOLS[selectedMoveEval.category];
+            appendCategoryMarkerContent(marker, selectedMoveEval.category);
             marker.title = `${selectedMoveEval.label} (${selectedMoveEval.cpl} CPL)`;
             btn.append(marker);
           }

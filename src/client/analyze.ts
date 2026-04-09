@@ -2,6 +2,7 @@ import { Chess, Square, Move, PieceSymbol } from "chess.js";
 import { buildSquareList, isLightSquare, SquareName, BoardOrientation } from "../../engine";
 import "./analyze.css";
 import "./arrows.css";
+import "./badge-icon-colors.css";
 import { buildArrowLayerMarkup } from "./arrow-render";
 import { BestMoveArrow, parseBestMoveArrow } from "./best-move-arrow";
 import { mountThemeSwitcher } from "./theme";
@@ -42,14 +43,20 @@ const CATEGORY_LABELS: Record<MoveCategory, string> = {
   blunder: "Blunder",
 };
 
-const CATEGORY_SYMBOLS: Record<MoveCategory, string> = {
+const CATEGORY_TEXT_SYMBOLS: Record<MoveCategory, string> = {
   brilliant: "!!",
   great: "!",
-  excellent: "★",
+  excellent: "👍",
   good: "✓",
   inaccuracy: "?!",
   mistake: "x",
   blunder: "??",
+};
+
+const CATEGORY_BADGE_ICON_PATHS: Partial<Record<MoveCategory, string>> = {
+  excellent: "/assets/labelBadges/excellent.svg",
+  good: "/assets/labelBadges/good.svg",
+  mistake: "/assets/labelBadges/mistake.svg",
 };
 
 const PIECE_VALUES: Record<string, number> = {
@@ -179,6 +186,21 @@ function parseInfoLine(line: string): { cp: number; mate: number | null; pv: str
   }
 
   return { cp: value, mate: null, pv };
+}
+
+function appendCategoryMarkerContent(marker: HTMLElement, category: MoveCategory): void {
+  const iconPath = CATEGORY_BADGE_ICON_PATHS[category];
+  if (iconPath) {
+    const icon = document.createElement("img");
+    icon.className = "piece-quality-marker-icon";
+    icon.src = iconPath;
+    icon.alt = `${CATEGORY_LABELS[category]} move`;
+    icon.draggable = false;
+    marker.append(icon);
+    return;
+  }
+
+  marker.textContent = CATEGORY_TEXT_SYMBOLS[category];
 }
 
 // ── Sound ────────────────────────────────────────────────────────────────────
@@ -886,7 +908,7 @@ function renderBoard(): void {
       if (selectedMoveEval && selectedMoveTo === sq) {
         const marker = document.createElement("span");
         marker.className = `piece-quality-marker ${selectedMoveEval.category}`;
-        marker.textContent = CATEGORY_SYMBOLS[selectedMoveEval.category];
+        appendCategoryMarkerContent(marker, selectedMoveEval.category);
         marker.title = `${selectedMoveEval.label} (${selectedMoveEval.cpl} CPL)`;
         btn.append(marker);
       }
