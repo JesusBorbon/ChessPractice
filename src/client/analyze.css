@@ -692,7 +692,7 @@ body.focus-mode.focus-analyze .analyze-move-list {
   height: 25%;
   background-color: var(--legal-dot-color, rgba(60, 255, 120, 0.7));
   border-radius: 50%;
-  pointer-events: none; /* CRITICAL: Allows drag-and-drop to pass through the dot */
+  pointer-events: none; 
   z-index: 5;
   box-shadow: 0 0 12px 2px var(--legal-dot-color, rgba(60, 255, 120, 0.7));
   transition: transform 0.1s ease-out;

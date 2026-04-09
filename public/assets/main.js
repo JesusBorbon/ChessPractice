@@ -8104,6 +8104,16 @@ var require_main = __commonJS({
       }
     });
     confirmNoBtn.addEventListener("click", () => toggleConfirmModal(false));
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !confirmDialog.hidden) {
+        toggleConfirmModal(false);
+      }
+    });
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !confirmDialog.hidden) {
+        confirmYesBtn.click();
+      }
+    });
     confirmYesBtn.addEventListener("click", () => {
       const action = currentModalAction;
       document.body.classList.remove("modal-open");

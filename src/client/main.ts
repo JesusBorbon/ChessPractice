@@ -961,8 +961,21 @@ backToMenuButton.addEventListener("click", () => {
   }
 });
 
-// Modal button listeners
 confirmNoBtn.addEventListener("click", () => toggleConfirmModal(false));
+
+// close the modal without confirming:
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !confirmDialog.hidden) {
+    toggleConfirmModal(false);
+  }
+});
+
+// confirm with "Enter" key when the modal is open:
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !confirmDialog.hidden) {
+    confirmYesBtn.click();
+  }
+});
 
 // main.ts - Update inside the confirmYesBtn listener
 confirmYesBtn.addEventListener("click", () => {
