@@ -1350,8 +1350,7 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
   }
 
   if (snapshot.moveCount > previousMoveCount) {
-    clearArrows();
-    boardRefreshForcedByArrowClear = true;
+    boardRefreshForcedByArrowClear = clearArrows();
   }
 
   // Sync selection
@@ -2088,15 +2087,16 @@ function toggleArrow(from: Square, to: Square): void {
   arrowAnnotations.add(key);
 }
 
-function clearArrows(): void {
+function clearArrows(): boolean {
   if (arrowAnnotations.size === 0 && squareAnnotations.size === 0) {
-    return;
+    return false;
   }
 
   arrowAnnotations.clear();
   squareAnnotations.clear();
   renderArrows();
   requestBoardRefresh(true);
+  return true;
 }
 
 function isSnapshotGameOver(snapshot: RoomSnapshot): boolean {

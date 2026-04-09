@@ -8399,8 +8399,7 @@ var require_main = __commonJS({
         spawnBloodSplatter(snapshot.lastMove.to, capturedPiece ?? "p");
       }
       if (snapshot.moveCount > previousMoveCount) {
-        clearArrows();
-        boardRefreshForcedByArrowClear = true;
+        boardRefreshForcedByArrowClear = clearArrows();
       }
       if (state.selectedSquare) {
         const currentPiece = chess.get(state.selectedSquare);
@@ -8951,12 +8950,13 @@ var require_main = __commonJS({
     }
     function clearArrows() {
       if (arrowAnnotations.size === 0 && squareAnnotations.size === 0) {
-        return;
+        return false;
       }
       arrowAnnotations.clear();
       squareAnnotations.clear();
       renderArrows();
       requestBoardRefresh(true);
+      return true;
     }
     function isSnapshotGameOver(snapshot) {
       return snapshot.checkmate || snapshot.draw || snapshot.winner !== null;
