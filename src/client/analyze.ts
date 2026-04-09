@@ -33,12 +33,6 @@ type MoveAnalysis = {
   afterCp: number;
 };
 
-type MovePaceProfile = {
-  tempo: "fast" | "normal" | "slow";
-  speedMultiplier: number;
-  easing: string;
-};
-
 const CATEGORY_LABELS: Record<MoveCategory, string> = {
   brilliant: "Brilliant",
   great: "Great",
@@ -266,7 +260,6 @@ let variationBranchPly: number | null = null;
 let variationReturnCursor = 0;
 let analysisProgressCompleted = 0;
 let analysisProgressTotal = 0;
-let moveTimestampHistory: number[] = [];
 let lastQualityCalloutCursor = -1;
 let activeQualityCallout: HTMLDivElement | null = null;
 let focusMode = false;
@@ -274,6 +267,13 @@ let legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
 let animationStyle: "smooth" | "epic" = (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth";
 let bloodFxEnabled = localStorage.getItem("chess-blood-fx") === "on";
 let lastCheckFlashKey: string | null = null;
+
+const SMOOTH_MOVE_DURATION_MS = 620;
+const EPIC_MOVE_DURATION_MS = {
+  smash: 860,
+  spin: 760,
+  slide: 620,
+} as const;
 
 
 // ── Mount ──────────────────────────────────────────────────────────────────────
@@ -536,10 +536,29 @@ function goTo(index: number): void {
     return;
   }
 
+  const previousCursor = cursor;
   const clamped = Math.max(0, Math.min(fenHistory.length - 1, index));
   if (clamped === cursor) return;
   cursor = clamped;
   chess.load(fenHistory[cursor]!);
+
+  const traversedMove =
+    cursor > previousCursor
+      ? moveHistory[cursor - 1]
+      : moveHistory[previousCursor - 1];
+
+  if (chess.isCheckmate() || chess.isStalemate() || chess.isDraw()) {
+    playSound("gameEndOrCheckmate");
+  } else if (chess.isCheck()) {
+    playSound("checkMove");
+  } else if (traversedMove?.flags.includes("k") || traversedMove?.flags.includes("q")) {
+    playSound("castle");
+  } else if (traversedMove?.captured) {
+    playSound("capture");
+  } else {
+    playSound("move-self");
+  }
+
   clearSelection();
   render();
 }
@@ -845,7 +864,6 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
   if (bloodFxEnabled && move.captured) {
     spawnBloodSplatter(to, move.captured as PieceSymbol);
   }
-  registerMoveTimestamp();
   render();
   void analyzeLatestMove();
 }
@@ -971,11 +989,10 @@ function renderBoard(): void {
   }
 
   boardEl.replaceChildren(fragment);
-  const paceProfile = getMovePaceProfile();
-  if (animationStyle === "epic" && paceProfile.tempo !== "fast") {
-    animateLastMoveEpic(lastMove, paceProfile);
+  if (animationStyle === "epic") {
+    animateLastMoveEpic(lastMove);
   } else {
-    animateLastMove(lastMove, paceProfile);
+    animateLastMove(lastMove);
   }
 
   if (
@@ -1148,52 +1165,6 @@ function updateAnalysisLoadingOverlay(): void {
   document.body.classList.toggle("analysis-loading-active", fullAnalysisInProgress);
 }
 
-function getMovePaceProfile(): MovePaceProfile {
-  if (moveTimestampHistory.length < 2) {
-    return {
-      tempo: "normal",
-      speedMultiplier: 1,
-      easing: "cubic-bezier(0.22, 0.61, 0.36, 1)",
-    };
-  }
-
-  const recentTimestamps = moveTimestampHistory.slice(-6);
-  const intervals: number[] = [];
-  for (let index = 1; index < recentTimestamps.length; index += 1) {
-    intervals.push(recentTimestamps[index]! - recentTimestamps[index - 1]!);
-  }
-
-  const averageMs = intervals.reduce((sum, current) => sum + current, 0) / intervals.length;
-  if (averageMs < 1700) {
-    return {
-      tempo: "fast",
-      speedMultiplier: 0.72,
-      easing: "cubic-bezier(0.32, 0.06, 0.66, 1)",
-    };
-  }
-
-  if (averageMs > 4800) {
-    return {
-      tempo: "slow",
-      speedMultiplier: 1.24,
-      easing: "cubic-bezier(0.16, 0.84, 0.2, 1)",
-    };
-  }
-
-  return {
-    tempo: "normal",
-    speedMultiplier: 1,
-    easing: "cubic-bezier(0.22, 0.61, 0.36, 1)",
-  };
-}
-
-function registerMoveTimestamp(nowMs = Date.now()): void {
-  moveTimestampHistory.push(nowMs);
-  if (moveTimestampHistory.length > 20) {
-    moveTimestampHistory = moveTimestampHistory.slice(-20);
-  }
-}
-
 function getCheckedKingSquare(): Square | null {
   if (!chess.isCheck()) {
     return null;
@@ -1211,7 +1182,7 @@ function getCheckedKingSquare(): Square | null {
   return null;
 }
 
-function animateLastMove(lastMove: Move | undefined, paceProfile: MovePaceProfile): void {
+function animateLastMove(lastMove: Move | undefined): void {
   if (!lastMove || cursor === 0) {
     lastAnimatedMoveKey = null;
     return;
@@ -1293,18 +1264,18 @@ function animateLastMove(lastMove: Move | undefined, paceProfile: MovePaceProfil
 
   const animation = ghostPiece.animate(
     [
-      { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0)`, offset: 0 },
-      { transform: "translate3d(-50%, -50%, 0)", offset: 1 },
+      { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0)` },
+      { transform: "translate3d(-50%, -50%, 0)" },
     ],
-    {
-      duration: Math.max(360, Math.round(900 * paceProfile.speedMultiplier)),
-      easing: paceProfile.easing,
-    },
+    { duration: SMOOTH_MOVE_DURATION_MS, easing: "cubic-bezier(0.22, 0.61, 0.36, 1)" },
   );
 
   activeGhostAnimation = animation;
 
-  animation.addEventListener("finish", () => {
+  let finalized = false;
+  const onEnd = () => {
+    if (finalized) return;
+    finalized = true;
     ghostPiece.remove();
     destinationPiece.style.visibility = "";
     if (activeGhostAnimation === animation) {
@@ -1316,24 +1287,13 @@ function animateLastMove(lastMove: Move | undefined, paceProfile: MovePaceProfil
         renderBoard();
       }
     }
-  });
+  };
 
-  animation.addEventListener("cancel", () => {
-    ghostPiece.remove();
-    destinationPiece.style.visibility = "";
-    if (activeGhostAnimation === animation) {
-      activeGhostAnimation = null;
-      activeGhostNode = null;
-      activeGhostDestinationPiece = null;
-      if (pendingBoardRefresh) {
-        pendingBoardRefresh = false;
-        renderBoard();
-      }
-    }
-  });
+  animation.addEventListener("finish", onEnd);
+  animation.addEventListener("cancel", onEnd);
 }
 
-function animateLastMoveEpic(lastMove: Move | undefined, paceProfile: MovePaceProfile): void {
+function animateLastMoveEpic(lastMove: Move | undefined): void {
   if (!lastMove || cursor === 0) {
     lastAnimatedMoveKey = null;
     return;
@@ -1388,41 +1348,6 @@ function animateLastMoveEpic(lastMove: Move | undefined, paceProfile: MovePacePr
   const pieceRect = destinationPiece.getBoundingClientRect();
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
 
-  const randomRotation = Math.random() * 300 + 220;
-  const randomScale = Math.random() * 0.4 + 0.8;
-  const spinDirection = Math.random() > 0.5 ? 1 : -1;
-  const settleWobble = Math.random() * 14 + 8;
-  const profileRoll = Math.random();
-  const motionProfile = profileRoll < 0.38 ? "spin" : profileRoll < 0.76 ? "inertia" : "tilt";
-  const hasFlip = motionProfile === "spin" ? Math.random() > 0.45 : motionProfile === "inertia" ? Math.random() > 0.92 : false;
-
-  const spinStart = motionProfile === "spin"
-    ? randomRotation * 0.22 * spinDirection
-    : motionProfile === "inertia"
-      ? settleWobble * 1.25 * spinDirection
-      : settleWobble * 0.85 * spinDirection;
-  const spinMid = motionProfile === "spin"
-    ? randomRotation * 0.46 * spinDirection
-    : motionProfile === "inertia"
-      ? settleWobble * 0.72 * spinDirection
-      : -settleWobble * 0.92 * spinDirection;
-  const spinPeak = motionProfile === "spin"
-    ? randomRotation * 0.68 * spinDirection
-    : motionProfile === "inertia"
-      ? settleWobble * 1.05 * spinDirection
-      : settleWobble * 0.55 * spinDirection;
-
-  const pullX = motionProfile === "inertia"
-    ? deltaX * (0.14 + Math.random() * 0.1) * (Math.random() > 0.5 ? 1 : -1)
-    : deltaX * (0.02 + Math.random() * 0.05) * (Math.random() > 0.5 ? 1 : -1);
-  const paceJumpScale = paceProfile.tempo === "slow" ? 1.18 : paceProfile.tempo === "fast" ? 0.82 : 1;
-  const pullY = (motionProfile === "inertia"
-    ? 20 + Math.random() * 22
-    : 8 + Math.random() * 12) * paceJumpScale;
-  const jumpA = (motionProfile === "inertia" ? 62 + Math.random() * 36 : 74 + Math.random() * 44) * paceJumpScale;
-  const jumpB = (motionProfile === "spin" ? 100 + Math.random() * 32 : 84 + Math.random() * 28) * paceJumpScale;
-  const duration = Math.max(420, Math.round((900 + Math.floor(Math.random() * 170)) * paceProfile.speedMultiplier));
-
   Object.assign(ghostPiece.style, {
     position: "absolute",
     left: `${endX}px`,
@@ -1450,47 +1375,63 @@ function animateLastMoveEpic(lastMove: Move | undefined, paceProfile: MovePacePr
   activeGhostDestinationPiece = destinationPiece;
   document.body.append(ghostPiece);
 
-  const keyframes = [
-    {
-      transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) rotateX(0deg) scale(1)`,
-      filter: "brightness(1)",
-      offset: 0,
-    },
-    {
-      transform: `translate3d(calc(-50% + ${deltaX * 0.58 + pullX}px), calc(-50% + ${deltaY * 0.58 - jumpA}px), 0) rotateZ(${spinStart}deg) rotateX(${hasFlip ? 180 : 0}deg) scale(${Math.max(0.88, randomScale)})`,
-      filter: "brightness(1.1)",
-      offset: 0.4,
-    },
-    {
-      transform: `translate3d(calc(-50% + ${deltaX * 0.84 - pullX * 0.35}px), calc(-50% + ${deltaY * 0.84 - jumpB + pullY * 0.2}px), 0) rotateZ(${spinMid}deg) rotateX(${hasFlip ? 360 : 0}deg) scale(${Math.max(0.82, randomScale - 0.12)})`,
-      filter: "brightness(1.2)",
-      offset: 0.65,
-    },
-    {
-      transform: `translate3d(calc(-50% + ${pullX * 0.22}px), calc(-50% + ${6 + pullY * 0.15}px), 0) rotateZ(${spinPeak}deg) rotateX(${hasFlip ? 12 : 0}deg) scale(1.04)`,
-      filter: "brightness(1.06)",
-      offset: 0.86,
-    },
-    {
-      transform: `translate3d(-50%, calc(-50% - 2px), 0) rotateZ(${-(settleWobble * 0.55) * spinDirection}deg) rotateX(${hasFlip ? -6 : 0}deg) scale(0.985)`,
-      filter: "brightness(1.02)",
-      offset: 0.94,
-    },
-    {
-      transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) rotateX(0deg) scale(1)",
-      filter: "brightness(1)",
-      offset: 1,
-    },
-  ];
+  const aura = "";
+
+  const roll = Math.random();
+  let profile = "slide";
+  if (roll < 0.3) profile = "smash";
+  else if (roll < 0.6) profile = "spin";
+
+  let keyframes: Keyframe[] = [];
+  let duration: number = EPIC_MOVE_DURATION_MS.spin;
+
+  if (profile === "smash") {
+    duration = EPIC_MOVE_DURATION_MS.smash;
+    const jump = 90 + Math.random() * 40;
+    const scale = 1.25 + Math.random() * 0.15;
+    const spin = (Math.random() * 15 + 10) * (Math.random() > 0.5 ? 1 : -1);
+
+    keyframes = [
+      { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) scale(1)`, filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 0 },
+      { transform: `translate3d(calc(-50% + ${deltaX * 0.15}px), calc(-50% + ${-jump}px), 0) rotateZ(${spin}deg) scale(${scale})`, filter: `brightness(1.4) drop-shadow(0 40px 25px rgba(0,0,0,0.45)) ${aura}`, offset: 0.65 },
+      { transform: `translate3d(-50%, calc(-50% + 8px), 0) rotateZ(${-(spin * 0.5)}deg) scale(0.92)`, filter: `brightness(1.05) drop-shadow(0 2px 4px rgba(0,0,0,0.7)) ${aura}`, offset: 0.92 },
+      { transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) scale(1)", filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 1 },
+    ];
+  }
+  else if (profile === "spin") {
+    duration = EPIC_MOVE_DURATION_MS.spin;
+    const jump = 40 + Math.random() * 20;
+    const spinDir = Math.random() > 0.5 ? 360 : -360;
+
+    keyframes = [
+      { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg)`, filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 0 },
+      { transform: `translate3d(calc(-50% + ${deltaX * 0.4}px), calc(-50% + ${-jump}px), 0) rotateZ(${spinDir * 0.6}deg)`, filter: `brightness(1.2) drop-shadow(0 15px 15px rgba(0,0,0,0.3)) ${aura}`, offset: 0.5 },
+      { transform: `translate3d(-50%, -50%, 0) rotateZ(${spinDir}deg)`, filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 1 },
+    ];
+  }
+  else {
+    duration = EPIC_MOVE_DURATION_MS.slide;
+    const tilt = deltaX < 0 ? 18 : (deltaX > 0 ? -18 : 0);
+
+    keyframes = [
+      { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) scale(1)`, filter: `brightness(1) ${aura}`, offset: 0 },
+      { transform: `translate3d(calc(-50% + ${deltaX * 0.4}px), calc(-50% + ${deltaY * 0.4 - 10}px), 0) rotateZ(${tilt}deg) scale(1.05)`, filter: `brightness(1.1) drop-shadow(0 8px 10px rgba(0,0,0,0.25)) ${aura}`, offset: 0.4 },
+      { transform: `translate3d(-50%, calc(-50% + 4px), 0) rotateZ(${-(tilt * 0.3)}deg) scale(0.95)`, filter: `brightness(1) drop-shadow(0 2px 2px rgba(0,0,0,0.5)) ${aura}`, offset: 0.9 },
+      { transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) scale(1)", filter: `brightness(1) ${aura}`, offset: 1 },
+    ];
+  }
 
   const animation = ghostPiece.animate(keyframes, {
     duration,
-    easing: paceProfile.easing,
+    easing: profile === "slide" ? "cubic-bezier(0.1, 0.9, 0.2, 1)" : "cubic-bezier(0.22, 0.61, 0.36, 1)",
   });
 
   activeGhostAnimation = animation;
 
-  animation.addEventListener("finish", () => {
+  let finalized = false;
+  const onEnd = () => {
+    if (finalized) return;
+    finalized = true;
     ghostPiece.remove();
     destinationPiece.style.visibility = "";
     if (activeGhostAnimation === animation) {
@@ -1502,21 +1443,10 @@ function animateLastMoveEpic(lastMove: Move | undefined, paceProfile: MovePacePr
         renderBoard();
       }
     }
-  });
+  };
 
-  animation.addEventListener("cancel", () => {
-    ghostPiece.remove();
-    destinationPiece.style.visibility = "";
-    if (activeGhostAnimation === animation) {
-      activeGhostAnimation = null;
-      activeGhostNode = null;
-      activeGhostDestinationPiece = null;
-      if (pendingBoardRefresh) {
-        pendingBoardRefresh = false;
-        renderBoard();
-      }
-    }
-  });
+  animation.addEventListener("finish", onEnd);
+  animation.addEventListener("cancel", onEnd);
 }
 
 function requestBoardRefresh(): void {

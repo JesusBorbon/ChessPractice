@@ -922,7 +922,7 @@ button {
   margin-top: 18px;
   padding: 12px 22px;
   background: var(--accent-strong);
-  color: #fffdf8;
+  color: #fff8f8;
   border-radius: 999px;
   font-weight: 700;
   text-decoration: none;
@@ -1296,7 +1296,7 @@ button {
   transition: none !important;
 }
 .square.legal::before {
-  background: rgba(25, 35, 32, 0.18);
+  background: rgba(255, 0, 64, 0.18);
   inset: 37%;
   border-radius: 50%;
 }
