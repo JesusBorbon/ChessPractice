@@ -761,6 +761,38 @@
   border-color: rgba(217, 31, 31, 0.4) !important;
 }
 
+/* src/client/arrows.css */
+.board-arrows,
+.analyze-arrows {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 3;
+}
+.board-arrow,
+.analyze-arrow {
+  fill: rgba(219, 52, 52, 0.9);
+}
+.board-arrow-preview,
+.analyze-arrow-preview {
+  animation: arrow-flow 520ms linear infinite;
+}
+.board-arrow-best-move,
+.analyze-arrow-best-move {
+  fill: rgba(51, 197, 115, 0.95);
+  filter: drop-shadow(0 0 6px rgba(51, 197, 115, 0.42));
+}
+@keyframes arrow-flow {
+  from {
+    opacity: 0.6;
+  }
+  to {
+    opacity: 0.92;
+  }
+}
+
 /* src/client/styles.css */
 .capture-blood-pool {
   position: absolute;
@@ -1152,17 +1184,6 @@ button {
 .pregame-placeholder:not([hidden]) ~ .board-wrap,
 .pregame-placeholder:not([hidden]) ~ .board-caption {
   display: none;
-}
-.board-arrows {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: 3;
-}
-.board-arrow-preview {
-  animation: arrow-flow 520ms linear infinite;
 }
 .board {
   width: 100%;
@@ -1708,14 +1729,6 @@ body.focus-mode.focus-multiplayer .focus-chip {
   min-width: 66px;
   padding: 5px 10px;
   font-size: 0.78rem;
-}
-@keyframes arrow-flow {
-  from {
-    opacity: 0.58;
-  }
-  to {
-    opacity: 0.78;
-  }
 }
 .square.legal::after {
   content: "";

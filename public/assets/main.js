@@ -7108,9 +7108,122 @@ var init_button_animations = __esm({
   }
 });
 
+// src/client/arrows.css
+var init_arrows = __esm({
+  "src/client/arrows.css"() {
+  }
+});
+
 // src/client/styles.css
 var init_styles = __esm({
   "src/client/styles.css"() {
+  }
+});
+
+// src/client/arrow-geometry.ts
+function buildArrowPath(start, end, options = {}) {
+  const shaftWidth = options.shaftWidth ?? 14;
+  const headLength = options.headLength ?? 56;
+  const headWidth = options.headWidth ?? 46;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 1) {
+    return "";
+  }
+  const ux = dx / length;
+  const uy = dy / length;
+  const px = -uy;
+  const py = ux;
+  const safeHeadLength = Math.min(headLength, Math.max(18, length * 0.45));
+  const shaftHalf = shaftWidth / 2;
+  const headHalf = headWidth / 2;
+  const baseX = end.x - ux * safeHeadLength;
+  const baseY = end.y - uy * safeHeadLength;
+  const tailLeftX = start.x + px * shaftHalf;
+  const tailLeftY = start.y + py * shaftHalf;
+  const tailRightX = start.x - px * shaftHalf;
+  const tailRightY = start.y - py * shaftHalf;
+  const baseLeftX = baseX + px * shaftHalf;
+  const baseLeftY = baseY + py * shaftHalf;
+  const baseRightX = baseX - px * shaftHalf;
+  const baseRightY = baseY - py * shaftHalf;
+  const wingLeftX = baseX + px * headHalf;
+  const wingLeftY = baseY + py * headHalf;
+  const wingRightX = baseX - px * headHalf;
+  const wingRightY = baseY - py * headHalf;
+  return [
+    `M ${tailLeftX.toFixed(2)} ${tailLeftY.toFixed(2)}`,
+    `L ${baseLeftX.toFixed(2)} ${baseLeftY.toFixed(2)}`,
+    `L ${wingLeftX.toFixed(2)} ${wingLeftY.toFixed(2)}`,
+    `L ${end.x.toFixed(2)} ${end.y.toFixed(2)}`,
+    `L ${wingRightX.toFixed(2)} ${wingRightY.toFixed(2)}`,
+    `L ${baseRightX.toFixed(2)} ${baseRightY.toFixed(2)}`,
+    `L ${tailRightX.toFixed(2)} ${tailRightY.toFixed(2)}`,
+    `A ${shaftHalf.toFixed(2)} ${shaftHalf.toFixed(2)} 0 0 0 ${tailLeftX.toFixed(2)} ${tailLeftY.toFixed(2)}`,
+    "Z"
+  ].join(" ");
+}
+var init_arrow_geometry = __esm({
+  "src/client/arrow-geometry.ts"() {
+    "use strict";
+  }
+});
+
+// src/client/arrow-render.ts
+function buildArrowLayerMarkup(params) {
+  const { variant, annotations, preview, bestMove, squareCenter } = params;
+  const baseClass = `${variant}-arrow`;
+  const annotationMarkup = [...annotations].map((entry) => {
+    const [from, to] = entry.split("-");
+    const pathData = buildArrowPath(squareCenter(from), squareCenter(to));
+    if (!pathData) {
+      return "";
+    }
+    return `<path class="${baseClass}" d="${pathData}"/>`;
+  }).join("");
+  const previewMarkup = preview ? (() => {
+    const pathData = buildArrowPath(squareCenter(preview.from), preview.pointer);
+    if (!pathData) {
+      return "";
+    }
+    return `<path class="${baseClass} ${baseClass}-preview" d="${pathData}"/>`;
+  })() : "";
+  const bestMoveMarkup = bestMove ? (() => {
+    const pathData = buildArrowPath(squareCenter(bestMove.from), squareCenter(bestMove.to));
+    if (!pathData) {
+      return "";
+    }
+    return `<path class="${baseClass} ${baseClass}-best-move" d="${pathData}"/>`;
+  })() : "";
+  return `${annotationMarkup}${bestMoveMarkup}${previewMarkup}`;
+}
+var init_arrow_render = __esm({
+  "src/client/arrow-render.ts"() {
+    "use strict";
+    init_arrow_geometry();
+  }
+});
+
+// src/client/best-move-arrow.ts
+function parseBestMoveArrow(uci) {
+  const normalized = (uci ?? "").trim().toLowerCase();
+  if (!UCI_MOVE_PATTERN.test(normalized)) {
+    return null;
+  }
+  return {
+    from: normalized.slice(0, 2),
+    to: normalized.slice(2, 4)
+  };
+}
+function canShowBestMoveArrow(isAnalysisEnabled, isGameOver) {
+  return isAnalysisEnabled || isGameOver;
+}
+var UCI_MOVE_PATTERN;
+var init_best_move_arrow = __esm({
+  "src/client/best-move-arrow.ts"() {
+    "use strict";
+    UCI_MOVE_PATTERN = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
   }
 });
 
@@ -7271,7 +7384,10 @@ var require_main = __commonJS({
     init_engine();
     init_theme_palette();
     init_button_animations();
+    init_arrows();
     init_styles();
+    init_arrow_render();
+    init_best_move_arrow();
     init_theme();
     var PIECES = {
       wp: "/pieces/wP.svg",
@@ -7318,7 +7434,9 @@ var require_main = __commonJS({
       gameMode: "multiplayer",
       viewCursor: null,
       trailFxEnabled: localStorage.getItem("chess-trail-fx") === "on",
-      legalMovesEnabled: localStorage.getItem("chess-legal-moves") !== "off"
+      legalMovesEnabled: localStorage.getItem("chess-legal-moves") !== "off",
+      bestMoveArrow: null,
+      bestMoveArrowFen: null
     };
     window.state = state;
     var lastAnimatedMoveKey = null;
@@ -7329,6 +7447,7 @@ var require_main = __commonJS({
     var pendingBoardRefresh = false;
     var liveAnalyzer = null;
     var liveAnalysisToken = 0;
+    var bestMoveArrowToken = 0;
     var currentModalAction = null;
     var animationFinished = true;
     var animatingToSquare = null;
@@ -7882,6 +8001,7 @@ var require_main = __commonJS({
         if (state.snapshot.analysis.enabled) {
           void maybeRunLiveAnalysis(state.snapshot);
         }
+        void maybeUpdateBestMoveArrow(state.snapshot);
         render();
       } else {
         socket.emit("analysis:toggle");
@@ -8077,9 +8197,7 @@ var require_main = __commonJS({
             zIndex: "9999",
             width: `${btn.offsetWidth}px`,
             height: `${btn.offsetHeight}px`,
-            transform: "translate(-50%, -50%) scale(1.18)",
-            filter: "drop-shadow(0 12px 20px rgba(0, 0, 0, 0.4))",
-            transition: "transform 0.05s ease-out",
+            transform: "translate(-50%, -50%)",
             opacity: "1"
           });
           document.body.append(ptrDragNode);
@@ -8255,8 +8373,18 @@ var require_main = __commonJS({
     });
     socket.on("room:state", (snapshot) => {
       lastRoomStateReceivedAtMs = Date.now();
+      const previousSnapshot = state.snapshot;
       const previousMoveCount = state.snapshot?.moveCount ?? 0;
+      const previousTurn = state.snapshot?.turn ?? null;
+      const previousStatus = state.snapshot?.status ?? "";
+      const previousWinner = state.snapshot?.winner ?? null;
+      const previousCheckmate = state.snapshot?.checkmate ?? false;
+      const previousDraw = state.snapshot?.draw ?? false;
+      const previousAnalysisEnabled = state.snapshot?.analysis.enabled ?? false;
+      const previousSelectedSquare = state.selectedSquare;
+      const previousLegalTargetsKey = state.legalTargets.join(",");
       const previousFen = chess.fen();
+      let boardRefreshForcedByArrowClear = false;
       state.snapshot = snapshot;
       chess.load(snapshot.fen);
       const isActuallyNewMove = _lastPlayedMoveCount !== -1 && snapshot.moveCount > _lastPlayedMoveCount;
@@ -8272,6 +8400,7 @@ var require_main = __commonJS({
       }
       if (snapshot.moveCount > previousMoveCount) {
         clearArrows();
+        boardRefreshForcedByArrowClear = true;
       }
       if (state.selectedSquare) {
         const currentPiece = chess.get(state.selectedSquare);
@@ -8300,12 +8429,17 @@ var require_main = __commonJS({
           }
         }
       }
-      requestBoardRefresh();
+      const legalTargetsChanged = previousLegalTargetsKey !== state.legalTargets.join(",");
+      const boardStateChanged = previousFen !== snapshot.fen || previousMoveCount !== snapshot.moveCount || previousTurn !== snapshot.turn || previousStatus !== snapshot.status || previousWinner !== snapshot.winner || previousCheckmate !== snapshot.checkmate || previousDraw !== snapshot.draw || previousAnalysisEnabled !== snapshot.analysis.enabled || previousSelectedSquare !== state.selectedSquare || legalTargetsChanged || previousSnapshot === null;
+      if (!boardRefreshForcedByArrowClear && boardStateChanged) {
+        requestBoardRefresh();
+      }
       renderSession();
       renderMoves();
       updateCaption();
       updateFocusHud();
       void maybeRunLiveAnalysis(snapshot);
+      void maybeUpdateBestMoveArrow(snapshot);
     });
     socket.on("room:error", (payload) => {
       suppressAnimationForMove = null;
@@ -8714,46 +8848,6 @@ var require_main = __commonJS({
         board.append(overlay);
       }
     }
-    function buildArrowPath(start, end, shaftWidth = 10, headLength = 46, headWidth = 38) {
-      const dx = end.x - start.x;
-      const dy = end.y - start.y;
-      const length = Math.hypot(dx, dy);
-      if (length < 1) {
-        return "";
-      }
-      const ux = dx / length;
-      const uy = dy / length;
-      const px = -uy;
-      const py = ux;
-      const safeHeadLength = Math.min(headLength, Math.max(18, length * 0.45));
-      const shaftHalf = shaftWidth / 2;
-      const headHalf = headWidth / 2;
-      const baseX = end.x - ux * safeHeadLength;
-      const baseY = end.y - uy * safeHeadLength;
-      const tailLeftX = start.x + px * shaftHalf;
-      const tailLeftY = start.y + py * shaftHalf;
-      const tailRightX = start.x - px * shaftHalf;
-      const tailRightY = start.y - py * shaftHalf;
-      const baseLeftX = baseX + px * shaftHalf;
-      const baseLeftY = baseY + py * shaftHalf;
-      const baseRightX = baseX - px * shaftHalf;
-      const baseRightY = baseY - py * shaftHalf;
-      const wingLeftX = baseX + px * headHalf;
-      const wingLeftY = baseY + py * headHalf;
-      const wingRightX = baseX - px * headHalf;
-      const wingRightY = baseY - py * headHalf;
-      return [
-        `M ${tailLeftX.toFixed(2)} ${tailLeftY.toFixed(2)}`,
-        `L ${baseLeftX.toFixed(2)} ${baseLeftY.toFixed(2)}`,
-        `L ${wingLeftX.toFixed(2)} ${wingLeftY.toFixed(2)}`,
-        `L ${end.x.toFixed(2)} ${end.y.toFixed(2)}`,
-        `L ${wingRightX.toFixed(2)} ${wingRightY.toFixed(2)}`,
-        `L ${baseRightX.toFixed(2)} ${baseRightY.toFixed(2)}`,
-        `L ${tailRightX.toFixed(2)} ${tailRightY.toFixed(2)}`,
-        `A ${shaftHalf.toFixed(2)} ${shaftHalf.toFixed(2)} 0 0 0 ${tailLeftX.toFixed(2)} ${tailLeftY.toFixed(2)}`,
-        "Z"
-      ].join(" ");
-    }
     function getSquareFromPoint(clientX, clientY) {
       const node2 = document.elementFromPoint(clientX, clientY);
       const squareButton = node2?.closest(".square");
@@ -8864,27 +8958,61 @@ var require_main = __commonJS({
       renderArrows();
       requestBoardRefresh(true);
     }
+    function isSnapshotGameOver(snapshot) {
+      return snapshot.checkmate || snapshot.draw || snapshot.winner !== null;
+    }
+    function clearBestMoveArrow() {
+      if (!state.bestMoveArrow && !state.bestMoveArrowFen) {
+        return;
+      }
+      bestMoveArrowToken += 1;
+      state.bestMoveArrow = null;
+      state.bestMoveArrowFen = null;
+      renderArrows();
+    }
+    async function maybeUpdateBestMoveArrow(snapshot) {
+      if (!snapshot) {
+        clearBestMoveArrow();
+        return;
+      }
+      const shouldShow = canShowBestMoveArrow(snapshot.analysis.enabled, isSnapshotGameOver(snapshot));
+      if (!shouldShow) {
+        clearBestMoveArrow();
+        return;
+      }
+      if (state.bestMoveArrowFen === snapshot.fen) {
+        return;
+      }
+      const token = ++bestMoveArrowToken;
+      try {
+        if (!liveAnalyzer) {
+          liveAnalyzer = new StockfishBridge();
+        }
+        const evaluation = await liveAnalyzer.evaluateFen(snapshot.fen, 10);
+        if (token !== bestMoveArrowToken) {
+          return;
+        }
+        state.bestMoveArrow = parseBestMoveArrow(evaluation.bestMove);
+        state.bestMoveArrowFen = snapshot.fen;
+      } catch {
+        if (token !== bestMoveArrowToken) {
+          return;
+        }
+        state.bestMoveArrow = null;
+        state.bestMoveArrowFen = snapshot.fen;
+      }
+      renderArrows();
+    }
     function renderArrows() {
-      const arrows = [...arrowAnnotations].map((entry) => {
-        const [from, to] = entry.split("-");
-        const start = squareCenter(from);
-        const end = squareCenter(to);
-        const pathData = buildArrowPath(start, end, 10, 46, 38);
-        if (!pathData) {
-          return "";
-        }
-        return `<path class="board-arrow" d="${pathData}" fill="rgba(219, 52, 52, 0.88)"/>`;
-      }).join("");
-      const previewArrow = arrowDragFrom && arrowDragPointer ? (() => {
-        const start = squareCenter(arrowDragFrom);
-        const end = arrowDragPointer;
-        const pathData = buildArrowPath(start, end, 10, 46, 38);
-        if (!pathData) {
-          return "";
-        }
-        return `<path class="board-arrow board-arrow-preview" d="${pathData}" fill="rgba(219, 52, 52, 0.88)"/>`;
-      })() : "";
-      arrowLayer.innerHTML = `${arrows}${previewArrow}`;
+      const snapshot = state.snapshot;
+      const bestMove = snapshot && canShowBestMoveArrow(snapshot.analysis.enabled, isSnapshotGameOver(snapshot)) ? state.bestMoveArrow : null;
+      arrowLayer.innerHTML = buildArrowLayerMarkup({
+        variant: "board",
+        annotations: arrowAnnotations,
+        preview: arrowDragFrom && arrowDragPointer ? { from: arrowDragFrom, pointer: arrowDragPointer } : null,
+        bestMove,
+        squareCenter
+      });
     }
     function syncBoardInteractionState() {
       for (const squareButton of board.querySelectorAll(".square")) {

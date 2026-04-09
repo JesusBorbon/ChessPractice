@@ -1,6 +1,9 @@
 import { Chess, Square, Move, PieceSymbol } from "chess.js";
 import { buildSquareList, isLightSquare, SquareName, BoardOrientation } from "../../engine";
 import "./analyze.css";
+import "./arrows.css";
+import { buildArrowLayerMarkup } from "./arrow-render";
+import { BestMoveArrow, parseBestMoveArrow } from "./best-move-arrow";
 import { mountThemeSwitcher } from "./theme";
 
 type PromotionPiece = "q" | "r" | "b" | "n";
@@ -548,7 +551,6 @@ boardEl.addEventListener("pointermove", (event) => {
     const btn = boardEl.querySelector<HTMLButtonElement>(`[data-square="${ptrDragFrom}"]`);
     const piece = btn?.querySelector<HTMLElement>(".piece");
     if (piece && btn) {
-      const cs = window.getComputedStyle(piece);
       const pieceRect = piece.getBoundingClientRect();
       ptrDragNode = piece.cloneNode(true) as HTMLElement;
       Object.assign(ptrDragNode.style, {
@@ -559,11 +561,6 @@ boardEl.addEventListener("pointermove", (event) => {
         height: `${pieceRect.height}px`,
         margin: "0",
         lineHeight: "1",
-        fontSize: cs.fontSize,
-        fontFamily: cs.fontFamily,
-        color: cs.color,
-        textShadow: cs.textShadow,
-        filter: cs.filter,
         transformOrigin: "center center",
         transition: "none",
       });
@@ -1454,60 +1451,6 @@ function spawnBloodSplatter(square: Square, capturedPiece: PieceSymbol): void {
   }, 3200 + Math.random() * 1800);
 }
 
-function buildArrowPath(
-  start: { x: number; y: number },
-  end: { x: number; y: number },
-  shaftWidth = 10,
-  headLength = 46,
-  headWidth = 34,
-): string {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const length = Math.hypot(dx, dy);
-  if (length < 1) {
-    return "";
-  }
-
-  const ux = dx / length;
-  const uy = dy / length;
-  const px = -uy;
-  const py = ux;
-
-  const safeHeadLength = Math.min(headLength, Math.max(18, length * 0.45));
-  const shaftHalf = shaftWidth / 2;
-  const headHalf = headWidth / 2;
-
-  const baseX = end.x - ux * safeHeadLength;
-  const baseY = end.y - uy * safeHeadLength;
-
-  const tailLeftX = start.x + px * shaftHalf;
-  const tailLeftY = start.y + py * shaftHalf;
-  const tailRightX = start.x - px * shaftHalf;
-  const tailRightY = start.y - py * shaftHalf;
-
-  const baseLeftX = baseX + px * shaftHalf;
-  const baseLeftY = baseY + py * shaftHalf;
-  const baseRightX = baseX - px * shaftHalf;
-  const baseRightY = baseY - py * shaftHalf;
-
-  const wingLeftX = baseX + px * headHalf;
-  const wingLeftY = baseY + py * headHalf;
-  const wingRightX = baseX - px * headHalf;
-  const wingRightY = baseY - py * headHalf;
-
-  return [
-    `M ${tailLeftX.toFixed(2)} ${tailLeftY.toFixed(2)}`,
-    `L ${baseLeftX.toFixed(2)} ${baseLeftY.toFixed(2)}`,
-    `L ${wingLeftX.toFixed(2)} ${wingLeftY.toFixed(2)}`,
-    `L ${end.x.toFixed(2)} ${end.y.toFixed(2)}`,
-    `L ${wingRightX.toFixed(2)} ${wingRightY.toFixed(2)}`,
-    `L ${baseRightX.toFixed(2)} ${baseRightY.toFixed(2)}`,
-    `L ${tailRightX.toFixed(2)} ${tailRightY.toFixed(2)}`,
-    `A ${shaftHalf.toFixed(2)} ${shaftHalf.toFixed(2)} 0 0 0 ${tailLeftX.toFixed(2)} ${tailLeftY.toFixed(2)}`,
-    "Z",
-  ].join(" ");
-}
-
 function boardPointFromClient(clientX: number, clientY: number): { x: number; y: number } {
   const rect = boardEl.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) {
@@ -1525,33 +1468,25 @@ function boardPointFromClient(clientX: number, clientY: number): { x: number; y:
   };
 }
 
+function currentBestMoveArrow(): BestMoveArrow | null {
+  const analyzedMove = analysisByPly[cursor + 1];
+  if (!analyzedMove?.bestMove) {
+    return null;
+  }
+
+  return parseBestMoveArrow(analyzedMove.bestMove);
+}
+
 function renderArrows(): void {
-  const arrows = [...arrowAnnotations]
-    .map((entry) => {
-      const [from, to] = entry.split("-") as [Square, Square];
-      const start = squareCenter(from);
-      const end = squareCenter(to);
-      const pathData = buildArrowPath(start, end, 10, 46, 38);
-      if (!pathData) {
-        return "";
-      }
-      return `<path class="analyze-arrow" d="${pathData}" fill="rgba(219, 52, 52, 0.72)"/>`;
-    })
-    .join("");
-
-  const previewArrow = arrowDragFrom && arrowDragPointer
-    ? (() => {
-        const start = squareCenter(arrowDragFrom);
-        const end = arrowDragPointer;
-        const pathData = buildArrowPath(start, end, 10, 46, 38);
-        if (!pathData) {
-          return "";
-        }
-        return `<path class="analyze-arrow analyze-arrow-preview" d="${pathData}" fill="rgba(219, 52, 52, 0.72)"/>`;
-      })()
-    : "";
-
-  arrowLayer.innerHTML = `${arrows}${previewArrow}`;
+  arrowLayer.innerHTML = buildArrowLayerMarkup({
+    variant: "analyze",
+    annotations: arrowAnnotations,
+    preview: arrowDragFrom && arrowDragPointer
+      ? { from: arrowDragFrom, pointer: arrowDragPointer }
+      : null,
+    bestMove: currentBestMoveArrow(),
+    squareCenter,
+  });
 }
 
 async function runGameAnalysis(): Promise<void> {

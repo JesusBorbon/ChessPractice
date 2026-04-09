@@ -40,27 +40,6 @@
 .analyze-board-panel {
   padding: 22px;
 }
-.analyze-arrows {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: 3;
-}
-.analyze-arrow-preview {
-  stroke-dasharray: 22 14;
-  animation: arrow-flow 520ms linear infinite;
-  filter: drop-shadow(0 0 5px rgba(219, 52, 52, 0.32));
-}
-@keyframes arrow-flow {
-  from {
-    stroke-dashoffset: 36;
-  }
-  to {
-    stroke-dashoffset: 0;
-  }
-}
 .analyze-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -686,5 +665,37 @@ body.focus-mode.focus-analyze .analyze-move-list {
 .square.dragging::after,
 .square.dragging::before {
   display: none !important;
+}
+
+/* src/client/arrows.css */
+.board-arrows,
+.analyze-arrows {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 3;
+}
+.board-arrow,
+.analyze-arrow {
+  fill: rgba(219, 52, 52, 0.9);
+}
+.board-arrow-preview,
+.analyze-arrow-preview {
+  animation: arrow-flow 520ms linear infinite;
+}
+.board-arrow-best-move,
+.analyze-arrow-best-move {
+  fill: rgba(51, 197, 115, 0.95);
+  filter: drop-shadow(0 0 6px rgba(51, 197, 115, 0.42));
+}
+@keyframes arrow-flow {
+  from {
+    opacity: 0.6;
+  }
+  to {
+    opacity: 0.92;
+  }
 }
 /*# sourceMappingURL=analyze.css.map */

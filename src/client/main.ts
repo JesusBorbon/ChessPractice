@@ -4,7 +4,10 @@ import { io } from "socket.io-client";
 import { BoardOrientation, SquareName, buildSquareList, isLightSquare } from "../../engine";
 import "./theme-palette.css";
 import "./button-animations.css";
+import "./arrows.css";
 import "./styles.css";
+import { buildArrowLayerMarkup } from "./arrow-render";
+import { BestMoveArrow, canShowBestMoveArrow, parseBestMoveArrow } from "./best-move-arrow";
 import { mountThemeSwitcher } from "./theme";
 
 type PlayerRole = "w" | "b";
@@ -110,6 +113,8 @@ type AppState = {
   viewCursor: number | null;
   trailFxEnabled: boolean; 
   legalMovesEnabled: boolean;
+  bestMoveArrow: BestMoveArrow | null;
+  bestMoveArrowFen: string | null;
 };
 
 type EngineEval = {
@@ -171,6 +176,8 @@ const state: AppState = {
   viewCursor: null,
   trailFxEnabled: localStorage.getItem("chess-trail-fx") === "on",
   legalMovesEnabled: localStorage.getItem("chess-legal-moves") !== "off",
+  bestMoveArrow: null,
+  bestMoveArrowFen: null,
 };
 
 (window as any).state = state;
@@ -183,6 +190,7 @@ let activeGhostDestinationPiece: HTMLElement | null = null;
 let pendingBoardRefresh = false;
 let liveAnalyzer: StockfishBridge | null = null;
 let liveAnalysisToken = 0;
+let bestMoveArrowToken = 0;
 let currentModalAction: "leave" | "resign" | "bot" | null = null;
 let animationFinished = true; 
 let animatingToSquare: Square | null = null;
@@ -834,6 +842,7 @@ liveAnalysisButton.addEventListener("click", () => {
       // Run analysis on the current position immediately
       void maybeRunLiveAnalysis(state.snapshot);
     }
+    void maybeUpdateBestMoveArrow(state.snapshot);
     render();
   } else {
     // Standard multiplayer voting logic
@@ -1080,16 +1089,13 @@ board.addEventListener("pointermove", (event) => {
       
       ptrDragNode = document.createElement("img");
       ptrDragNode.src = spritePath;
-      // Clean drop-shadow for picking up pieces
       Object.assign(ptrDragNode.style, {
         position: "fixed",
         pointerEvents: "none",
         zIndex: "9999",
         width: `${btn.offsetWidth}px`, 
         height: `${btn.offsetHeight}px`,
-        transform: "translate(-50%, -50%) scale(1.18)", 
-        filter: "drop-shadow(0 12px 20px rgba(0, 0, 0, 0.4))", 
-        transition: "transform 0.05s ease-out", 
+        transform: "translate(-50%, -50%)",
         opacity: "1" 
       });
       
@@ -1311,8 +1317,18 @@ socket.on("session:left", () => {
 
 socket.on("room:state", (snapshot: RoomSnapshot) => {
   lastRoomStateReceivedAtMs = Date.now();
+  const previousSnapshot = state.snapshot;
   const previousMoveCount = state.snapshot?.moveCount ?? 0;
+  const previousTurn = state.snapshot?.turn ?? null;
+  const previousStatus = state.snapshot?.status ?? "";
+  const previousWinner = state.snapshot?.winner ?? null;
+  const previousCheckmate = state.snapshot?.checkmate ?? false;
+  const previousDraw = state.snapshot?.draw ?? false;
+  const previousAnalysisEnabled = state.snapshot?.analysis.enabled ?? false;
+  const previousSelectedSquare = state.selectedSquare;
+  const previousLegalTargetsKey = state.legalTargets.join(",");
   const previousFen = chess.fen();
+  let boardRefreshForcedByArrowClear = false;
   
   state.snapshot = snapshot;
   
@@ -1335,6 +1351,7 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
 
   if (snapshot.moveCount > previousMoveCount) {
     clearArrows();
+    boardRefreshForcedByArrowClear = true;
   }
 
   // Sync selection
@@ -1373,9 +1390,27 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
     }
   }
 
-  // Never force-cancel active animations on routine room ticks.
-  // If an animation is active, requestBoardRefresh() queues a safe render.
-  requestBoardRefresh(); 
+  const legalTargetsChanged = previousLegalTargetsKey !== state.legalTargets.join(",");
+  const boardStateChanged =
+    previousFen !== snapshot.fen ||
+    previousMoveCount !== snapshot.moveCount ||
+    previousTurn !== snapshot.turn ||
+    previousStatus !== snapshot.status ||
+    previousWinner !== snapshot.winner ||
+    previousCheckmate !== snapshot.checkmate ||
+    previousDraw !== snapshot.draw ||
+    previousAnalysisEnabled !== snapshot.analysis.enabled ||
+    previousSelectedSquare !== state.selectedSquare ||
+    legalTargetsChanged ||
+    previousSnapshot === null;
+
+  // Keep board work limited to actual board-state changes.
+  // This avoids iOS/Safari-class flicker when only clocks/session text update.
+  if (!boardRefreshForcedByArrowClear && boardStateChanged) {
+    // Never force-cancel active animations on routine room ticks.
+    // If an animation is active, requestBoardRefresh() queues a safe render.
+    requestBoardRefresh();
+  }
 
   renderSession();
   renderMoves();
@@ -1383,6 +1418,7 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
   updateFocusHud();
 
   void maybeRunLiveAnalysis(snapshot);
+  void maybeUpdateBestMoveArrow(snapshot);
 });
 
 socket.on("room:error", (payload: { message: string }) => {
@@ -1932,60 +1968,6 @@ function renderBoard(): void {
   }
 }
 
-function buildArrowPath(
-  start: { x: number; y: number },
-  end: { x: number; y: number },
-  shaftWidth = 10,
-  headLength = 46,
-  headWidth = 38,
-): string {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const length = Math.hypot(dx, dy);
-  if (length < 1) {
-    return "";
-  }
-
-  const ux = dx / length;
-  const uy = dy / length;
-  const px = -uy;
-  const py = ux;
-
-  const safeHeadLength = Math.min(headLength, Math.max(18, length * 0.45));
-  const shaftHalf = shaftWidth / 2;
-  const headHalf = headWidth / 2;
-
-  const baseX = end.x - ux * safeHeadLength;
-  const baseY = end.y - uy * safeHeadLength;
-
-  const tailLeftX = start.x + px * shaftHalf;
-  const tailLeftY = start.y + py * shaftHalf;
-  const tailRightX = start.x - px * shaftHalf;
-  const tailRightY = start.y - py * shaftHalf;
-
-  const baseLeftX = baseX + px * shaftHalf;
-  const baseLeftY = baseY + py * shaftHalf;
-  const baseRightX = baseX - px * shaftHalf;
-  const baseRightY = baseY - py * shaftHalf;
-
-  const wingLeftX = baseX + px * headHalf;
-  const wingLeftY = baseY + py * headHalf;
-  const wingRightX = baseX - px * headHalf;
-  const wingRightY = baseY - py * headHalf;
-
-  return [
-    `M ${tailLeftX.toFixed(2)} ${tailLeftY.toFixed(2)}`,
-    `L ${baseLeftX.toFixed(2)} ${baseLeftY.toFixed(2)}`,
-    `L ${wingLeftX.toFixed(2)} ${wingLeftY.toFixed(2)}`,
-    `L ${end.x.toFixed(2)} ${end.y.toFixed(2)}`,
-    `L ${wingRightX.toFixed(2)} ${wingRightY.toFixed(2)}`,
-    `L ${baseRightX.toFixed(2)} ${baseRightY.toFixed(2)}`,
-    `L ${tailRightX.toFixed(2)} ${tailRightY.toFixed(2)}`,
-    `A ${shaftHalf.toFixed(2)} ${shaftHalf.toFixed(2)} 0 0 0 ${tailLeftX.toFixed(2)} ${tailLeftY.toFixed(2)}`,
-    "Z",
-  ].join(" ");
-}
-
 function getSquareFromPoint(clientX: number, clientY: number): Square | null {
   const node = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
   const squareButton = node?.closest<HTMLButtonElement>(".square");
@@ -2117,33 +2099,78 @@ function clearArrows(): void {
   requestBoardRefresh(true);
 }
 
+function isSnapshotGameOver(snapshot: RoomSnapshot): boolean {
+  return snapshot.checkmate || snapshot.draw || snapshot.winner !== null;
+}
+
+function clearBestMoveArrow(): void {
+  if (!state.bestMoveArrow && !state.bestMoveArrowFen) {
+    return;
+  }
+
+  bestMoveArrowToken += 1;
+  state.bestMoveArrow = null;
+  state.bestMoveArrowFen = null;
+  renderArrows();
+}
+
+async function maybeUpdateBestMoveArrow(snapshot: RoomSnapshot | null): Promise<void> {
+  if (!snapshot) {
+    clearBestMoveArrow();
+    return;
+  }
+
+  const shouldShow = canShowBestMoveArrow(snapshot.analysis.enabled, isSnapshotGameOver(snapshot));
+  if (!shouldShow) {
+    clearBestMoveArrow();
+    return;
+  }
+
+  if (state.bestMoveArrowFen === snapshot.fen) {
+    return;
+  }
+
+  const token = ++bestMoveArrowToken;
+
+  try {
+    if (!liveAnalyzer) {
+      liveAnalyzer = new StockfishBridge();
+    }
+
+    const evaluation = await liveAnalyzer.evaluateFen(snapshot.fen, 10);
+    if (token !== bestMoveArrowToken) {
+      return;
+    }
+
+    state.bestMoveArrow = parseBestMoveArrow(evaluation.bestMove);
+    state.bestMoveArrowFen = snapshot.fen;
+  } catch {
+    if (token !== bestMoveArrowToken) {
+      return;
+    }
+
+    state.bestMoveArrow = null;
+    state.bestMoveArrowFen = snapshot.fen;
+  }
+
+  renderArrows();
+}
+
 function renderArrows(): void {
-  const arrows = [...arrowAnnotations]
-    .map((entry) => {
-      const [from, to] = entry.split("-") as [Square, Square];
-      const start = squareCenter(from);
-      const end = squareCenter(to);
-      const pathData = buildArrowPath(start, end, 10, 46, 38);
-      if (!pathData) {
-        return "";
-      }
-      return `<path class="board-arrow" d="${pathData}" fill="rgba(219, 52, 52, 0.88)"/>`;
-    })
-    .join("");
+  const snapshot = state.snapshot;
+  const bestMove = snapshot && canShowBestMoveArrow(snapshot.analysis.enabled, isSnapshotGameOver(snapshot))
+    ? state.bestMoveArrow
+    : null;
 
-  const previewArrow = arrowDragFrom && arrowDragPointer
-    ? (() => {
-        const start = squareCenter(arrowDragFrom);
-        const end = arrowDragPointer;
-        const pathData = buildArrowPath(start, end, 10, 46, 38);
-        if (!pathData) {
-          return "";
-        }
-        return `<path class="board-arrow board-arrow-preview" d="${pathData}" fill="rgba(219, 52, 52, 0.88)"/>`;
-      })()
-    : "";
-
-  arrowLayer.innerHTML = `${arrows}${previewArrow}`;
+  arrowLayer.innerHTML = buildArrowLayerMarkup({
+    variant: "board",
+    annotations: arrowAnnotations,
+    preview: arrowDragFrom && arrowDragPointer
+      ? { from: arrowDragFrom, pointer: arrowDragPointer }
+      : null,
+    bestMove,
+    squareCenter,
+  });
 }
 
 function syncBoardInteractionState(): void {
