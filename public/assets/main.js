@@ -8016,6 +8016,18 @@ var require_main = __commonJS({
       socket.emit("game:undo:respond", { accept: false });
     });
     labelsOnlyButton.addEventListener("click", () => {
+      if (state.gameMode === "bot" && state.snapshot) {
+        state.snapshot.analysis.enabled = !state.snapshot.analysis.enabled;
+        if (state.snapshot.analysis.enabled) {
+          void maybeRunLiveAnalysis(state.snapshot);
+        } else {
+          state.lastAnalyzedMoveKey = null;
+          state.liveMoveGrades = {};
+          clearBestMoveArrow();
+        }
+        render();
+        return;
+      }
       if (state.gameMode !== "multiplayer") {
         return;
       }
@@ -8585,8 +8597,8 @@ var require_main = __commonJS({
       seatCard.hidden = !hasRoom;
       summaryCard.hidden = !isGameActive;
       movesCard.hidden = !isGameActive;
-      liveAnalysisButton.hidden = !isGameActive || !canVote || state.gameMode === "multiplayer" && analysisLocked;
-      labelsOnlyButton.hidden = !isGameActive || !canVote || state.gameMode !== "multiplayer";
+      liveAnalysisButton.hidden = !isGameActive || !canVote || state.gameMode === "bot" || state.gameMode === "multiplayer" && analysisLocked;
+      labelsOnlyButton.hidden = !isGameActive || !canVote;
       undoRequestButton.hidden = !isGameActive || !canVote || state.gameMode !== "multiplayer";
       undoDeclineButton.hidden = true;
       rematchButton.hidden = !gameEnded || !canVote || !hasRoom;
@@ -8686,9 +8698,8 @@ var require_main = __commonJS({
       const undoDescription = snapshot.undo.pending ? ` Undo request pending (${snapshot.undo.requester === "w" ? "White" : snapshot.undo.requester === "b" ? "Black" : "Unknown"}).` : "";
       summaryText.textContent = `${roleDescription} ${snapshot.status}${lastMoveDescription}${rematchDescription}${undoDescription}`.trim();
       if (state.gameMode === "bot") {
-        liveAnalysisButton.disabled = false;
-        liveAnalysisButton.textContent = snapshot.analysis.enabled ? "Disable analysis" : "Enable analysis";
-        labelsOnlyButton.hidden = true;
+        labelsOnlyButton.textContent = snapshot.analysis.enabled ? "Move badges: On" : "Move badges: Off";
+        labelsOnlyButton.disabled = false;
       } else {
         const seatedPlayers = Number(snapshot.players.whiteConnected) + Number(snapshot.players.blackConnected);
         liveAnalysisButton.disabled = seatedPlayers < 2 || !canVote;
@@ -9046,6 +9057,9 @@ var require_main = __commonJS({
     function isLabelsOnlyMode(snapshot) {
       return isLiveAnalysisLocked(snapshot) && snapshot.analysis.labelsOnly;
     }
+    function isBotBadgesMode(snapshot) {
+      return state.gameMode === "bot" && snapshot.analysis.enabled;
+    }
     function clearBestMoveArrow() {
       if (!state.bestMoveArrow && !state.bestMoveArrowFen) {
         return;
@@ -9060,7 +9074,7 @@ var require_main = __commonJS({
         clearBestMoveArrow();
         return;
       }
-      if (isLiveAnalysisLocked(snapshot)) {
+      if (isLiveAnalysisLocked(snapshot) || isBotBadgesMode(snapshot)) {
         clearBestMoveArrow();
         return;
       }
@@ -9094,7 +9108,7 @@ var require_main = __commonJS({
     }
     function renderArrows() {
       const snapshot = state.snapshot;
-      const bestMove = snapshot && !isLiveAnalysisLocked(snapshot) && canShowBestMoveArrow(snapshot.analysis.enabled, isSnapshotGameOver(snapshot)) ? state.bestMoveArrow : null;
+      const bestMove = snapshot && !isLiveAnalysisLocked(snapshot) && !isBotBadgesMode(snapshot) && canShowBestMoveArrow(snapshot.analysis.enabled, isSnapshotGameOver(snapshot)) ? state.bestMoveArrow : null;
       arrowLayer.innerHTML = buildArrowLayerMarkup({
         variant: "board",
         annotations: arrowAnnotations,
