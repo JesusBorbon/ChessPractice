@@ -20,7 +20,7 @@
   --marker-border: color-mix(in srgb, var(--quality-excellent-fg) 80%, transparent);
   border-color: color-mix(in srgb, var(--quality-excellent-fg) 70%, var(--quality-excellent-bg) 30%) !important;
 }
-
+  
 .piece-quality-marker.good {
   --marker-border: color-mix(in srgb, var(--quality-good-fg) 80%, transparent);
   border-color: color-mix(in srgb, var(--quality-good-fg) 70%, var(--quality-good-bg) 30%) !important;
