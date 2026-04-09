@@ -225,6 +225,17 @@ let analysisByPly: Array<MoveAnalysis | undefined> = [];
 let analysisRunId = 0;
 let analysisInProgress = false;
 let fullAnalysisInProgress = false;
+let bestMovesEnabled = localStorage.getItem("chess-analyze-best-moves") !== "off";
+let liveBestMoveArrow: BestMoveArrow | null = null;
+let liveBestMoveArrowFen: string | null = null;
+let liveBestMoveRequestFen: string | null = null;
+let bestMoveArrowToken = 0;
+let gameLineFenHistory: string[] = [...fenHistory];
+let gameLineMoveHistory: Move[] = [...moveHistory];
+let gameLineAnalysisByPly: Array<MoveAnalysis | undefined> = [];
+let isVariationMode = false;
+let variationBranchPly: number | null = null;
+let variationReturnCursor = 0;
 let focusMode = false;
 let legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
 let animationStyle: "smooth" | "epic" = (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth";
@@ -250,6 +261,8 @@ app.innerHTML = `
         <button class="btn-ghost"   id="undoBtn">Undo move</button>
         <button class="btn-ghost"   id="copyFenBtn">Copy FEN</button>
         <button class="btn-ghost"   id="loadFenBtn">Load FEN</button>
+        <button class="btn-ghost"   id="bestMovesToggleBtn">Best Moves: On</button>
+        <button class="btn-primary" id="returnGameLineBtn" hidden>Return to Game Line</button>
         <button class="btn-primary" id="analyzeBtn">Analyze game</button>
         <button class="btn-ghost"   id="stopAnalyzeBtn">Stop</button>
       </div>
@@ -348,6 +361,8 @@ const navNext    = q<HTMLButtonElement>("#navNext");
 const navLast    = q<HTMLButtonElement>("#navLast");
 const analyzeBtn = q<HTMLButtonElement>("#analyzeBtn");
 const stopAnalyzeBtn = q<HTMLButtonElement>("#stopAnalyzeBtn");
+const bestMovesToggleButton = q<HTMLButtonElement>("#bestMovesToggleBtn");
+const returnGameLineButton = q<HTMLButtonElement>("#returnGameLineBtn");
 const focusModeButton = q<HTMLButtonElement>("#focusModeBtn");
 
 
@@ -359,6 +374,8 @@ q<HTMLButtonElement>("#resetBtn").addEventListener("click", () => {
   moveHistory = [];
   cursor = 0;
   analysisByPly = [];
+  clearVariationMode();
+  syncGameLineFromCurrent();
   clearSelection();
   render();
 });
@@ -404,12 +421,31 @@ q<HTMLButtonElement>("#loadFenBtn").addEventListener("click", () => {
     moveHistory = [];
     cursor = 0;
     analysisByPly = [];
+    clearVariationMode();
+    syncGameLineFromCurrent();
     clearSelection();
     render();
     showToast("Position loaded.");
   } catch {
     showToast("Invalid FEN — position was not changed.");
   }
+});
+
+bestMovesToggleButton.addEventListener("click", () => {
+  bestMovesEnabled = !bestMovesEnabled;
+  localStorage.setItem("chess-analyze-best-moves", bestMovesEnabled ? "on" : "off");
+
+  if (!bestMovesEnabled) {
+    clearLiveBestMoveArrow();
+  }
+
+  updateBestMovesToggleButton();
+  void maybeUpdateLiveBestMoveArrow(true);
+  renderArrows();
+});
+
+returnGameLineButton.addEventListener("click", () => {
+  returnToGameLine();
 });
 
 analyzeBtn.addEventListener("click", () => {
@@ -683,13 +719,6 @@ moveList.addEventListener("click", (e) => {
 
 // ── Core move logic ────────────────────────────────────────────────────────────
 function onSquareClick(square: Square): void {
-  // In navigation mode (not at the live end), moves are not allowed
-  if (cursor < fenHistory.length - 1) {
-    // Allow selecting for visual feedback but not moving
-    showToast("Navigate to the last move to continue playing.");
-    return;
-  }
-
   if (chess.isGameOver()) return;
 
   const piece = chess.get(square);
@@ -729,6 +758,9 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
   cancelAnalysis();
   const move = chess.move({ from, to, promotion });
   if (!move) return;
+  if (cursor < fenHistory.length - 1) {
+    enterVariationMode(cursor);
+  }
   // Truncate any "future" history if we somehow branched (guard, normally not needed)
   fenHistory = fenHistory.slice(0, cursor + 1);
   moveHistory = moveHistory.slice(0, cursor);
@@ -736,6 +768,9 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
   fenHistory.push(chess.fen());
   analysisByPly = analysisByPly.slice(0, moveHistory.length);
   cursor = fenHistory.length - 1;
+  if (!isVariationMode) {
+    syncGameLineFromCurrent();
+  }
   clearArrows();
   clearSelection();
   // Play sound based on outcome
@@ -771,7 +806,7 @@ function tryMoveFromTo(from: Square, to: Square): void {
 }
 
 function canStartMoveFrom(square: Square): boolean {
-  if (cursor < fenHistory.length - 1 || chess.isGameOver()) {
+  if (chess.isGameOver()) {
     return false;
   }
 
@@ -801,6 +836,9 @@ function render(): void {
   renderStatus();
   renderSide();
   renderNav();
+  updateBestMovesToggleButton();
+  updateVariationToolbar();
+  void maybeUpdateLiveBestMoveArrow();
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -924,9 +962,11 @@ function renderStatus(): void {
     lastCheckFlashKey = null;
   }
 
-  statusBar.textContent = cursor < fenHistory.length - 1
+  const withMoveCursor = cursor < fenHistory.length - 1
     ? `[Move ${cursor} of ${fenHistory.length - 1}] ${text}`
     : text;
+
+  statusBar.textContent = isVariationMode ? `Variation — ${withMoveCursor}` : withMoveCursor;
 }
 
 function renderSide(): void {
@@ -1348,6 +1388,53 @@ function clearArrows(): void {
   renderBoard(); // Forces the board to clear the red backgrounds
 }
 
+function clearLiveBestMoveArrow(): void {
+  bestMoveArrowToken += 1;
+  liveBestMoveArrow = null;
+  liveBestMoveArrowFen = null;
+  liveBestMoveRequestFen = null;
+}
+
+async function maybeUpdateLiveBestMoveArrow(force = false): Promise<void> {
+  if (!bestMovesEnabled) {
+    return;
+  }
+
+  const currentFen = chess.fen();
+  if (!force && liveBestMoveArrowFen === currentFen && liveBestMoveArrow) {
+    return;
+  }
+
+  if (liveBestMoveRequestFen === currentFen) {
+    return;
+  }
+
+  liveBestMoveRequestFen = currentFen;
+  const token = ++bestMoveArrowToken;
+
+  try {
+    const evaluation = await ensureStockfish().evaluateFen(currentFen, Math.max(8, analysisDepth));
+    if (token !== bestMoveArrowToken) {
+      return;
+    }
+
+    liveBestMoveArrow = parseBestMoveArrow(evaluation.bestMove);
+    liveBestMoveArrowFen = currentFen;
+  } catch {
+    if (token !== bestMoveArrowToken) {
+      return;
+    }
+
+    liveBestMoveArrow = null;
+    liveBestMoveArrowFen = currentFen;
+  } finally {
+    if (token === bestMoveArrowToken) {
+      liveBestMoveRequestFen = null;
+      renderArrows();
+    }
+  }
+}
+
 function getSquareFromPoint(clientX: number, clientY: number): Square | null {
   const node = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
   const squareButton = node?.closest<HTMLButtonElement>(".square");
@@ -1469,12 +1556,66 @@ function boardPointFromClient(clientX: number, clientY: number): { x: number; y:
 }
 
 function currentBestMoveArrow(): BestMoveArrow | null {
-  const analyzedMove = analysisByPly[cursor + 1];
-  if (!analyzedMove?.bestMove) {
+  if (!bestMovesEnabled || liveBestMoveArrowFen !== chess.fen()) {
     return null;
   }
 
-  return parseBestMoveArrow(analyzedMove.bestMove);
+  return liveBestMoveArrow;
+}
+
+function updateBestMovesToggleButton(): void {
+  bestMovesToggleButton.textContent = bestMovesEnabled ? "Best Moves: On" : "Best Moves: Off";
+  bestMovesToggleButton.classList.toggle("best-moves-enabled", bestMovesEnabled);
+}
+
+function updateVariationToolbar(): void {
+  returnGameLineButton.hidden = !isVariationMode;
+}
+
+function enterVariationMode(branchPly: number): void {
+  if (!isVariationMode) {
+    gameLineFenHistory = [...fenHistory];
+    gameLineMoveHistory = [...moveHistory];
+    gameLineAnalysisByPly = [...analysisByPly];
+  }
+
+  isVariationMode = true;
+  variationBranchPly = branchPly;
+  variationReturnCursor = Math.min(gameLineFenHistory.length - 1, branchPly + 1);
+}
+
+function clearVariationMode(): void {
+  isVariationMode = false;
+  variationBranchPly = null;
+  variationReturnCursor = 0;
+}
+
+function syncGameLineFromCurrent(): void {
+  if (isVariationMode) {
+    return;
+  }
+
+  gameLineFenHistory = [...fenHistory];
+  gameLineMoveHistory = [...moveHistory];
+  gameLineAnalysisByPly = [...analysisByPly];
+}
+
+function returnToGameLine(): void {
+  if (!isVariationMode) {
+    return;
+  }
+
+  const returnMoveNo = variationBranchPly !== null ? variationBranchPly + 1 : cursor;
+  fenHistory = [...gameLineFenHistory];
+  moveHistory = [...gameLineMoveHistory];
+  analysisByPly = [...gameLineAnalysisByPly];
+  cursor = Math.max(0, Math.min(variationReturnCursor, fenHistory.length - 1));
+  chess.load(fenHistory[cursor]!);
+  clearVariationMode();
+  clearSelection();
+  clearArrows();
+  render();
+  showToast(`Returned to game line (move ${returnMoveNo}).`);
 }
 
 function renderArrows(): void {
@@ -1536,6 +1677,9 @@ async function runGameAnalysis(): Promise<void> {
     }
 
     showToast("Analysis complete.");
+    if (!isVariationMode) {
+      syncGameLineFromCurrent();
+    }
   } catch {
     showToast("Engine failed to analyze this game.");
   } finally {
@@ -1579,6 +1723,9 @@ async function analyzeLatestMove(): Promise<void> {
     }
 
     analysisByPly[ply] = classifyMove(ply, move, before, after, beforeFen, afterFen);
+    if (!isVariationMode) {
+      syncGameLineFromCurrent();
+    }
     if (cursor === ply) {
       requestBoardRefresh();
     }
@@ -1891,6 +2038,7 @@ if (postGameMovesStr) {
       }
       // Snap the board to the end of the game
       cursor = fenHistory.length - 1; 
+      syncGameLineFromCurrent();
       
       // Auto-start the Stockfish analysis engine
       setTimeout(() => {
@@ -1901,4 +2049,5 @@ if (postGameMovesStr) {
     console.error("Failed to parse postGameMoves", e);
   }
 }
+syncGameLineFromCurrent();
 render();

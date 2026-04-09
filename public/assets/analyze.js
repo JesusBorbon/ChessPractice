@@ -3941,6 +3941,17 @@ var require_analyze = __commonJS({
     var analysisRunId = 0;
     var analysisInProgress = false;
     var fullAnalysisInProgress = false;
+    var bestMovesEnabled = localStorage.getItem("chess-analyze-best-moves") !== "off";
+    var liveBestMoveArrow = null;
+    var liveBestMoveArrowFen = null;
+    var liveBestMoveRequestFen = null;
+    var bestMoveArrowToken = 0;
+    var gameLineFenHistory = [...fenHistory];
+    var gameLineMoveHistory = [...moveHistory];
+    var gameLineAnalysisByPly = [];
+    var isVariationMode = false;
+    var variationBranchPly = null;
+    var variationReturnCursor = 0;
     var focusMode = false;
     var legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
     var animationStyle = localStorage.getItem("chess-animation-style") || "smooth";
@@ -3962,6 +3973,8 @@ var require_analyze = __commonJS({
         <button class="btn-ghost"   id="undoBtn">Undo move</button>
         <button class="btn-ghost"   id="copyFenBtn">Copy FEN</button>
         <button class="btn-ghost"   id="loadFenBtn">Load FEN</button>
+        <button class="btn-ghost"   id="bestMovesToggleBtn">Best Moves: On</button>
+        <button class="btn-primary" id="returnGameLineBtn" hidden>Return to Game Line</button>
         <button class="btn-primary" id="analyzeBtn">Analyze game</button>
         <button class="btn-ghost"   id="stopAnalyzeBtn">Stop</button>
       </div>
@@ -4053,6 +4066,8 @@ var require_analyze = __commonJS({
     var navLast = q("#navLast");
     var analyzeBtn = q("#analyzeBtn");
     var stopAnalyzeBtn = q("#stopAnalyzeBtn");
+    var bestMovesToggleButton = q("#bestMovesToggleBtn");
+    var returnGameLineButton = q("#returnGameLineBtn");
     var focusModeButton = q("#focusModeBtn");
     q("#resetBtn").addEventListener("click", () => {
       cancelAnalysis();
@@ -4061,6 +4076,8 @@ var require_analyze = __commonJS({
       moveHistory = [];
       cursor = 0;
       analysisByPly = [];
+      clearVariationMode();
+      syncGameLineFromCurrent();
       clearSelection();
       render();
     });
@@ -4101,12 +4118,27 @@ var require_analyze = __commonJS({
         moveHistory = [];
         cursor = 0;
         analysisByPly = [];
+        clearVariationMode();
+        syncGameLineFromCurrent();
         clearSelection();
         render();
         showToast("Position loaded.");
       } catch {
         showToast("Invalid FEN \u2014 position was not changed.");
       }
+    });
+    bestMovesToggleButton.addEventListener("click", () => {
+      bestMovesEnabled = !bestMovesEnabled;
+      localStorage.setItem("chess-analyze-best-moves", bestMovesEnabled ? "on" : "off");
+      if (!bestMovesEnabled) {
+        clearLiveBestMoveArrow();
+      }
+      updateBestMovesToggleButton();
+      void maybeUpdateLiveBestMoveArrow(true);
+      renderArrows();
+    });
+    returnGameLineButton.addEventListener("click", () => {
+      returnToGameLine();
     });
     analyzeBtn.addEventListener("click", () => {
       void runGameAnalysis();
@@ -4327,10 +4359,6 @@ var require_analyze = __commonJS({
       goTo(idx);
     });
     function onSquareClick(square) {
-      if (cursor < fenHistory.length - 1) {
-        showToast("Navigate to the last move to continue playing.");
-        return;
-      }
       if (chess.isGameOver()) return;
       const piece = chess.get(square);
       if (!selectedSquare) {
@@ -4359,12 +4387,18 @@ var require_analyze = __commonJS({
       cancelAnalysis();
       const move = chess.move({ from, to, promotion });
       if (!move) return;
+      if (cursor < fenHistory.length - 1) {
+        enterVariationMode(cursor);
+      }
       fenHistory = fenHistory.slice(0, cursor + 1);
       moveHistory = moveHistory.slice(0, cursor);
       moveHistory.push(move);
       fenHistory.push(chess.fen());
       analysisByPly = analysisByPly.slice(0, moveHistory.length);
       cursor = fenHistory.length - 1;
+      if (!isVariationMode) {
+        syncGameLineFromCurrent();
+      }
       clearArrows();
       clearSelection();
       if (chess.isCheckmate() || chess.isStalemate() || chess.isDraw()) {
@@ -4396,7 +4430,7 @@ var require_analyze = __commonJS({
       commitMove(from, to, "q");
     }
     function canStartMoveFrom(square) {
-      if (cursor < fenHistory.length - 1 || chess.isGameOver()) {
+      if (chess.isGameOver()) {
         return false;
       }
       const piece = chess.get(square);
@@ -4419,6 +4453,9 @@ var require_analyze = __commonJS({
       renderStatus();
       renderSide();
       renderNav();
+      updateBestMovesToggleButton();
+      updateVariationToolbar();
+      void maybeUpdateLiveBestMoveArrow();
     }
     function isTypingTarget(target) {
       const element = target;
@@ -4523,7 +4560,8 @@ var require_analyze = __commonJS({
         text = `${chess.turn() === "w" ? "White" : "Black"} to move.`;
         lastCheckFlashKey = null;
       }
-      statusBar.textContent = cursor < fenHistory.length - 1 ? `[Move ${cursor} of ${fenHistory.length - 1}] ${text}` : text;
+      const withMoveCursor = cursor < fenHistory.length - 1 ? `[Move ${cursor} of ${fenHistory.length - 1}] ${text}` : text;
+      statusBar.textContent = isVariationMode ? `Variation \u2014 ${withMoveCursor}` : withMoveCursor;
     }
     function renderSide() {
       const isWhite = chess.turn() === "w";
@@ -4872,6 +4910,45 @@ var require_analyze = __commonJS({
       renderArrows();
       renderBoard();
     }
+    function clearLiveBestMoveArrow() {
+      bestMoveArrowToken += 1;
+      liveBestMoveArrow = null;
+      liveBestMoveArrowFen = null;
+      liveBestMoveRequestFen = null;
+    }
+    async function maybeUpdateLiveBestMoveArrow(force = false) {
+      if (!bestMovesEnabled) {
+        return;
+      }
+      const currentFen = chess.fen();
+      if (!force && liveBestMoveArrowFen === currentFen && liveBestMoveArrow) {
+        return;
+      }
+      if (liveBestMoveRequestFen === currentFen) {
+        return;
+      }
+      liveBestMoveRequestFen = currentFen;
+      const token = ++bestMoveArrowToken;
+      try {
+        const evaluation = await ensureStockfish().evaluateFen(currentFen, Math.max(8, analysisDepth));
+        if (token !== bestMoveArrowToken) {
+          return;
+        }
+        liveBestMoveArrow = parseBestMoveArrow(evaluation.bestMove);
+        liveBestMoveArrowFen = currentFen;
+      } catch {
+        if (token !== bestMoveArrowToken) {
+          return;
+        }
+        liveBestMoveArrow = null;
+        liveBestMoveArrowFen = currentFen;
+      } finally {
+        if (token === bestMoveArrowToken) {
+          liveBestMoveRequestFen = null;
+          renderArrows();
+        }
+      }
+    }
     function getSquareFromPoint(clientX, clientY) {
       const node2 = document.elementFromPoint(clientX, clientY);
       const squareButton = node2?.closest(".square");
@@ -4976,11 +5053,56 @@ var require_analyze = __commonJS({
       };
     }
     function currentBestMoveArrow() {
-      const analyzedMove = analysisByPly[cursor + 1];
-      if (!analyzedMove?.bestMove) {
+      if (!bestMovesEnabled || liveBestMoveArrowFen !== chess.fen()) {
         return null;
       }
-      return parseBestMoveArrow(analyzedMove.bestMove);
+      return liveBestMoveArrow;
+    }
+    function updateBestMovesToggleButton() {
+      bestMovesToggleButton.textContent = bestMovesEnabled ? "Best Moves: On" : "Best Moves: Off";
+      bestMovesToggleButton.classList.toggle("best-moves-enabled", bestMovesEnabled);
+    }
+    function updateVariationToolbar() {
+      returnGameLineButton.hidden = !isVariationMode;
+    }
+    function enterVariationMode(branchPly) {
+      if (!isVariationMode) {
+        gameLineFenHistory = [...fenHistory];
+        gameLineMoveHistory = [...moveHistory];
+        gameLineAnalysisByPly = [...analysisByPly];
+      }
+      isVariationMode = true;
+      variationBranchPly = branchPly;
+      variationReturnCursor = Math.min(gameLineFenHistory.length - 1, branchPly + 1);
+    }
+    function clearVariationMode() {
+      isVariationMode = false;
+      variationBranchPly = null;
+      variationReturnCursor = 0;
+    }
+    function syncGameLineFromCurrent() {
+      if (isVariationMode) {
+        return;
+      }
+      gameLineFenHistory = [...fenHistory];
+      gameLineMoveHistory = [...moveHistory];
+      gameLineAnalysisByPly = [...analysisByPly];
+    }
+    function returnToGameLine() {
+      if (!isVariationMode) {
+        return;
+      }
+      const returnMoveNo = variationBranchPly !== null ? variationBranchPly + 1 : cursor;
+      fenHistory = [...gameLineFenHistory];
+      moveHistory = [...gameLineMoveHistory];
+      analysisByPly = [...gameLineAnalysisByPly];
+      cursor = Math.max(0, Math.min(variationReturnCursor, fenHistory.length - 1));
+      chess.load(fenHistory[cursor]);
+      clearVariationMode();
+      clearSelection();
+      clearArrows();
+      render();
+      showToast(`Returned to game line (move ${returnMoveNo}).`);
     }
     function renderArrows() {
       arrowLayer.innerHTML = buildArrowLayerMarkup({
@@ -5029,6 +5151,9 @@ var require_analyze = __commonJS({
           renderSide();
         }
         showToast("Analysis complete.");
+        if (!isVariationMode) {
+          syncGameLineFromCurrent();
+        }
       } catch {
         showToast("Engine failed to analyze this game.");
       } finally {
@@ -5065,6 +5190,9 @@ var require_analyze = __commonJS({
           return;
         }
         analysisByPly[ply] = classifyMove(ply, move, before, after, beforeFen, afterFen);
+        if (!isVariationMode) {
+          syncGameLineFromCurrent();
+        }
         if (cursor === ply) {
           requestBoardRefresh();
         }
@@ -5281,6 +5409,7 @@ var require_analyze = __commonJS({
             }
           }
           cursor = fenHistory.length - 1;
+          syncGameLineFromCurrent();
           setTimeout(() => {
             void runGameAnalysis();
           }, 100);
@@ -5289,6 +5418,7 @@ var require_analyze = __commonJS({
         console.error("Failed to parse postGameMoves", e);
       }
     }
+    syncGameLineFromCurrent();
     render();
   }
 });
