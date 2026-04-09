@@ -3970,7 +3970,6 @@ var require_analyze = __commonJS({
       <div class="analyze-toolbar">
         <button class="btn-primary" id="resetBtn">Reset board</button>
         <button class="btn-ghost"   id="flipBtn">Flip board</button>
-        <button class="btn-ghost"   id="undoBtn">Undo move</button>
         <button class="btn-ghost"   id="copyFenBtn">Copy FEN</button>
         <button class="btn-ghost"   id="loadFenBtn">Load FEN</button>
         <button class="btn-ghost"   id="bestMovesToggleBtn">Best Moves: On</button>
@@ -4085,20 +4084,6 @@ var require_analyze = __commonJS({
       orientation = orientation === "w" ? "b" : "w";
       renderBoard();
       renderArrows();
-    });
-    q("#undoBtn").addEventListener("click", () => {
-      if (cursor < fenHistory.length - 1) {
-        showToast("Navigate to the last move before undoing.");
-        return;
-      }
-      if (fenHistory.length <= 1) return;
-      fenHistory.pop();
-      moveHistory.pop();
-      cursor = fenHistory.length - 1;
-      chess.load(fenHistory[cursor]);
-      analysisByPly = analysisByPly.slice(0, moveHistory.length + 1);
-      clearSelection();
-      render();
     });
     q("#copyFenBtn").addEventListener("click", async () => {
       try {

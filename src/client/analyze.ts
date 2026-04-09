@@ -258,7 +258,6 @@ app.innerHTML = `
       <div class="analyze-toolbar">
         <button class="btn-primary" id="resetBtn">Reset board</button>
         <button class="btn-ghost"   id="flipBtn">Flip board</button>
-        <button class="btn-ghost"   id="undoBtn">Undo move</button>
         <button class="btn-ghost"   id="copyFenBtn">Copy FEN</button>
         <button class="btn-ghost"   id="loadFenBtn">Load FEN</button>
         <button class="btn-ghost"   id="bestMovesToggleBtn">Best Moves: On</button>
@@ -384,22 +383,6 @@ q<HTMLButtonElement>("#flipBtn").addEventListener("click", () => {
   orientation = orientation === "w" ? "b" : "w";
   renderBoard();
   renderArrows();
-});
-
-q<HTMLButtonElement>("#undoBtn").addEventListener("click", () => {
-  // Only allowed when we are at the live end of history
-  if (cursor < fenHistory.length - 1) {
-    showToast("Navigate to the last move before undoing.");
-    return;
-  }
-  if (fenHistory.length <= 1) return;
-  fenHistory.pop();
-  moveHistory.pop();
-  cursor = fenHistory.length - 1;
-  chess.load(fenHistory[cursor]!);
-  analysisByPly = analysisByPly.slice(0, moveHistory.length + 1);
-  clearSelection();
-  render();
 });
 
 q<HTMLButtonElement>("#copyFenBtn").addEventListener("click", async () => {
