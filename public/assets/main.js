@@ -7650,6 +7650,9 @@ var require_main = __commonJS({
           <button class="action cta-turquoise" id="createRoomButton" type="button">Create room</button>
           <button class="action cta-rainbow" id="playBotButton" type="button">Play vs Bot (800 ELO)</button>
           <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
+          <button class="ghost" id="undoRequestButton" type="button" hidden>Request undo</button>
+          <button class="ghost" id="undoDeclineButton" type="button" hidden>Decline undo</button>
+          <button class="ghost" id="labelsOnlyButton" type="button" hidden>Labels only: Off</button>
           <button class="ghost" id="flipBoardButton" type="button" hidden>Flip board</button>
           <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
           <button class="ghost" id="resignButton" type="button" hidden>Resign</button>
@@ -7895,6 +7898,9 @@ var require_main = __commonJS({
     var leaveRoomButton = must("#leaveRoomButton");
     var flipBoardButton = must("#flipBoardButton");
     var rematchButton = must("#rematchButton");
+    var undoRequestButton = must("#undoRequestButton");
+    var undoDeclineButton = must("#undoDeclineButton");
+    var labelsOnlyButton = must("#labelsOnlyButton");
     var liveAnalysisButton = must("#liveAnalysisButton");
     var arrowLayer = must("#arrowLayer");
     var resignButton = must("#resignButton");
@@ -7989,6 +7995,31 @@ var require_main = __commonJS({
       } else {
         startBotGame();
       }
+    });
+    undoRequestButton.addEventListener("click", () => {
+      const snapshot = state.snapshot;
+      if (!snapshot || state.gameMode !== "multiplayer") {
+        return;
+      }
+      const canRespondToPendingUndo = snapshot.undo.pending && snapshot.undo.requester !== null && snapshot.undo.requester !== state.role;
+      if (canRespondToPendingUndo) {
+        socket.emit("game:undo:respond", { accept: true });
+        return;
+      }
+      socket.emit("game:undo:request");
+    });
+    undoDeclineButton.addEventListener("click", () => {
+      const snapshot = state.snapshot;
+      if (!snapshot || !snapshot.undo.pending) {
+        return;
+      }
+      socket.emit("game:undo:respond", { accept: false });
+    });
+    labelsOnlyButton.addEventListener("click", () => {
+      if (state.gameMode !== "multiplayer") {
+        return;
+      }
+      socket.emit("analysis:labels:toggle");
     });
     flipBoardButton.addEventListener("click", () => {
       state.orientation = state.orientation === "w" ? "b" : "w";
@@ -8410,9 +8441,12 @@ var require_main = __commonJS({
         }
       }
       if (!snapshot.analysis.enabled) {
-        state.lastAnalyzedMoveKey = null;
-        state.liveMoveGrades = {};
-        liveAnalysisToken += 1;
+        const labelsOnlyMode = snapshot.analysis.labelsOnly && isLiveAnalysisLocked(snapshot);
+        if (!labelsOnlyMode) {
+          state.lastAnalyzedMoveKey = null;
+          state.liveMoveGrades = {};
+          liveAnalysisToken += 1;
+        }
       }
       if (state.role && state.role !== "spectator" && snapshot.turn === state.role && state.premoves.length > 0) {
         const nextMove = state.premoves.shift();
@@ -8448,6 +8482,15 @@ var require_main = __commonJS({
         return;
       }
       showToast(payload.message);
+    });
+    socket.on("undo:requested", () => {
+      showToast("Opponent requested an undo.");
+    });
+    socket.on("undo:accepted", () => {
+      showToast("Undo request accepted.");
+    });
+    socket.on("undo:declined", () => {
+      showToast("Undo request declined.");
     });
     function must(selector) {
       const element = document.querySelector(selector);
@@ -8522,6 +8565,7 @@ var require_main = __commonJS({
       );
       const canVote = state.role === "w" || state.role === "b";
       const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
+      const analysisLocked = Boolean(snapshot?.analysis.locked && state.gameMode === "multiplayer");
       const maxMoves = snapshot?.moves.length ?? 0;
       gameNavRow.hidden = !isGameActive || maxMoves === 0;
       roomBadge.textContent = state.roomId ? `Room ${state.roomId}` : "No active room";
@@ -8541,7 +8585,10 @@ var require_main = __commonJS({
       seatCard.hidden = !hasRoom;
       summaryCard.hidden = !isGameActive;
       movesCard.hidden = !isGameActive;
-      liveAnalysisButton.hidden = !isGameActive || !canVote;
+      liveAnalysisButton.hidden = !isGameActive || !canVote || state.gameMode === "multiplayer" && analysisLocked;
+      labelsOnlyButton.hidden = !isGameActive || !canVote || state.gameMode !== "multiplayer";
+      undoRequestButton.hidden = !isGameActive || !canVote || state.gameMode !== "multiplayer";
+      undoDeclineButton.hidden = true;
       rematchButton.hidden = !gameEnded || !canVote || !hasRoom;
       resignButton.hidden = !isGameActive || gameEnded || !canVote;
       if (!isGameActive && state.focusMode) {
@@ -8636,18 +8683,50 @@ var require_main = __commonJS({
       const roleDescription = state.role === "spectator" ? "Spectating." : state.role ? `Playing ${state.role === "w" ? "White" : "Black"}.` : "Not seated.";
       const lastMoveDescription = snapshot.lastMove ? ` Last move: ${snapshot.lastMove.san} (${snapshot.lastMove.from} to ${snapshot.lastMove.to}).` : "";
       const rematchDescription = state.gameMode === "multiplayer" && snapshot.rematchVotes > 0 ? ` Rematch votes: ${snapshot.rematchVotes}/2.` : "";
-      summaryText.textContent = `${roleDescription} ${snapshot.status}${lastMoveDescription}${rematchDescription}`.trim();
+      const undoDescription = snapshot.undo.pending ? ` Undo request pending (${snapshot.undo.requester === "w" ? "White" : snapshot.undo.requester === "b" ? "Black" : "Unknown"}).` : "";
+      summaryText.textContent = `${roleDescription} ${snapshot.status}${lastMoveDescription}${rematchDescription}${undoDescription}`.trim();
       if (state.gameMode === "bot") {
         liveAnalysisButton.disabled = false;
         liveAnalysisButton.textContent = snapshot.analysis.enabled ? "Disable analysis" : "Enable analysis";
+        labelsOnlyButton.hidden = true;
       } else {
         const seatedPlayers = Number(snapshot.players.whiteConnected) + Number(snapshot.players.blackConnected);
         liveAnalysisButton.disabled = seatedPlayers < 2 || !canVote;
         liveAnalysisButton.textContent = snapshot.analysis.enabled ? "Disable analysis" : `Enable analysis (${snapshot.analysis.votes}/2)`;
+        if (snapshot.analysis.labelsOnly) {
+          labelsOnlyButton.textContent = "Labels only: On";
+          labelsOnlyButton.disabled = false;
+        } else {
+          labelsOnlyButton.textContent = `Show Badges (${snapshot.analysis.labelsVotes}/2)`;
+          labelsOnlyButton.disabled = seatedPlayers < 2;
+        }
+      }
+      if (!undoRequestButton.hidden) {
+        const canRequestUndo = snapshot.moveCount > 0 && !gameEnded;
+        const pendingUndo = snapshot.undo.pending;
+        const requester = snapshot.undo.requester;
+        if (!pendingUndo) {
+          undoRequestButton.textContent = "Request undo";
+          undoRequestButton.disabled = !canRequestUndo;
+        } else if (requester && requester !== state.role) {
+          undoRequestButton.textContent = "Accept undo";
+          undoRequestButton.disabled = false;
+          undoDeclineButton.hidden = false;
+          undoDeclineButton.disabled = false;
+        } else {
+          undoRequestButton.textContent = "Undo requested...";
+          undoRequestButton.disabled = true;
+        }
       }
       rematchButton.disabled = !gameEnded;
       if (snapshot.analysis.enabled) {
         liveAnalysisText.textContent = state.liveAnalysisSummary;
+      } else if (analysisLocked && snapshot.analysis.labelsOnly) {
+        liveAnalysisText.textContent = state.liveAnalysisSummary || "Labels-only mode active. Best lines are hidden.";
+      } else if (analysisLocked && state.gameMode === "multiplayer" && snapshot.analysis.labelsVotes > 0) {
+        liveAnalysisText.textContent = `Labels-only vote pending: ${snapshot.analysis.labelsVotes}/2.`;
+      } else if (analysisLocked) {
+        liveAnalysisText.textContent = "Live analysis and best-move arrows are disabled during active multiplayer games.";
       } else if (state.gameMode === "multiplayer" && snapshot.analysis.votes > 0) {
         liveAnalysisText.textContent = `Waiting for both players: ${snapshot.analysis.votes}/2 ready.`;
       } else {
@@ -8717,7 +8796,7 @@ var require_main = __commonJS({
           }
         }
       }
-      const liveGrade = state.snapshot?.analysis.enabled && state.snapshot.lastMove ? state.liveMoveGrades[state.snapshot.moveCount] : void 0;
+      const liveGrade = state.snapshot && (state.snapshot.analysis.enabled || state.snapshot.analysis.labelsOnly) && state.snapshot.lastMove ? state.liveMoveGrades[state.snapshot.moveCount] : void 0;
       const liveMarkerSquare = !isHistoryView && liveGrade && state.snapshot?.lastMove ? state.snapshot.lastMove.to : null;
       for (const squareName of squares) {
         const square = squareName;
@@ -8961,6 +9040,12 @@ var require_main = __commonJS({
     function isSnapshotGameOver(snapshot) {
       return snapshot.checkmate || snapshot.draw || snapshot.winner !== null;
     }
+    function isLiveAnalysisLocked(snapshot) {
+      return state.gameMode === "multiplayer" && snapshot.analysis.locked;
+    }
+    function isLabelsOnlyMode(snapshot) {
+      return isLiveAnalysisLocked(snapshot) && snapshot.analysis.labelsOnly;
+    }
     function clearBestMoveArrow() {
       if (!state.bestMoveArrow && !state.bestMoveArrowFen) {
         return;
@@ -8972,6 +9057,10 @@ var require_main = __commonJS({
     }
     async function maybeUpdateBestMoveArrow(snapshot) {
       if (!snapshot) {
+        clearBestMoveArrow();
+        return;
+      }
+      if (isLiveAnalysisLocked(snapshot)) {
         clearBestMoveArrow();
         return;
       }
@@ -9005,7 +9094,7 @@ var require_main = __commonJS({
     }
     function renderArrows() {
       const snapshot = state.snapshot;
-      const bestMove = snapshot && canShowBestMoveArrow(snapshot.analysis.enabled, isSnapshotGameOver(snapshot)) ? state.bestMoveArrow : null;
+      const bestMove = snapshot && !isLiveAnalysisLocked(snapshot) && canShowBestMoveArrow(snapshot.analysis.enabled, isSnapshotGameOver(snapshot)) ? state.bestMoveArrow : null;
       arrowLayer.innerHTML = buildArrowLayerMarkup({
         variant: "board",
         annotations: arrowAnnotations,
@@ -9219,7 +9308,12 @@ var require_main = __commonJS({
       return { beforeFen, afterFen };
     }
     async function maybeRunLiveAnalysis(snapshot) {
-      if (!snapshot.analysis.enabled || !snapshot.lastMove || snapshot.moves.length === 0) {
+      const labelsOnlyMode = isLabelsOnlyMode(snapshot);
+      if (isLiveAnalysisLocked(snapshot) && !labelsOnlyMode) {
+        state.liveAnalysisSummary = "Live analysis disabled during active multiplayer games.";
+        return;
+      }
+      if (!snapshot.analysis.enabled && !labelsOnlyMode || !snapshot.lastMove || snapshot.moves.length === 0) {
         return;
       }
       const moveKey = `${snapshot.moveCount}:${snapshot.lastMove.from}:${snapshot.lastMove.to}:${snapshot.lastMove.san}`;
@@ -9231,7 +9325,7 @@ var require_main = __commonJS({
         return;
       }
       const token = ++liveAnalysisToken;
-      state.liveAnalysisSummary = "Analyzing last move...";
+      state.liveAnalysisSummary = labelsOnlyMode ? "Classifying last move..." : "Analyzing last move...";
       renderSession();
       try {
         if (!liveAnalyzer) {
@@ -9241,7 +9335,14 @@ var require_main = __commonJS({
           liveAnalyzer.evaluateFen(fenPair.beforeFen, 10),
           liveAnalyzer.evaluateFen(fenPair.afterFen, 10)
         ]);
-        if (token !== liveAnalysisToken || !state.snapshot?.analysis.enabled) {
+        if (token !== liveAnalysisToken) {
+          return;
+        }
+        if (!state.snapshot) {
+          return;
+        }
+        const stillLabelsOnly = isLabelsOnlyMode(state.snapshot);
+        if (!state.snapshot.analysis.enabled && !stillLabelsOnly) {
           return;
         }
         const moverBefore = before.cp;
@@ -9265,7 +9366,7 @@ var require_main = __commonJS({
         });
         const label = quality.label;
         const category = quality.category;
-        state.liveAnalysisSummary = summarizeLiveMove(label, cpl, snapshot.lastMove.san);
+        state.liveAnalysisSummary = labelsOnlyMode ? `${label}: ${snapshot.lastMove.san}` : summarizeLiveMove(label, cpl, snapshot.lastMove.san);
         state.liveMoveGrades[snapshot.moveCount] = { label, cpl, category };
         state.lastAnalyzedMoveKey = moveKey;
       } catch {
@@ -9693,7 +9794,8 @@ var require_main = __commonJS({
         lastMove: null,
         players: { whiteConnected: true, blackConnected: true, spectatorCount: 0 },
         rematchVotes: 0,
-        analysis: { enabled: false, votes: 0 },
+        analysis: { enabled: false, votes: 0, locked: false, labelsOnly: false, labelsVotes: 0 },
+        undo: { pending: false, requester: null },
         isStarted: true,
         pregame: { p1Choice: "w", p2Choice: "b", p1Ready: true, p2Ready: true },
         timeControl: {

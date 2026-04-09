@@ -52,6 +52,13 @@ type RoomSnapshot = {
   analysis: {
     enabled: boolean;
     votes: number;
+    locked: boolean;
+    labelsOnly: boolean;
+    labelsVotes: number;
+  };
+  undo: {
+    pending: boolean;
+    requester: PlayerRole | null;
   };
   isStarted: boolean;
   pregame: {
@@ -85,7 +92,10 @@ type GameRoom = {
   blackDisconnectedAt?: number;
   rematchVotes: Set<string>;
   analysisVotes: Set<string>;
+  labelsVotes: Set<string>;
   analysisEnabled: boolean;
+  analysisLabelsOnlyEnabled: boolean;
+  pendingUndoRequester?: string;
   updatedAt: number;
 
   isStarted: boolean;
@@ -298,6 +308,12 @@ function buildSnapshot(room: GameRoom): RoomSnapshot {
   const verboseHistory = room.chess.history({ verbose: true }).map(toMoveSummary);
   const now = Date.now();
   const preset = getTimeControlPreset(room.timeControl);
+  const analysisLocked = isLiveCompetitiveMatch(room);
+  const undoRequesterRole = room.pendingUndoRequester === room.white
+    ? "w"
+    : room.pendingUndoRequester === room.black
+      ? "b"
+      : null;
   
   let { status, winner } = buildStatus(room.chess);
 
@@ -328,6 +344,13 @@ return {
     analysis: {
       enabled: room.analysisEnabled,
       votes: room.analysisVotes.size,
+      locked: analysisLocked,
+      labelsOnly: room.analysisLabelsOnlyEnabled,
+      labelsVotes: room.labelsVotes.size,
+    },
+    undo: {
+      pending: Boolean(room.pendingUndoRequester),
+      requester: undoRequesterRole,
     },
     isStarted: room.isStarted,
     pregame: {
@@ -348,8 +371,30 @@ return {
   };
 }
 
+function isLiveCompetitiveMatch(room: GameRoom): boolean {
+  return room.isStarted && Boolean(room.white && room.black) && !room.winner && !room.chess.isGameOver();
+}
+
+function getOpponentSocketId(room: GameRoom, socketId: string): string | null {
+  if (room.white === socketId) {
+    return room.black ?? null;
+  }
+
+  if (room.black === socketId) {
+    return room.white ?? null;
+  }
+
+  return null;
+}
+
 function emitRoomState(room: GameRoom): void {
   syncActiveClock(room);
+
+  if (isLiveCompetitiveMatch(room) && (room.analysisEnabled || room.analysisVotes.size > 0)) {
+    room.analysisEnabled = false;
+    room.analysisVotes.clear();
+  }
+
   room.updatedAt = Date.now();
   io.to(room.id).emit("room:state", buildSnapshot(room));
 }
@@ -424,6 +469,15 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
     }
 
     if (room.analysisVotes.delete(socketId)) {
+      changed = true;
+    }
+
+    if (room.labelsVotes.delete(socketId)) {
+      changed = true;
+    }
+
+    if (room.pendingUndoRequester === socketId) {
+      delete room.pendingUndoRequester;
       changed = true;
     }
 
@@ -600,7 +654,9 @@ io.on("connection", (socket) => {
       spectators: new Set(),
       rematchVotes: new Set(),
       analysisVotes: new Set(),
+      labelsVotes: new Set(),
       analysisEnabled: false,
+      analysisLabelsOnlyEnabled: false,
       updatedAt: Date.now(),
       isStarted: false,
       colorChoices: new Map(),
@@ -807,6 +863,7 @@ io.on("connection", (socket) => {
 
       room.rematchVotes.clear();
       room.analysisVotes.clear();
+      delete room.pendingUndoRequester;
       applyMoveIncrement(room, liveRole);
       if (!room.winner && !room.chess.isGameOver() && room.isStarted && room.white && room.black) {
         room.clockActive = room.chess.turn();
@@ -855,6 +912,14 @@ io.on("connection", (socket) => {
       return;
     }
 
+    if (isLiveCompetitiveMatch(room)) {
+      room.analysisEnabled = false;
+      room.analysisVotes.clear();
+      emitRoomState(room);
+      socket.emit("room:error", { message: "Live analysis is disabled during active multiplayer games." });
+      return;
+    }
+
     const players = getActivePlayerSockets(room);
     if (players.length < 2) {
       socket.emit("room:error", { message: "Live analysis requires both players connected." });
@@ -880,6 +945,166 @@ io.on("connection", (socket) => {
     }
 
     emitRoomState(room);
+  });
+
+  socket.on("analysis:labels:toggle", () => {
+    const clientState = socket.data as ClientState;
+    const roomId = clientState.roomId;
+    const role = clientState.role;
+
+    if (!roomId || !role || role === "spectator") {
+      socket.emit("room:error", { message: "Only seated players can change move labels mode." });
+      return;
+    }
+
+    const room = rooms.get(roomId);
+    if (!room) {
+      socket.emit("room:error", { message: "The room is no longer available." });
+      return;
+    }
+
+    const players = getActivePlayerSockets(room);
+    if (players.length < 2) {
+      socket.emit("room:error", { message: "Labels-only mode requires both players connected." });
+      return;
+    }
+
+    if (room.analysisLabelsOnlyEnabled) {
+      room.analysisLabelsOnlyEnabled = false;
+      room.labelsVotes.clear();
+      emitRoomState(room);
+      return;
+    }
+
+    if (room.labelsVotes.has(socket.id)) {
+      room.labelsVotes.clear();
+      emitRoomState(room);
+      return;
+    }
+
+    room.labelsVotes.add(socket.id);
+    if (players.every((playerId) => room.labelsVotes.has(playerId))) {
+      room.analysisLabelsOnlyEnabled = true;
+      room.labelsVotes.clear();
+    }
+
+    emitRoomState(room);
+  });
+
+  socket.on("game:undo:request", () => {
+    const clientState = socket.data as ClientState;
+    const roomId = clientState.roomId;
+    const role = clientState.role;
+
+    if (!roomId || !role || role === "spectator") {
+      socket.emit("room:error", { message: "Only seated players can request an undo." });
+      return;
+    }
+
+    const room = rooms.get(roomId);
+    if (!room) {
+      socket.emit("room:error", { message: "The room is no longer available." });
+      return;
+    }
+
+    if (!room.isStarted || room.chess.isGameOver() || room.winner) {
+      socket.emit("room:error", { message: "Undo is only available during an active game." });
+      return;
+    }
+
+    if (room.chess.history().length === 0) {
+      socket.emit("room:error", { message: "There are no moves to undo." });
+      return;
+    }
+
+    if (room.pendingUndoRequester) {
+      socket.emit("room:error", { message: "An undo request is already pending." });
+      return;
+    }
+
+    const opponentId = getOpponentSocketId(room, socket.id);
+    if (!opponentId) {
+      socket.emit("room:error", { message: "Undo requires both players connected." });
+      return;
+    }
+
+    room.pendingUndoRequester = socket.id;
+    emitRoomState(room);
+    io.to(opponentId).emit("undo:requested");
+  });
+
+  socket.on("game:undo:respond", (payload?: { accept?: boolean }) => {
+    if (typeof payload?.accept !== "boolean") {
+      socket.emit("room:error", { message: "Invalid undo response payload." });
+      return;
+    }
+
+    const clientState = socket.data as ClientState;
+    const roomId = clientState.roomId;
+    const role = clientState.role;
+
+    if (!roomId || !role || role === "spectator") {
+      socket.emit("room:error", { message: "Only seated players can respond to undo requests." });
+      return;
+    }
+
+    const room = rooms.get(roomId);
+    if (!room) {
+      socket.emit("room:error", { message: "The room is no longer available." });
+      return;
+    }
+
+    const requesterId = room.pendingUndoRequester;
+    if (!requesterId) {
+      socket.emit("room:error", { message: "There is no pending undo request." });
+      return;
+    }
+
+    if (requesterId === socket.id) {
+      socket.emit("room:error", { message: "Wait for your opponent to respond." });
+      return;
+    }
+
+    const expectedResponderId = getOpponentSocketId(room, requesterId);
+    if (!expectedResponderId || expectedResponderId !== socket.id) {
+      socket.emit("room:error", { message: "Only your opponent can respond to this undo request." });
+      return;
+    }
+
+    if (!payload.accept) {
+      delete room.pendingUndoRequester;
+      emitRoomState(room);
+      io.to(requesterId).emit("undo:declined");
+      return;
+    }
+
+    const undoneMove = room.chess.undo();
+    delete room.pendingUndoRequester;
+
+    if (!undoneMove) {
+      emitRoomState(room);
+      socket.emit("room:error", { message: "No move available to undo." });
+      return;
+    }
+
+    room.rematchVotes.clear();
+    room.analysisVotes.clear();
+    room.labelsVotes.clear();
+    room.analysisEnabled = false;
+    delete room.winner;
+    delete room.statusOverride;
+
+    if (room.isStarted && room.white && room.black && !room.chess.isGameOver() && !room.winner) {
+      room.clockActive = room.chess.turn();
+      room.clockRunning = true;
+      room.clockLastUpdatedAt = Date.now();
+    } else {
+      room.clockActive = null;
+      room.clockRunning = false;
+    }
+
+    emitRoomState(room);
+    io.to(requesterId).emit("undo:accepted");
   });
 
   socket.on("pregame:select", (payload?: { color: "w" | "b" }) => {
@@ -994,6 +1219,7 @@ socket.on("game:rematch", () => {
       room.chess.reset();
       delete room.winner;      
       delete room.statusOverride; 
+      delete room.pendingUndoRequester;
       room.rematchVotes.clear();
       resetRoomClock(room);
 
