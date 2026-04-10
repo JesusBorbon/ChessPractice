@@ -3974,6 +3974,7 @@ var require_analyze = __commonJS({
     var gameLineFenHistory = [...fenHistory];
     var gameLineMoveHistory = [...moveHistory];
     var gameLineAnalysisByPly = [];
+    var gameLineLocked = false;
     var isVariationMode = false;
     var variationBranchPly = null;
     var variationReturnCursor = 0;
@@ -4010,7 +4011,7 @@ var require_analyze = __commonJS({
         <button class="btn-ghost"   id="copyFenBtn">Copy FEN</button>
         <button class="btn-ghost"   id="loadFenBtn">Load FEN</button>
         <button class="btn-ghost"   id="bestMovesToggleBtn">Best Moves: On</button>
-        <button class="btn-primary" id="returnGameLineBtn" hidden>Return to Game Line</button>
+        <button class="btn-primary" id="returnGameLineBtn" disabled>Return to Game Line</button>
         <button class="btn-primary" id="analyzeBtn">Analyze game</button>
         <button class="btn-ghost"   id="stopAnalyzeBtn">Stop</button>
       </div>
@@ -4134,6 +4135,7 @@ var require_analyze = __commonJS({
       cursor = 0;
       analysisByPly = [];
       clearVariationMode();
+      gameLineLocked = false;
       syncGameLineFromCurrent();
       clearSelection();
     }
@@ -4469,8 +4471,11 @@ var require_analyze = __commonJS({
       cancelAnalysis();
       const move = chess.move({ from, to, promotion });
       if (!move) return;
-      if (cursor < fenHistory.length - 1) {
-        enterVariationMode(cursor);
+      const shouldBranchFromEarlierMove = cursor < fenHistory.length - 1;
+      const shouldBranchPastGameEnd = gameLineLocked && !isVariationMode && cursor >= gameLineFenHistory.length - 1;
+      if (shouldBranchFromEarlierMove || shouldBranchPastGameEnd) {
+        const branchPly = shouldBranchFromEarlierMove ? cursor : Math.max(0, gameLineFenHistory.length - 2);
+        enterVariationMode(branchPly);
       }
       fenHistory = fenHistory.slice(0, cursor + 1);
       moveHistory = moveHistory.slice(0, cursor);
@@ -4736,10 +4741,28 @@ var require_analyze = __commonJS({
       const total = Math.max(analysisProgressTotal, 0);
       const completed = Math.max(0, Math.min(analysisProgressCompleted, total || analysisProgressCompleted));
       const percent = total > 0 ? Math.min(100, Math.round(completed / total * 100)) : 0;
+      if (fullAnalysisInProgress) {
+        stopActiveMoveAnimation();
+      }
       analysisLoadingStatus.textContent = `${completed} / ${total} moves analyzed (${percent}%)`;
       analysisLoadingFill.style.width = `${percent}%`;
       analysisLoadingOverlay.hidden = !fullAnalysisInProgress;
       document.body.classList.toggle("analysis-loading-active", fullAnalysisInProgress);
+    }
+    function stopActiveMoveAnimation() {
+      if (activeGhostAnimation) {
+        activeGhostAnimation.cancel();
+        activeGhostAnimation = null;
+      }
+      if (activeGhostNode) {
+        activeGhostNode.remove();
+        activeGhostNode = null;
+      }
+      if (activeGhostDestinationPiece) {
+        activeGhostDestinationPiece.style.visibility = "";
+        activeGhostDestinationPiece = null;
+      }
+      pendingBoardRefresh = false;
     }
     function getCheckedKingSquare() {
       if (!chess.isCheck()) {
@@ -4756,7 +4779,7 @@ var require_analyze = __commonJS({
       return null;
     }
     function animateLastMove(lastMove) {
-      if (!lastMove || cursor === 0) {
+      if (!lastMove || cursor === 0 || fullAnalysisInProgress) {
         lastAnimatedMoveKey = null;
         return;
       }
@@ -4778,17 +4801,7 @@ var require_analyze = __commonJS({
       if (!fromSquareButton || !toSquareButton || !destinationPiece) {
         return;
       }
-      if (activeGhostAnimation) {
-        activeGhostAnimation.cancel();
-      }
-      if (activeGhostNode) {
-        activeGhostNode.remove();
-        activeGhostNode = null;
-      }
-      if (activeGhostDestinationPiece) {
-        activeGhostDestinationPiece.style.visibility = "";
-        activeGhostDestinationPiece = null;
-      }
+      stopActiveMoveAnimation();
       const fromRect = fromSquareButton.getBoundingClientRect();
       const toRect = toSquareButton.getBoundingClientRect();
       const startX = fromRect.left + fromRect.width / 2 + window.scrollX;
@@ -4852,7 +4865,7 @@ var require_analyze = __commonJS({
       animation.addEventListener("cancel", onEnd);
     }
     function animateLastMoveEpic(lastMove) {
-      if (!lastMove || cursor === 0) {
+      if (!lastMove || cursor === 0 || fullAnalysisInProgress) {
         lastAnimatedMoveKey = null;
         return;
       }
@@ -4874,17 +4887,7 @@ var require_analyze = __commonJS({
       if (!fromSquareButton || !toSquareButton || !destinationPiece) {
         return;
       }
-      if (activeGhostAnimation) {
-        activeGhostAnimation.cancel();
-      }
-      if (activeGhostNode) {
-        activeGhostNode.remove();
-        activeGhostNode = null;
-      }
-      if (activeGhostDestinationPiece) {
-        activeGhostDestinationPiece.style.visibility = "";
-        activeGhostDestinationPiece = null;
-      }
+      stopActiveMoveAnimation();
       const fromRect = fromSquareButton.getBoundingClientRect();
       const toRect = toSquareButton.getBoundingClientRect();
       const startX = fromRect.left + fromRect.width / 2 + window.scrollX;
@@ -5159,7 +5162,7 @@ var require_analyze = __commonJS({
       bestMovesToggleButton.classList.toggle("best-moves-enabled", bestMovesEnabled);
     }
     function updateVariationToolbar() {
-      returnGameLineButton.hidden = !isVariationMode;
+      returnGameLineButton.disabled = !isVariationMode;
     }
     function enterVariationMode(branchPly) {
       if (!isVariationMode) {
@@ -5188,7 +5191,7 @@ var require_analyze = __commonJS({
       if (!isVariationMode) {
         return;
       }
-      const returnMoveNo = variationBranchPly !== null ? variationBranchPly + 1 : cursor;
+      const returnMoveNo = Math.max(0, Math.min(variationReturnCursor, gameLineFenHistory.length - 1));
       fenHistory = [...gameLineFenHistory];
       moveHistory = [...gameLineMoveHistory];
       analysisByPly = [...gameLineAnalysisByPly];
@@ -5222,6 +5225,7 @@ var require_analyze = __commonJS({
       const runId = analysisRunId;
       analysisInProgress = true;
       fullAnalysisInProgress = true;
+      stopActiveMoveAnimation();
       analysisProgressCompleted = 0;
       analysisProgressTotal = moveHistory.length;
       updateAnalysisLoadingOverlay();
@@ -5512,6 +5516,7 @@ var require_analyze = __commonJS({
       }
       cursor = Math.max(0, fenHistory.length - 1);
       syncGameLineFromCurrent();
+      gameLineLocked = true;
       return true;
     }
     function loadPgnIntoBoard(pgn2) {

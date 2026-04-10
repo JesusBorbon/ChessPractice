@@ -1,4 +1,5 @@
 import type { User } from "firebase/auth";
+import { Chess } from "chess.js";
 
 import {
   deleteStoredGameForUser,
@@ -87,6 +88,8 @@ export function createAccountSidebarController({
   let savedGameHistory: SavedGameHistoryEntry[] = [];
   let historyLoading = false;
   let deletingGameId: string | null = null;
+  let importSourceDraft = "";
+  let importBusy = false;
 
   let savingGameSignature: string | null = null;
   let savedGameSignature: string | null = null;
@@ -358,7 +361,92 @@ export function createAccountSidebarController({
     }
   }
 
-  function appendImportPlaceholderCard(): void {
+  function validateImportedPgn(pgn: string): string | null {
+    const normalized = pgn.trim();
+    if (!normalized) {
+      return null;
+    }
+
+    const replay = new Chess();
+    try {
+      replay.loadPgn(normalized, { strict: false });
+    } catch {
+      return null;
+    }
+
+    if (replay.history().length === 0) {
+      return null;
+    }
+
+    return normalized;
+  }
+
+  async function resolveImportedPgn(source: string): Promise<string | null> {
+    const response = await fetch("/api/pgn-import", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ source }),
+    });
+
+    const payload = await response.json().catch(() => ({})) as { pgn?: unknown; error?: unknown };
+    if (!response.ok) {
+      const errorMessage = typeof payload.error === "string" ? payload.error : "Could not import PGN from that source.";
+      throw new Error(errorMessage);
+    }
+
+    if (typeof payload.pgn !== "string") {
+      throw new Error("Import source did not return a PGN.");
+    }
+
+    return validateImportedPgn(payload.pgn);
+  }
+
+  async function handleImportPgn(): Promise<void> {
+    if (importBusy) {
+      return;
+    }
+
+    const source = importSourceDraft.trim();
+    if (!source) {
+      showToast("Paste a PGN or game URL first.");
+      return;
+    }
+
+    importBusy = true;
+    renderSavedHistoryPanel();
+
+    try {
+      const importedPgn = await resolveImportedPgn(source);
+      if (!importedPgn) {
+        showToast("Source did not contain a valid PGN.");
+        return;
+      }
+
+      if (authenticatedUser && isFirebaseAuthEnabled()) {
+        try {
+          storedGamesCount = await saveGamePgnForUser(authenticatedUser.uid, importedPgn);
+          savedGameHistory = await getStoredGameHistory(authenticatedUser.uid);
+          renderAuthPanel();
+        } catch {
+          showToast("PGN imported for analysis, but cloud history save failed.");
+        }
+      }
+
+      importSourceDraft = "";
+      setSidebarOpen(false);
+      openSavedGameInAnalysis(importedPgn);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not import PGN from that source.";
+      showToast(message);
+    } finally {
+      importBusy = false;
+      renderSavedHistoryPanel();
+    }
+  }
+
+  function appendImportCard(): void {
     const placeholderCard = document.createElement("article");
     placeholderCard.className = "saved-game-import-placeholder";
 
@@ -367,17 +455,41 @@ export function createAccountSidebarController({
 
     const description = document.createElement("p");
     description.className = "saved-game-import-description";
-    description.textContent = "Coming soon: paste a PGN or upload a PGN file directly into your history.";
+    description.textContent = "Paste a PGN or game URL (Chess.com, Lichess, or any valid source).";
 
-    const disabledButton = document.createElement("button");
-    disabledButton.type = "button";
-    disabledButton.className = "ghost saved-game-import-button";
-    disabledButton.disabled = true;
-    disabledButton.textContent = "Import PGN (coming soon)";
+    const input = document.createElement("textarea");
+    input.className = "saved-game-import-input";
+    input.rows = 4;
+    input.placeholder = "Example: https://www.chess.com/game/live/123456789 or full PGN text";
+    input.value = importSourceDraft;
+    input.addEventListener("input", () => {
+      importSourceDraft = input.value;
+    });
+
+    const controls = document.createElement("div");
+    controls.className = "saved-game-import-controls";
+
+    const importButton = document.createElement("button");
+    importButton.type = "button";
+    importButton.className = "ghost saved-game-import-button";
+    importButton.disabled = importBusy;
+    importButton.textContent = importBusy ? "Importing..." : "Import & Analyze";
+    importButton.addEventListener("click", () => {
+      void handleImportPgn();
+    });
+
+    const status = document.createElement("p");
+    status.className = "saved-game-import-status";
+    status.textContent = authenticatedUser
+      ? "Imported games are also saved to your cloud history."
+      : "Guest imports open in analysis immediately (not saved to cloud).";
 
     placeholderCard.appendChild(title);
     placeholderCard.appendChild(description);
-    placeholderCard.appendChild(disabledButton);
+    placeholderCard.appendChild(input);
+    controls.appendChild(importButton);
+    placeholderCard.appendChild(controls);
+    placeholderCard.appendChild(status);
     refs.savedGamesList.appendChild(placeholderCard);
   }
 
@@ -385,24 +497,27 @@ export function createAccountSidebarController({
     refs.savedGamesList.innerHTML = "";
 
     if (!authenticatedUser) {
-      refs.historyPanelStatus.textContent = "Sign in to view your saved PGN history.";
+      refs.historyPanelStatus.textContent = "Sign in to view cloud history. You can still import a PGN for analysis.";
+      appendImportCard();
       return;
     }
 
     if (!isFirebaseAuthEnabled()) {
       refs.historyPanelStatus.textContent = "Firebase is unavailable right now.";
+      appendImportCard();
       return;
     }
 
     if (historyLoading) {
       refs.historyPanelStatus.textContent = "Loading saved games...";
+      appendImportCard();
       return;
     }
 
     const sortedGames = getSortedSavedGameHistory();
     if (sortedGames.length === 0) {
       refs.historyPanelStatus.textContent = "No saved games yet. Finished games are saved automatically.";
-      appendImportPlaceholderCard();
+      appendImportCard();
       return;
     }
 
@@ -480,7 +595,7 @@ export function createAccountSidebarController({
       refs.savedGamesList.appendChild(item);
     });
 
-    appendImportPlaceholderCard();
+    appendImportCard();
   }
 
   async function refreshSavedHistoryPanel(): Promise<void> {

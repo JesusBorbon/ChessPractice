@@ -154,8 +154,245 @@ const publicDir =
     ? path.join(projectRoot, "dist", "public")
     : path.join(projectRoot, "public");
 
+const MAX_IMPORT_SOURCE_LENGTH = 200_000;
+const IMPORT_FETCH_TIMEOUT_MS = 12_000;
+
 app.use(express.static(publicDir));
 app.use("/stockfish", express.static(path.join(projectRoot, "node_modules", "stockfish", "bin")));
+app.use(express.json({ limit: "1mb" }));
+
+function parseHttpUrl(value: string): URL | null {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function isBlockedImportHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  if (
+    normalized === "localhost"
+    || normalized === "127.0.0.1"
+    || normalized === "0.0.0.0"
+    || normalized === "::1"
+  ) {
+    return true;
+  }
+
+  if (normalized.startsWith("10.") || normalized.startsWith("192.168.")) {
+    return true;
+  }
+
+  const private172Match = normalized.match(/^172\.(\d{1,3})\./);
+  if (private172Match) {
+    const secondOctet = Number(private172Match[1]);
+    if (secondOctet >= 16 && secondOctet <= 31) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function buildImportCandidates(url: URL): string[] {
+  const candidates = new Set<string>();
+  const normalizedHost = url.hostname.toLowerCase().replace(/^www\./, "");
+
+  candidates.add(url.toString());
+
+  if (normalizedHost.endsWith("chess.com")) {
+    const chessComGameId = url.pathname.match(/\/(?:analysis\/game|game)\/(?:live|daily)\/(\d+)/i)?.[1] ?? null;
+    if (chessComGameId) {
+      candidates.add(`https://www.chess.com/callback/live/game/${chessComGameId}`);
+      candidates.add(`https://www.chess.com/game/live/${chessComGameId}/pgn`);
+      candidates.add(`https://www.chess.com/game/daily/${chessComGameId}/pgn`);
+    }
+
+    const pgnPath = `${url.origin}${url.pathname.replace(/\/$/, "")}/pgn`;
+    candidates.add(pgnPath);
+  }
+
+  if (normalizedHost === "lichess.org" || normalizedHost.endsWith(".lichess.org")) {
+    const lichessGameId = url.pathname.split("/").filter(Boolean)[0] ?? "";
+    if (/^[A-Za-z0-9]{6,12}$/.test(lichessGameId)) {
+      candidates.add(`https://lichess.org/game/export/${lichessGameId}?moves=true&tags=true&clocks=false&evals=false`);
+    }
+  }
+
+  return [...candidates];
+}
+
+function unescapeJsonString(value: string): string {
+  try {
+    return JSON.parse(`"${value.replace(/\"/g, "\\\"")}"`);
+  } catch {
+    return value
+      .replace(/\\n/g, "\n")
+      .replace(/\\r/g, "\r")
+      .replace(/\\t/g, "\t")
+      .replace(/\\\"/g, "\"")
+      .replace(/\\\\/g, "\\");
+  }
+}
+
+function getPgnCandidatesFromText(content: string): string[] {
+  const candidates: string[] = [];
+  const trimmed = content.trim();
+  if (trimmed) {
+    candidates.push(trimmed);
+  }
+
+  const eventTagIndex = content.indexOf("[Event");
+  if (eventTagIndex >= 0) {
+    candidates.push(content.slice(eventTagIndex).trim());
+  }
+
+  const pgnJsonRegex = /"pgn"\s*:\s*"((?:\\.|[^"\\])+)"/gi;
+  let pgnMatch = pgnJsonRegex.exec(content);
+  while (pgnMatch) {
+    const captured = pgnMatch[1]?.trim();
+    if (captured) {
+      candidates.push(unescapeJsonString(captured));
+    }
+    pgnMatch = pgnJsonRegex.exec(content);
+  }
+
+  return candidates;
+}
+
+function findPgnInObject(value: unknown, depth = 0): string | null {
+  if (depth > 5 || value == null) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (typeof value !== "object") {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const nested = findPgnInObject(entry, depth + 1);
+      if (nested) {
+        return nested;
+      }
+    }
+
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (typeof record.pgn === "string") {
+    return record.pgn;
+  }
+
+  for (const nestedValue of Object.values(record)) {
+    const nested = findPgnInObject(nestedValue, depth + 1);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function normalizeValidatedPgn(input: string): string | null {
+  const pgn = input.trim();
+  if (!pgn) {
+    return null;
+  }
+
+  const replay = new Chess();
+  try {
+    replay.loadPgn(pgn, { strict: false });
+  } catch {
+    return null;
+  }
+
+  if (replay.history().length === 0) {
+    return null;
+  }
+
+  return pgn;
+}
+
+async function fetchWithTimeout(url: string): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), IMPORT_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+      redirect: "follow",
+      headers: {
+        Accept: "application/json,text/plain,text/html,*/*",
+        "User-Agent": "ChessPractice-PGN-Importer/1.0",
+      },
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function resolvePgnFromUrl(url: URL): Promise<string | null> {
+  const candidates = buildImportCandidates(url);
+
+  for (const candidate of candidates) {
+    try {
+      const response = await fetchWithTimeout(candidate);
+      if (!response.ok) {
+        continue;
+      }
+
+      const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+
+      const payloadCandidates: string[] = [];
+      if (contentType.includes("json")) {
+        const json = await response.json();
+        const pgnFromObject = findPgnInObject(json);
+        if (pgnFromObject) {
+          payloadCandidates.push(pgnFromObject);
+        }
+      } else {
+        const text = await response.text();
+        payloadCandidates.push(...getPgnCandidatesFromText(text));
+      }
+
+      for (const candidatePgn of payloadCandidates) {
+        const normalized = normalizeValidatedPgn(candidatePgn);
+        if (normalized) {
+          return normalized;
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+async function resolveImportedPgn(source: string): Promise<string | null> {
+  const parsedUrl = parseHttpUrl(source);
+  if (!parsedUrl) {
+    return normalizeValidatedPgn(source);
+  }
+
+  if (isBlockedImportHost(parsedUrl.hostname)) {
+    return null;
+  }
+
+  return resolvePgnFromUrl(parsedUrl);
+}
 
 function buildFirebaseClientConfig(): FirebaseClientConfig {
   return {
@@ -172,6 +409,37 @@ function buildFirebaseClientConfig(): FirebaseClientConfig {
 app.get("/api/firebase-config", (_request, response) => {
   response.setHeader("Cache-Control", "no-store");
   response.json(buildFirebaseClientConfig());
+});
+
+app.post("/api/pgn-import", async (request, response) => {
+  const source = typeof request.body?.source === "string"
+    ? request.body.source.trim()
+    : "";
+
+  if (!source) {
+    response.status(400).json({ error: "Provide a PGN string or game URL." });
+    return;
+  }
+
+  if (source.length > MAX_IMPORT_SOURCE_LENGTH) {
+    response.status(413).json({ error: "Import source is too large." });
+    return;
+  }
+
+  try {
+    const resolvedPgn = await resolveImportedPgn(source);
+    if (!resolvedPgn) {
+      response.status(400).json({
+        error: "Could not extract a valid PGN from that source. Paste the full PGN text if the URL blocks automated access.",
+      });
+      return;
+    }
+
+    response.setHeader("Cache-Control", "no-store");
+    response.json({ pgn: resolvedPgn });
+  } catch {
+    response.status(500).json({ error: "PGN import failed unexpectedly." });
+  }
 });
 
 app.get("/analyze", (_request, response) => {

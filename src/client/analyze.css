@@ -9,7 +9,7 @@
 .analysis-loading-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1200;
+  z-index: 20000;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -22,6 +22,11 @@
 body.analysis-loading-active {
   overflow: hidden;
   touch-action: none;
+}
+
+body.analysis-loading-active .piece {
+  transition: none !important;
+  animation: none !important;
 }
 
 .analysis-loading-card {
@@ -127,6 +132,13 @@ body.analysis-loading-active {
 
 .analyze-toolbar button:hover {
   transform: translateY(-1px);
+}
+
+.analyze-toolbar button:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
+  box-shadow: none;
 }
 
 .btn-primary {
