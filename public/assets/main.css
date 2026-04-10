@@ -874,35 +874,122 @@ button {
   margin: 0 auto;
   padding: 28px 0 40px;
 }
-.auth-quickbar {
-  display: grid;
-  justify-items: end;
-  gap: 8px;
+.top-utility {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
   margin-bottom: 12px;
 }
-.auth-quick-copy {
-  text-align: right;
-}
-.auth-quick-status,
-.auth-quick-meta {
+.quick-identity {
   margin: 0;
+  font-weight: 700;
 }
-.auth-quick-meta {
-  font-size: 0.88rem;
+.account-menu-button {
+  min-width: 140px;
 }
-.auth-quick-actions {
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 14, 12, 0.45);
+  z-index: 800;
+}
+.account-sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: min(410px, 100vw);
+  height: 100dvh;
+  padding: 20px;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--accent-soft);
+  border-left: 1px solid rgba(25, 35, 32, 0.16);
+  box-shadow: -20px 0 38px rgba(16, 28, 24, 0.25);
+  transform: translateX(100%);
+  transition: transform 220ms ease;
+  z-index: 850;
+}
+.account-sidebar.open {
+  transform: translateX(0);
+}
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.sidebar-header h2 {
+  margin: 0;
+  font-family:
+    "Fraunces",
+    Georgia,
+    serif;
+  font-size: 1.55rem;
+}
+.sidebar-close-button {
+  min-width: 96px;
+}
+.sidebar-nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.sidebar-tab.active {
+  background: var(--accent-strong);
+  color: #fffaf3;
+  box-shadow: 0 10px 22px rgba(25, 63, 48, 0.2);
+}
+.sidebar-panel {
+  background: var(--paper);
+  border: 1px solid rgba(25, 35, 32, 0.1);
+  border-radius: 18px;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+.sidebar-actions {
+  display: grid;
   gap: 10px;
 }
 .auth-name-input {
   min-height: 42px;
-  min-width: 220px;
+  min-width: 100%;
   border-radius: 999px;
   border: 1px solid rgba(25, 35, 32, 0.14);
   padding: 0 14px;
   background: #fffaf1;
+}
+.saved-games-list {
+  max-height: min(58vh, 580px);
+  overflow: auto;
+  display: grid;
+  gap: 12px;
+  padding-right: 4px;
+}
+.saved-game-item {
+  border: 1px solid rgba(25, 35, 32, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.84);
+  padding: 10px;
+}
+.saved-game-item h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+.saved-game-pgn {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.82rem;
+  line-height: 1.46;
+  max-height: 150px;
+  overflow: auto;
+  font-family:
+    "Space Grotesk",
+    "Segoe UI",
+    sans-serif;
 }
 .hero {
   display: grid;
@@ -1784,14 +1871,26 @@ button {
     width: min(100vw - 18px, 100%);
     padding-top: 14px;
   }
-  .auth-quickbar {
-    justify-items: stretch;
+  .top-utility {
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
   }
-  .auth-quick-copy {
-    text-align: left;
+  .quick-identity {
+    max-width: 46vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .auth-quick-actions {
-    justify-content: flex-start;
+  .account-menu-button {
+    min-width: 126px;
+  }
+  .account-sidebar {
+    width: 100vw;
+    padding: 14px;
+  }
+  .saved-games-list {
+    max-height: 50dvh;
   }
   .auth-name-input {
     min-width: 100%;
@@ -2438,7 +2537,9 @@ body.focus-mode {
   overflow: hidden !important;
 }
 body.focus-mode .theme-switcher,
-body.focus-mode .auth-quickbar,
+body.focus-mode .top-utility,
+body.focus-mode .account-sidebar,
+body.focus-mode .sidebar-backdrop,
 body.focus-mode .hero,
 body.focus-mode .side-panel,
 body.focus-mode .analyze-side,

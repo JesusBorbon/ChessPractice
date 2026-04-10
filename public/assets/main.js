@@ -27693,6 +27693,15 @@ async function getStoredGameCount(userId) {
   const games = normalizeStoredGames(snapshot.data().games);
   return games.length;
 }
+async function getStoredGameHistory(userId) {
+  const database = requireDb();
+  const documentRef = doc(database, "userGameHistory", userId);
+  const snapshot = await getDoc(documentRef);
+  if (!snapshot.exists()) {
+    return [];
+  }
+  return normalizeStoredGames(snapshot.data().games);
+}
 async function saveGamePgnForUser(userId, pgn2) {
   const database = requireDb();
   const documentRef = doc(database, "userGameHistory", userId);
@@ -27975,6 +27984,10 @@ var require_main = __commonJS({
     var savedGameSignature = null;
     var failedGameSignature = null;
     var editableUsername = "";
+    var sidebarOpen = false;
+    var activeSidebarTab = "profile";
+    var savedGameHistory = [];
+    var historyLoading = false;
     var USERNAME_STORAGE_PREFIX = "chess-custom-username:";
     var SMOOTH_MOVE_DURATION_MS = 620;
     var EPIC_MOVE_DURATION_MS = {
@@ -28163,19 +28176,42 @@ var require_main = __commonJS({
     }
     app.innerHTML = `
   <div class="app-shell">
-    <section class="auth-quickbar" id="authQuickbar">
-      <div class="auth-quick-copy">
-        <p class="muted auth-quick-status" id="authStatus">Guest mode enabled.</p>
-        <p class="muted auth-quick-meta" id="storedGamesMeta">Sign in/sign up to save up to 100 PGNs in cloud history.</p>
-      </div>
-      <div class="auth-quick-actions">
-        <input class="auth-name-input" id="usernameInput" type="text" maxlength="24" placeholder="Custom username" hidden />
-        <button class="chip" id="saveUsernameButton" type="button" hidden>Save username</button>
-        <button class="chip" id="guestModeButton" type="button">Play as guest</button>
-        <button class="action cta-rainbow" id="signInGoogleButton" type="button">Sign in / Sign up</button>
-        <button class="chip" id="signOutButton" type="button" hidden>Sign out</button>
-      </div>
+    <section class="top-utility">
+      <p class="muted quick-identity" id="quickIdentity">Guest</p>
+      <button class="chip account-menu-button" id="accountMenuButton" type="button" aria-haspopup="dialog" aria-expanded="false">
+        Account Menu
+      </button>
     </section>
+
+    <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
+    <aside class="account-sidebar" id="accountSidebar" aria-hidden="true">
+      <header class="sidebar-header">
+        <h2>Player Menu</h2>
+        <button class="chip sidebar-close-button" id="sidebarCloseButton" type="button" aria-label="Close menu">Close</button>
+      </header>
+
+      <nav class="sidebar-nav" aria-label="Account sections">
+        <button class="chip sidebar-tab active" id="sidebarProfileTab" type="button">Profile</button>
+        <button class="chip sidebar-tab" id="sidebarHistoryTab" type="button">Saved Games</button>
+      </nav>
+
+      <section class="sidebar-panel" id="sidebarProfilePanel">
+        <p class="muted" id="authStatus">Guest mode enabled.</p>
+        <p class="muted" id="storedGamesMeta">Sign in/sign up to save up to 100 PGNs in cloud history.</p>
+        <div class="sidebar-actions">
+          <input class="auth-name-input" id="usernameInput" type="text" maxlength="24" placeholder="Custom username" hidden />
+          <button class="chip" id="saveUsernameButton" type="button" hidden>Save username</button>
+          <button class="chip" id="guestModeButton" type="button">Play as guest</button>
+          <button class="action cta-rainbow" id="signInGoogleButton" type="button">Sign in / Sign up</button>
+          <button class="chip" id="signOutButton" type="button" hidden>Sign out</button>
+        </div>
+      </section>
+
+      <section class="sidebar-panel" id="sidebarHistoryPanel" hidden>
+        <p class="muted" id="historyPanelStatus">Sign in to view your saved PGN history.</p>
+        <div class="saved-games-list" id="savedGamesList"></div>
+      </section>
+    </aside>
 
     <nav class="game-nav" id="gameNav" hidden>
       <button class="nav-back-link" id="backToMenuButton" type="button">\u2190 Back to menu</button>
@@ -28383,6 +28419,17 @@ var require_main = __commonJS({
     var pregamePlaceholder = must("#pregamePlaceholder");
     var inviteJoinCard = must("#inviteJoinCard");
     var analysisBoardLink = must("#analysisBoardLink");
+    var quickIdentity = must("#quickIdentity");
+    var accountMenuButton = must("#accountMenuButton");
+    var sidebarBackdrop = must("#sidebarBackdrop");
+    var accountSidebar = must("#accountSidebar");
+    var sidebarCloseButton = must("#sidebarCloseButton");
+    var sidebarProfileTab = must("#sidebarProfileTab");
+    var sidebarHistoryTab = must("#sidebarHistoryTab");
+    var sidebarProfilePanel = must("#sidebarProfilePanel");
+    var sidebarHistoryPanel = must("#sidebarHistoryPanel");
+    var historyPanelStatus = must("#historyPanelStatus");
+    var savedGamesList = must("#savedGamesList");
     var authStatus = must("#authStatus");
     var storedGamesMeta = must("#storedGamesMeta");
     var usernameInput = must("#usernameInput");
@@ -28446,6 +28493,9 @@ var require_main = __commonJS({
     myPickWhite.addEventListener("click", () => socket.emit("pregame:select", { color: "w" }));
     myPickBlack.addEventListener("click", () => socket.emit("pregame:select", { color: "b" }));
     pregameReadyBtn.addEventListener("click", () => socket.emit("pregame:ready"));
+    setSidebarOpen(false);
+    setActiveSidebarTab("profile");
+    renderSavedHistoryPanel();
     mountThemeSwitcher();
     applyAnimationTiming(state.animationStyle);
     window.addEventListener("animationchange", (event) => {
@@ -28534,8 +28584,75 @@ var require_main = __commonJS({
       }
       socket.emit("profile:setName", { name: getCurrentPlayerName() });
     }
+    function setSidebarOpen(nextOpen) {
+      sidebarOpen = nextOpen;
+      accountSidebar.classList.toggle("open", sidebarOpen);
+      sidebarBackdrop.hidden = !sidebarOpen;
+      accountSidebar.setAttribute("aria-hidden", sidebarOpen ? "false" : "true");
+      accountMenuButton.setAttribute("aria-expanded", sidebarOpen ? "true" : "false");
+    }
+    function setActiveSidebarTab(nextTab) {
+      activeSidebarTab = nextTab;
+      const showProfile = activeSidebarTab === "profile";
+      sidebarProfileTab.classList.toggle("active", showProfile);
+      sidebarHistoryTab.classList.toggle("active", !showProfile);
+      sidebarProfilePanel.hidden = !showProfile;
+      sidebarHistoryPanel.hidden = showProfile;
+    }
+    function renderSavedHistoryPanel() {
+      savedGamesList.innerHTML = "";
+      if (!authenticatedUser) {
+        historyPanelStatus.textContent = "Sign in to view your saved PGN history.";
+        return;
+      }
+      if (!isFirebaseAuthEnabled()) {
+        historyPanelStatus.textContent = "Firebase is unavailable right now.";
+        return;
+      }
+      if (historyLoading) {
+        historyPanelStatus.textContent = "Loading saved games...";
+        return;
+      }
+      if (savedGameHistory.length === 0) {
+        historyPanelStatus.textContent = "No saved games yet. Finished games are saved automatically.";
+        return;
+      }
+      historyPanelStatus.textContent = `Showing ${savedGameHistory.length} saved PGN${savedGameHistory.length === 1 ? "" : "s"}.`;
+      savedGameHistory.forEach((pgn2, index) => {
+        const item = document.createElement("article");
+        item.className = "saved-game-item";
+        const heading = document.createElement("h3");
+        heading.textContent = `Game ${index + 1}`;
+        const pgnBlock = document.createElement("pre");
+        pgnBlock.className = "saved-game-pgn";
+        pgnBlock.textContent = pgn2;
+        item.appendChild(heading);
+        item.appendChild(pgnBlock);
+        savedGamesList.appendChild(item);
+      });
+    }
+    async function refreshSavedHistoryPanel() {
+      if (!authenticatedUser || !isFirebaseAuthEnabled()) {
+        savedGameHistory = [];
+        historyLoading = false;
+        renderSavedHistoryPanel();
+        return;
+      }
+      historyLoading = true;
+      renderSavedHistoryPanel();
+      try {
+        savedGameHistory = await getStoredGameHistory(authenticatedUser.uid);
+      } catch {
+        savedGameHistory = [];
+        showToast("Could not load saved PGN history.");
+      } finally {
+        historyLoading = false;
+        renderSavedHistoryPanel();
+      }
+    }
     function renderAuthPanel() {
       if (!authInitFinished) {
+        quickIdentity.textContent = "Loading...";
         authStatus.textContent = "Loading Firebase settings...";
         storedGamesMeta.textContent = "Checking Firebase authentication...";
         usernameInput.hidden = true;
@@ -28549,6 +28666,7 @@ var require_main = __commonJS({
       }
       if (!isFirebaseAuthEnabled()) {
         const reason = getFirebaseAuthDisabledReason() ?? "Missing Firebase configuration.";
+        quickIdentity.textContent = "Guest";
         authStatus.textContent = `Playing as Guest. Firebase unavailable: ${reason}`;
         storedGamesMeta.textContent = "Analysis is available, but cloud PGN history is disabled.";
         usernameInput.hidden = true;
@@ -28562,6 +28680,7 @@ var require_main = __commonJS({
       }
       if (authenticatedUser) {
         const userLabel = getCurrentPlayerName();
+        quickIdentity.textContent = userLabel;
         authStatus.textContent = `Signed in as ${userLabel}`;
         storedGamesMeta.textContent = `History enabled: ${storedGamesCount ?? "..."} / 100 PGNs`;
         usernameInput.hidden = false;
@@ -28578,6 +28697,7 @@ var require_main = __commonJS({
         signOutButton.disabled = authBusy;
         return;
       }
+      quickIdentity.textContent = "Guest";
       authStatus.textContent = "Playing as Guest.";
       storedGamesMeta.textContent = "Guests can play and analyze, but games are not saved.";
       usernameInput.hidden = true;
@@ -28621,6 +28741,7 @@ var require_main = __commonJS({
       savingGameSignature = signature;
       try {
         storedGamesCount = await saveGamePgnForUser(authenticatedUser.uid, pgn2);
+        void refreshSavedHistoryPanel();
         savedGameSignature = signature;
         failedGameSignature = null;
         showToast("Game saved to your cloud PGN history.");
@@ -28646,15 +28767,44 @@ var require_main = __commonJS({
       authUnsubscribe = listenToAuthState((user) => {
         authenticatedUser = user;
         storedGamesCount = null;
+        savedGameHistory = [];
+        historyLoading = false;
         editableUsername = getCurrentPlayerName();
         renderAuthPanel();
+        renderSavedHistoryPanel();
         emitCurrentProfileName();
         if (user) {
           void refreshStoredGamesCount();
+          void refreshSavedHistoryPanel();
           void maybePersistFinishedGame(state.snapshot);
         }
       });
     }
+    accountMenuButton.addEventListener("click", () => {
+      const nextOpen = !sidebarOpen;
+      setSidebarOpen(nextOpen);
+      if (nextOpen && activeSidebarTab === "history") {
+        void refreshSavedHistoryPanel();
+      }
+    });
+    sidebarCloseButton.addEventListener("click", () => {
+      setSidebarOpen(false);
+    });
+    sidebarBackdrop.addEventListener("click", () => {
+      setSidebarOpen(false);
+    });
+    sidebarProfileTab.addEventListener("click", () => {
+      setActiveSidebarTab("profile");
+    });
+    sidebarHistoryTab.addEventListener("click", () => {
+      setActiveSidebarTab("history");
+      void refreshSavedHistoryPanel();
+    });
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && sidebarOpen) {
+        setSidebarOpen(false);
+      }
+    });
     playBotButton.addEventListener("click", () => {
       if (state.roomId && state.gameMode === "multiplayer") {
         toggleConfirmModal(true, "bot");

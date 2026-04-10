@@ -232,6 +232,17 @@ export async function getStoredGameCount(userId: string): Promise<number> {
   return games.length;
 }
 
+export async function getStoredGameHistory(userId: string): Promise<string[]> {
+  const database = requireDb();
+  const documentRef = doc(database, "userGameHistory", userId);
+  const snapshot = await getDoc(documentRef);
+  if (!snapshot.exists()) {
+    return [];
+  }
+
+  return normalizeStoredGames(snapshot.data().games);
+}
+
 export async function saveGamePgnForUser(userId: string, pgn: string): Promise<number> {
   const database = requireDb();
   const documentRef = doc(database, "userGameHistory", userId);
