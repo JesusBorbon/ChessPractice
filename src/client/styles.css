@@ -91,9 +91,14 @@ button {
 .sidebar-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(8, 14, 12, 0.45);
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
   z-index: 800;
+} 
+
+[data-theme="purple"] .sidebar-backdrop {
+  background: color-mix(in srgb, rgba(11, 4, 42, 0.486) 48%, transparent);
 }
+
 
 .account-sidebar {
   position: fixed;
