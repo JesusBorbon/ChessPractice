@@ -422,41 +422,88 @@ function playSound(name: string): void {
 }
 let _lastPlayedMoveCount = -1;
 
-function playSoundForSnapshot(snapshot: RoomSnapshot): void {
-  const last = snapshot.lastMove;
-  if (!last) return;
-
-  // 1. Eventos de fin de partida (prioridad absoluta)
-  if (snapshot.checkmate || snapshot.draw) {
+function playSoundForMoveTraversal(moveSan: string, isCheck: boolean, isGameEnd: boolean): void {
+  if (isGameEnd) {
     playSound("gameEndOrCheckmate");
-    return; // Si el juego termina, no nos importa lo demás
+    return;
   }
 
-  // 2. Usamos una variable para saber si ya sonó algo "especial"
   let specialSoundPlayed = false;
 
-  // JAQUE
-  if (snapshot.check) {
+  if (isCheck) {
     playSound("checkMove");
     specialSoundPlayed = true;
   }
 
-  // CAPTURA (Se evalúa de forma independiente al jaque)
-  if (last.san.includes("x")) {
+  if (moveSan.includes("x")) {
     playSound("capture");
     specialSoundPlayed = true;
   }
 
-  // ENROQUE (Si no hubo jaque o captura que lo "pise", aunque es raro)
-  if (last.san.startsWith("O-O") && !specialSoundPlayed) {
+  if (moveSan.startsWith("O-O") && !specialSoundPlayed) {
     playSound("castle");
     specialSoundPlayed = true;
   }
 
-  // 3. Movimiento normal: Solo si no ocurrió NADA de lo anterior
   if (!specialSoundPlayed) {
     playSound("move-self");
   }
+}
+
+function buildHistoryBoardAtMove(snapshot: RoomSnapshot, moveCount: number): Chess {
+  const historyBoard = new Chess();
+  const clampedCount = Math.max(0, Math.min(moveCount, snapshot.moves.length));
+
+  for (let i = 0; i < clampedCount; i += 1) {
+    const move = snapshot.moves[i];
+    if (move) {
+      historyBoard.move(move.san);
+    }
+  }
+
+  return historyBoard;
+}
+
+function playSoundForHistoryNavigation(snapshot: RoomSnapshot, previousPos: number, nextPos: number): void {
+  if (previousPos === nextPos) {
+    return;
+  }
+
+  const traversedMoveIndex = nextPos > previousPos ? nextPos - 1 : previousPos - 1;
+  const traversedMove = snapshot.moves[traversedMoveIndex];
+  if (!traversedMove) {
+    return;
+  }
+
+  const boardAtNext = buildHistoryBoardAtMove(snapshot, nextPos);
+  const isGameEnd = boardAtNext.isCheckmate() || boardAtNext.isDraw();
+  const isCheck = boardAtNext.isCheck();
+  playSoundForMoveTraversal(traversedMove.san, isCheck, isGameEnd);
+}
+
+function navigateToHistoryPosition(targetPos: number): void {
+  const snapshot = state.snapshot;
+  if (!snapshot || snapshot.moves.length === 0) {
+    return;
+  }
+
+  const maxMoves = snapshot.moves.length;
+  const previousPos = state.viewCursor !== null ? state.viewCursor : maxMoves;
+  const clampedTarget = Math.max(0, Math.min(targetPos, maxMoves));
+  if (clampedTarget === previousPos) {
+    return;
+  }
+
+  state.viewCursor = clampedTarget === maxMoves ? null : clampedTarget;
+  playSoundForHistoryNavigation(snapshot, previousPos, clampedTarget);
+  render();
+}
+
+function playSoundForSnapshot(snapshot: RoomSnapshot): void {
+  const last = snapshot.lastMove;
+  if (!last) return;
+
+  playSoundForMoveTraversal(last.san, snapshot.check, snapshot.checkmate || snapshot.draw);
 }
 
 
@@ -971,35 +1018,28 @@ copyLinkButton.addEventListener("click", async () => {
 });
 
 liveNavFirst.addEventListener("click", () => {
-  if (!state.snapshot || state.snapshot.moves.length === 0) return;
-  state.viewCursor = 0;
-  render();
+  navigateToHistoryPosition(0);
 });
 
 liveNavPrev.addEventListener("click", () => {
-  if (!state.snapshot || state.snapshot.moves.length === 0) return;
-  const currentPos = state.viewCursor !== null ? state.viewCursor : state.snapshot.moves.length;
-  if (currentPos > 0) {
-    state.viewCursor = currentPos - 1;
-    render();
-  }
+  const snapshot = state.snapshot;
+  if (!snapshot) return;
+  const currentPos = state.viewCursor !== null ? state.viewCursor : snapshot.moves.length;
+  navigateToHistoryPosition(currentPos - 1);
 });
 
 liveNavNext.addEventListener("click", () => {
-  if (!state.snapshot || state.snapshot.moves.length === 0) return;
-  const maxMoves = state.snapshot.moves.length;
+  const snapshot = state.snapshot;
+  if (!snapshot) return;
+  const maxMoves = snapshot.moves.length;
   const currentPos = state.viewCursor !== null ? state.viewCursor : maxMoves;
-  if (currentPos < maxMoves) {
-    state.viewCursor = currentPos + 1;
-    if (state.viewCursor === maxMoves) state.viewCursor = null;
-    render();
-  }
+  navigateToHistoryPosition(currentPos + 1);
 });
 
 liveNavLast.addEventListener("click", () => {
-  if (!state.snapshot || state.snapshot.moves.length === 0) return;
-  state.viewCursor = null;
-  render();
+  const snapshot = state.snapshot;
+  if (!snapshot) return;
+  navigateToHistoryPosition(snapshot.moves.length);
 });
 
 leaveRoomButton.addEventListener("click", () => {
@@ -1196,18 +1236,12 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "ArrowLeft") {
     e.preventDefault();
     if (currentPos > 0) {
-      state.viewCursor = currentPos - 1;
-      render();
+      navigateToHistoryPosition(currentPos - 1);
     }
   } else if (e.key === "ArrowRight") {
     e.preventDefault();
     if (currentPos < maxMoves) {
-      state.viewCursor = currentPos + 1;
-      // If we reach the end of the history, snap back into live mode
-      if (state.viewCursor === maxMoves) {
-        state.viewCursor = null;
-      }
-      render();
+      navigateToHistoryPosition(currentPos + 1);
     }
   }
 });
@@ -2670,16 +2704,7 @@ moveList.addEventListener("click", (e) => {
   if (!target || !state.snapshot) return;
   
   const index = parseInt(target.dataset.index!, 10);
-  
-  // If they click the very last move in the game, snap back to live viewing mode
-  if (index === state.snapshot.moves.length) {
-    state.viewCursor = null;
-  } else {
-    // Otherwise, set the cursor to the clicked move
-    state.viewCursor = index;
-  }
-  
-  render();
+  navigateToHistoryPosition(index);
 });
 function updateCaption(): void {
   const snapshot = state.snapshot;
