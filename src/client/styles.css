@@ -106,9 +106,10 @@ button {
   flex-direction: column;
   gap: 16px;
   /*adapted to the color palette*/
-  background: var(--accent-soft);
+  /* background: var(--accent-soft); */
+  backdrop-filter: blur(18px);
   border-left: 1px solid rgba(25, 35, 32, 0.16);
-  box-shadow: -20px 0 38px rgba(16, 28, 24, 0.25);
+  box-shadow: -5px 0 38px rgba(16, 28, 24, 0.25);
   transform: translateX(100%);
   transition: transform 220ms ease;
   z-index: 850;
@@ -131,8 +132,10 @@ button {
   font-size: 1.55rem;
 }
 
-.sidebar-close-button {
-  min-width: 96px;
+
+
+#sidebarCloseButton, #sidebarHistoryTab, #sidebarProfileTab{
+  color: white;
 }
 
 .sidebar-nav {
@@ -1175,6 +1178,12 @@ button {
 }
 
 @media (max-width: 640px) {
+  body.sidebar-open-mobile {
+    overflow: hidden;
+    touch-action: none;
+    overscroll-behavior: none;
+  }
+
   .app-shell {
     width: min(100vw - 18px, 100%);
     padding-top: 14px;
@@ -1305,6 +1314,15 @@ button {
     font-size: 0.78rem;
   }
 
+  
+  .sidebar-close-button {
+  min-width: 96px;
+  background-color: rgba(254, 1, 1, 0.356) !important;
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(213, 17, 17, 0.8) !important;
+  
+}
+
 
  .square.legal::after {
   content: "";
@@ -1355,12 +1373,11 @@ square.legal:has(.piece-quality-marker)::after {
     align-items: flex-start;
     gap: 10px;
     padding: 10px 12px;
-    background: var(--paper-strong);
     border: 1px solid rgba(25, 35, 32, 0.1);
     border-radius: 18px;
     box-shadow: var(--shadow);
     z-index: 200;
-    backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px); 
     transition: all 0.3s cubic-bezier(0.8, 0, 0.8, 1);
   }
 
@@ -1514,13 +1531,13 @@ square.legal:has(.piece-quality-marker)::after {
   .animation-btn.active {
     background: var(--accent-strong);
     color: #fffdf8;
-    box-shadow: 0 7px 14px color-mix(in srgb, var(--accent-strong) 34%, transparent);
+    
   }
 
   .fx-btn.active {
     background: linear-gradient(135deg, #7b1118, #a51924 56%, #cf2c34);
     color: #fff4f4;
-    box-shadow: 0 7px 14px rgba(122, 14, 19, 0.35);
+    
   }
 
   .animation-btn:focus-visible {
@@ -2466,3 +2483,4 @@ body.focus-mode.focus-analyze .nav-row button:hover {
     margin: 0 !important;
   }
 }
+
