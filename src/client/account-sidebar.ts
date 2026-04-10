@@ -1,6 +1,7 @@
 import type { User } from "firebase/auth";
 
 import {
+  deleteStoredGameForUser,
   formatGoogleAuthError,
   getFirebaseAuthDisabledReason,
   getStoredGameCount,
@@ -8,6 +9,7 @@ import {
   initializeFirebaseClient,
   isFirebaseAuthEnabled,
   listenToAuthState,
+  SavedGameHistoryEntry,
   saveGamePgnForUser,
   signInWithGoogle,
   signOutCurrentUser,
@@ -49,6 +51,7 @@ type CreateAccountSidebarControllerOptions = {
   refs: AccountSidebarDomRefs;
   showToast: (message: string) => void;
   onIdentityUpdated: () => void;
+  onOpenSavedGameForAnalysis?: (pgn: string) => void;
 };
 
 export type AccountSidebarController = {
@@ -70,6 +73,7 @@ export function createAccountSidebarController({
   refs,
   showToast,
   onIdentityUpdated,
+  onOpenSavedGameForAnalysis,
 }: CreateAccountSidebarControllerOptions): AccountSidebarController {
   let authenticatedUser: User | null = null;
   let authUnsubscribe: (() => void) | null = null;
@@ -80,8 +84,9 @@ export function createAccountSidebarController({
 
   let sidebarOpen = false;
   let activeSidebarTab: "profile" | "history" = "profile";
-  let savedGameHistory: string[] = [];
+  let savedGameHistory: SavedGameHistoryEntry[] = [];
   let historyLoading = false;
+  let deletingGameId: string | null = null;
 
   let savingGameSignature: string | null = null;
   let savedGameSignature: string | null = null;
@@ -271,6 +276,111 @@ export function createAccountSidebarController({
     refs.sidebarHistoryPanel.hidden = showProfile;
   }
 
+  function getSavedGameTimestamp(savedAt: string | null): number {
+    if (!savedAt) {
+      return 0;
+    }
+
+    const parsed = new Date(savedAt).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  function getSortedSavedGameHistory(): SavedGameHistoryEntry[] {
+    return savedGameHistory
+      .map((entry, index) => ({ entry, index }))
+      .sort((left, right) => {
+        const timestampDiff = getSavedGameTimestamp(right.entry.savedAt) - getSavedGameTimestamp(left.entry.savedAt);
+        if (timestampDiff !== 0) {
+          return timestampDiff;
+        }
+
+        return left.index - right.index;
+      })
+      .map((item) => item.entry);
+  }
+
+  function formatSavedGameDate(savedAt: string | null): string {
+    if (!savedAt) {
+      return "Date unavailable";
+    }
+
+    const date = new Date(savedAt);
+    if (Number.isNaN(date.getTime())) {
+      return "Date unavailable";
+    }
+
+    return `Played ${date.toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+    })}`;
+  }
+
+  function openSavedGameInAnalysis(pgn: string): void {
+    const normalizedPgn = pgn.trim();
+    if (!normalizedPgn) {
+      showToast("This saved game does not contain a valid PGN.");
+      return;
+    }
+
+    if (onOpenSavedGameForAnalysis) {
+      onOpenSavedGameForAnalysis(normalizedPgn);
+      return;
+    }
+
+    localStorage.removeItem("postGameMoves");
+    localStorage.setItem("postGamePgn", normalizedPgn);
+    window.location.assign("/analyze");
+  }
+
+  async function handleDeleteSavedGame(game: SavedGameHistoryEntry): Promise<void> {
+    if (!authenticatedUser || !isFirebaseAuthEnabled()) {
+      return;
+    }
+
+    if (deletingGameId) {
+      return;
+    }
+
+    deletingGameId = game.id;
+    renderSavedHistoryPanel();
+
+    try {
+      storedGamesCount = await deleteStoredGameForUser(authenticatedUser.uid, game.id);
+      savedGameHistory = savedGameHistory.filter((entry) => entry.id !== game.id);
+      showToast("Saved game deleted.");
+    } catch {
+      showToast("Could not delete saved game.");
+    } finally {
+      deletingGameId = null;
+      renderAuthPanel();
+      renderSavedHistoryPanel();
+    }
+  }
+
+  function appendImportPlaceholderCard(): void {
+    const placeholderCard = document.createElement("article");
+    placeholderCard.className = "saved-game-import-placeholder";
+
+    const title = document.createElement("h3");
+    title.textContent = "Import external PGN";
+
+    const description = document.createElement("p");
+    description.className = "saved-game-import-description";
+    description.textContent = "Coming soon: paste a PGN or upload a PGN file directly into your history.";
+
+    const disabledButton = document.createElement("button");
+    disabledButton.type = "button";
+    disabledButton.className = "ghost saved-game-import-button";
+    disabledButton.disabled = true;
+    disabledButton.textContent = "Import PGN (coming soon)";
+
+    placeholderCard.appendChild(title);
+    placeholderCard.appendChild(description);
+    placeholderCard.appendChild(disabledButton);
+    refs.savedGamesList.appendChild(placeholderCard);
+  }
+
   function renderSavedHistoryPanel(): void {
     refs.savedGamesList.innerHTML = "";
 
@@ -289,28 +399,88 @@ export function createAccountSidebarController({
       return;
     }
 
-    if (savedGameHistory.length === 0) {
+    const sortedGames = getSortedSavedGameHistory();
+    if (sortedGames.length === 0) {
       refs.historyPanelStatus.textContent = "No saved games yet. Finished games are saved automatically.";
+      appendImportPlaceholderCard();
       return;
     }
 
-    refs.historyPanelStatus.textContent = `Showing ${savedGameHistory.length} saved PGN${savedGameHistory.length === 1 ? "" : "s"}.`;
+    refs.historyPanelStatus.textContent = `Showing ${sortedGames.length} saved game${sortedGames.length === 1 ? "" : "s"}. Select one to analyze.`;
 
-    savedGameHistory.forEach((pgn, index) => {
+    sortedGames.forEach((game, index) => {
+      const deletingThisGame = deletingGameId === game.id;
+
       const item = document.createElement("article");
       item.className = "saved-game-item";
+      item.setAttribute("role", "button");
+      item.setAttribute("tabindex", "0");
+      if (deletingThisGame) {
+        item.classList.add("deleting");
+      }
+
+      const header = document.createElement("div");
+      header.className = "saved-game-header";
 
       const heading = document.createElement("h3");
       heading.textContent = `Game ${index + 1}`;
 
-      const pgnBlock = document.createElement("pre");
-      pgnBlock.className = "saved-game-pgn";
-      pgnBlock.textContent = pgn;
+      const dateLabel = document.createElement("p");
+      dateLabel.className = "saved-game-date";
+      dateLabel.textContent = formatSavedGameDate(game.savedAt);
 
-      item.appendChild(heading);
-      item.appendChild(pgnBlock);
+      const actions = document.createElement("div");
+      actions.className = "saved-game-actions";
+
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "ghost saved-game-delete-button";
+      deleteButton.disabled = deletingThisGame;
+      deleteButton.textContent = deletingThisGame ? "Deleting..." : "Delete";
+      deleteButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void handleDeleteSavedGame(game);
+      });
+
+      const openHint = document.createElement("p");
+      openHint.className = "saved-game-open-hint";
+      openHint.textContent = "Tap to open in analysis";
+
+      actions.appendChild(deleteButton);
+      header.appendChild(heading);
+      header.appendChild(actions);
+
+      item.appendChild(header);
+      item.appendChild(dateLabel);
+      item.appendChild(openHint);
+
+      item.addEventListener("click", () => {
+        if (deletingGameId) {
+          return;
+        }
+
+        setSidebarOpen(false);
+        openSavedGameInAnalysis(game.pgn);
+      });
+
+      item.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") {
+          return;
+        }
+
+        event.preventDefault();
+        if (deletingGameId) {
+          return;
+        }
+
+        setSidebarOpen(false);
+        openSavedGameInAnalysis(game.pgn);
+      });
+
       refs.savedGamesList.appendChild(item);
     });
+
+    appendImportPlaceholderCard();
   }
 
   async function refreshSavedHistoryPanel(): Promise<void> {
@@ -521,6 +691,7 @@ export function createAccountSidebarController({
       storedGamesCount = null;
       savedGameHistory = [];
       historyLoading = false;
+      deletingGameId = null;
 
       editableUsername = getCurrentPlayerName();
 

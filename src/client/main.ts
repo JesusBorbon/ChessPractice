@@ -887,6 +887,11 @@ const accountSidebarController = createAccountSidebarController({
   onIdentityUpdated: () => {
     render();
   },
+  onOpenSavedGameForAnalysis: (pgn: string) => {
+    localStorage.removeItem("postGameMoves");
+    localStorage.setItem("postGamePgn", pgn);
+    window.location.assign("/analyze");
+  },
 });
 
 function normalizeUsername(value: string): string {

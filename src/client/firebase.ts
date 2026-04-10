@@ -30,6 +30,12 @@ type FirebaseClientConfig = {
   measurementId: string;
 };
 
+export type SavedGameHistoryEntry = {
+  id: string;
+  pgn: string;
+  savedAt: string | null;
+};
+
 const REQUIRED_CONFIG_KEYS: Array<keyof FirebaseClientConfig> = [
   "apiKey",
   "authDomain",
@@ -66,12 +72,75 @@ function normalizeConfig(value: unknown): FirebaseClientConfig {
   };
 }
 
-function normalizeStoredGames(value: unknown): string[] {
+function buildGameIdFromPgn(pgn: string): string {
+  let hash = 2166136261;
+
+  for (let i = 0; i < pgn.length; i += 1) {
+    hash ^= pgn.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return `game_${(hash >>> 0).toString(36)}_${pgn.length}`;
+}
+
+function normalizeSavedAt(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString();
+}
+
+function normalizeStoredGameHistory(value: unknown): SavedGameHistoryEntry[] {
   if (!Array.isArray(value)) {
     return [];
   }
 
-  return value.filter((entry): entry is string => typeof entry === "string");
+  const uniqueByPgn = new Set<string>();
+  const normalizedGames: SavedGameHistoryEntry[] = [];
+
+  for (const entry of value) {
+    const rawPgn = typeof entry === "string"
+      ? entry
+      : (typeof entry === "object" && entry && typeof (entry as { pgn?: unknown }).pgn === "string"
+        ? (entry as { pgn: string }).pgn
+        : "");
+
+    const pgn = rawPgn.trim();
+    if (!pgn || uniqueByPgn.has(pgn)) {
+      continue;
+    }
+
+    uniqueByPgn.add(pgn);
+
+    const objectEntry = typeof entry === "object" && entry ? entry as { id?: unknown; savedAt?: unknown } : null;
+    const explicitId = objectEntry && typeof objectEntry.id === "string" ? objectEntry.id.trim() : "";
+
+    normalizedGames.push({
+      id: explicitId || buildGameIdFromPgn(pgn),
+      pgn,
+      savedAt: normalizeSavedAt(objectEntry?.savedAt),
+    });
+  }
+
+  return normalizedGames;
+}
+
+function serializeStoredGameHistory(games: SavedGameHistoryEntry[]): Array<{
+  id: string;
+  pgn: string;
+  savedAt: string | null;
+}> {
+  return games.map((game) => ({
+    id: game.id,
+    pgn: game.pgn,
+    savedAt: game.savedAt,
+  }));
 }
 
 function requireAuth(): Auth {
@@ -228,11 +297,11 @@ export async function getStoredGameCount(userId: string): Promise<number> {
     return 0;
   }
 
-  const games = normalizeStoredGames(snapshot.data().games);
+  const games = normalizeStoredGameHistory(snapshot.data().games);
   return games.length;
 }
 
-export async function getStoredGameHistory(userId: string): Promise<string[]> {
+export async function getStoredGameHistory(userId: string): Promise<SavedGameHistoryEntry[]> {
   const database = requireDb();
   const documentRef = doc(database, "userGameHistory", userId);
   const snapshot = await getDoc(documentRef);
@@ -240,21 +309,64 @@ export async function getStoredGameHistory(userId: string): Promise<string[]> {
     return [];
   }
 
-  return normalizeStoredGames(snapshot.data().games);
+  return normalizeStoredGameHistory(snapshot.data().games);
 }
 
 export async function saveGamePgnForUser(userId: string, pgn: string): Promise<number> {
   const database = requireDb();
   const documentRef = doc(database, "userGameHistory", userId);
   const snapshot = await getDoc(documentRef);
-  const existingGames = snapshot.exists() ? normalizeStoredGames(snapshot.data().games) : [];
+  const existingGames = snapshot.exists() ? normalizeStoredGameHistory(snapshot.data().games) : [];
+  const normalizedPgn = pgn.trim();
+  if (!normalizedPgn) {
+    return existingGames.length;
+  }
 
-  const updatedGames = [pgn, ...existingGames.filter((entry) => entry !== pgn)].slice(0, 100);
+  const updatedGames: SavedGameHistoryEntry[] = [
+    {
+      id: buildGameIdFromPgn(normalizedPgn),
+      pgn: normalizedPgn,
+      savedAt: new Date().toISOString(),
+    },
+    ...existingGames.filter((entry) => entry.pgn !== normalizedPgn),
+  ].slice(0, 100);
 
   await setDoc(
     documentRef,
     {
-      games: updatedGames,
+      games: serializeStoredGameHistory(updatedGames),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+
+  return updatedGames.length;
+}
+
+export async function deleteStoredGameForUser(userId: string, gameId: string): Promise<number> {
+  const normalizedGameId = gameId.trim();
+  if (!normalizedGameId) {
+    return 0;
+  }
+
+  const database = requireDb();
+  const documentRef = doc(database, "userGameHistory", userId);
+  const snapshot = await getDoc(documentRef);
+  if (!snapshot.exists()) {
+    return 0;
+  }
+
+  const existingGames = normalizeStoredGameHistory(snapshot.data().games);
+  const updatedGames = existingGames.filter((entry) => entry.id !== normalizedGameId);
+
+  if (updatedGames.length === existingGames.length) {
+    return existingGames.length;
+  }
+
+  await setDoc(
+    documentRef,
+    {
+      games: serializeStoredGameHistory(updatedGames),
       updatedAt: serverTimestamp(),
     },
     { merge: true },

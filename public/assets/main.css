@@ -973,25 +973,74 @@ button {
 .saved-game-item {
   border: 1px solid rgba(25, 35, 32, 0.1);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.84);
-  padding: 10px;
+  background: var(--paper);
+  padding: 11px;
+  cursor: pointer;
+  transition:
+    transform 130ms ease,
+    box-shadow 130ms ease,
+    border-color 130ms ease;
 }
-.saved-game-item h3 {
-  margin: 0 0 8px;
+.saved-game-item:hover,
+.saved-game-item:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(25, 63, 48, 0.22);
+  box-shadow: 0 10px 18px rgba(18, 40, 31, 0.08);
+  outline: none;
+}
+.saved-game-item.deleting {
+  opacity: 0.72;
+}
+.saved-game-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.saved-game-header h3 {
+  margin: 0;
   font-size: 0.95rem;
 }
-.saved-game-pgn {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
+.saved-game-actions {
+  display: inline-flex;
+  align-items: center;
+}
+.saved-game-date {
+  margin: 8px 0 4px;
   font-size: 0.82rem;
-  line-height: 1.46;
-  max-height: 150px;
-  overflow: auto;
-  font-family:
-    "Space Grotesk",
-    "Segoe UI",
-    sans-serif;
+  color: var(--muted);
+}
+.saved-game-open-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+.saved-game-delete-button {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+}
+.saved-game-import-placeholder {
+  border: 1px dashed rgba(25, 35, 32, 0.24);
+  border-radius: 14px;
+  background: var(--accent-soft);
+  padding: 11px;
+}
+.saved-game-import-placeholder h3 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+.saved-game-import-description {
+  margin: 8px 0 10px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.saved-game-import-button {
+  min-height: 36px;
+  border-radius: 999px;
+  width: 100%;
 }
 .hero {
   display: grid;
@@ -1899,6 +1948,13 @@ button {
   .saved-games-list {
     max-height: 50dvh;
   }
+  .saved-game-header {
+    align-items: flex-start;
+  }
+  .saved-game-delete-button {
+    min-height: 32px;
+    padding: 0 9px;
+  }
   .auth-name-input {
     min-width: 100%;
   }
@@ -2736,7 +2792,8 @@ body.focus-mode.focus-analyze .nav-row button:hover {
   padding: 10px 16px;
   border-radius: 12px;
   border: 1px solid rgba(25, 35, 32, 0.14);
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--accent);
+  backdrop-filter: blur(6px);
   color: var(--ink);
   font-weight: 700;
   transition:

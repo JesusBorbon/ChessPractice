@@ -275,6 +275,9 @@ const EPIC_MOVE_DURATION_MS = {
   slide: 620,
 } as const;
 
+const POST_GAME_MOVES_STORAGE_KEY = "postGameMoves";
+const POST_GAME_PGN_STORAGE_KEY = "postGamePgn";
+
 
 // ── Mount ──────────────────────────────────────────────────────────────────────
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -422,7 +425,7 @@ analysisLoadingOverlay.addEventListener("touchmove", (event) => {
 
 
 // ── Button wiring ──────────────────────────────────────────────────────────────
-q<HTMLButtonElement>("#resetBtn").addEventListener("click", () => {
+function resetBoardStateToStart(): void {
   cancelAnalysis();
   chess.reset();
   fenHistory = [chess.fen()];
@@ -432,6 +435,10 @@ q<HTMLButtonElement>("#resetBtn").addEventListener("click", () => {
   clearVariationMode();
   syncGameLineFromCurrent();
   clearSelection();
+}
+
+q<HTMLButtonElement>("#resetBtn").addEventListener("click", () => {
+  resetBoardStateToStart();
   render();
 });
 
@@ -454,7 +461,7 @@ q<HTMLButtonElement>("#loadFenBtn").addEventListener("click", () => {
   const raw = prompt("Paste a FEN string:");
   if (!raw) return;
   try {
-    cancelAnalysis();
+    resetBoardStateToStart();
     chess.load(raw.trim());
     fenHistory = [chess.fen()];
     moveHistory = [];
@@ -2130,38 +2137,89 @@ function showToast(msg: string): void {
   toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 2400);
 }
 
+function loadMovesIntoBoard(sans: string[]): boolean {
+  resetBoardStateToStart();
+
+  for (const san of sans) {
+    const move = chess.move(san);
+    if (!move) {
+      return false;
+    }
+
+    moveHistory.push(move);
+    fenHistory.push(chess.fen());
+  }
+
+  cursor = Math.max(0, fenHistory.length - 1);
+  syncGameLineFromCurrent();
+  return true;
+}
+
+function loadPgnIntoBoard(pgn: string): boolean {
+  const normalizedPgn = pgn.trim();
+  if (!normalizedPgn) {
+    return false;
+  }
+
+  const replay = new Chess();
+  try {
+    replay.loadPgn(normalizedPgn, { strict: false });
+  } catch {
+    return false;
+  }
+
+  const sans = replay.history();
+  if (sans.length === 0) {
+    return false;
+  }
+
+  return loadMovesIntoBoard(sans);
+}
+
 window.addEventListener("beforeunload", () => {
   stockfish?.terminate();
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────────
-const postGameMovesStr = localStorage.getItem("postGameMoves");
-if (postGameMovesStr) {
+let shouldAutoAnalyzeOnInit = false;
+
+const postGamePgn = localStorage.getItem(POST_GAME_PGN_STORAGE_KEY);
+if (postGamePgn) {
   try {
-    const movesToLoad = JSON.parse(postGameMovesStr) as string[];
-    localStorage.removeItem("postGameMoves"); // clear it immediately
-    
-    if (movesToLoad.length > 0) {
-      for (const san of movesToLoad) {
-        const move = chess.move(san);
-        if (move) {
-          moveHistory.push(move);
-          fenHistory.push(chess.fen());
-        }
-      }
-      // Snap the board to the end of the game
-      cursor = fenHistory.length - 1; 
-      syncGameLineFromCurrent();
-      
-      // Auto-start the Stockfish analysis engine
-      setTimeout(() => {
-        void runGameAnalysis();
-      }, 100);
+    localStorage.removeItem(POST_GAME_PGN_STORAGE_KEY);
+    localStorage.removeItem(POST_GAME_MOVES_STORAGE_KEY);
+    shouldAutoAnalyzeOnInit = loadPgnIntoBoard(postGamePgn);
+    if (!shouldAutoAnalyzeOnInit) {
+      console.error("Failed to parse postGamePgn into move history");
     }
   } catch (e) {
-    console.error("Failed to parse postGameMoves", e);
+    console.error("Failed to parse postGamePgn", e);
+  }
+} else {
+  const postGameMovesStr = localStorage.getItem(POST_GAME_MOVES_STORAGE_KEY);
+  if (postGameMovesStr) {
+    try {
+      const movesToLoad = JSON.parse(postGameMovesStr) as string[];
+      localStorage.removeItem(POST_GAME_MOVES_STORAGE_KEY);
+      shouldAutoAnalyzeOnInit = Array.isArray(movesToLoad)
+        && movesToLoad.length > 0
+        && loadMovesIntoBoard(movesToLoad);
+
+      if (!shouldAutoAnalyzeOnInit) {
+        console.error("Failed to parse postGameMoves into move history");
+      }
+    } catch (e) {
+      console.error("Failed to parse postGameMoves", e);
+    }
   }
 }
+
 syncGameLineFromCurrent();
 render();
 updateAnalysisLoadingOverlay();
+
+if (shouldAutoAnalyzeOnInit) {
+  setTimeout(() => {
+    void runGameAnalysis();
+  }, 100);
+}

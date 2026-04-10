@@ -3992,6 +3992,8 @@ var require_analyze = __commonJS({
       spin: 760,
       slide: 620
     };
+    var POST_GAME_MOVES_STORAGE_KEY = "postGameMoves";
+    var POST_GAME_PGN_STORAGE_KEY = "postGamePgn";
     var app = document.querySelector("#app");
     app.innerHTML = `
 <div class="analyze-shell">
@@ -4124,7 +4126,7 @@ var require_analyze = __commonJS({
     analysisLoadingOverlay.addEventListener("touchmove", (event) => {
       event.preventDefault();
     }, { passive: false });
-    q("#resetBtn").addEventListener("click", () => {
+    function resetBoardStateToStart() {
       cancelAnalysis();
       chess.reset();
       fenHistory = [chess.fen()];
@@ -4134,6 +4136,9 @@ var require_analyze = __commonJS({
       clearVariationMode();
       syncGameLineFromCurrent();
       clearSelection();
+    }
+    q("#resetBtn").addEventListener("click", () => {
+      resetBoardStateToStart();
       render();
     });
     q("#flipBtn").addEventListener("click", () => {
@@ -4153,7 +4158,7 @@ var require_analyze = __commonJS({
       const raw = prompt("Paste a FEN string:");
       if (!raw) return;
       try {
-        cancelAnalysis();
+        resetBoardStateToStart();
         chess.load(raw.trim());
         fenHistory = [chess.fen()];
         moveHistory = [];
@@ -5495,35 +5500,76 @@ var require_analyze = __commonJS({
       clearTimeout(toastTimer);
       toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 2400);
     }
+    function loadMovesIntoBoard(sans) {
+      resetBoardStateToStart();
+      for (const san of sans) {
+        const move = chess.move(san);
+        if (!move) {
+          return false;
+        }
+        moveHistory.push(move);
+        fenHistory.push(chess.fen());
+      }
+      cursor = Math.max(0, fenHistory.length - 1);
+      syncGameLineFromCurrent();
+      return true;
+    }
+    function loadPgnIntoBoard(pgn2) {
+      const normalizedPgn = pgn2.trim();
+      if (!normalizedPgn) {
+        return false;
+      }
+      const replay = new Chess();
+      try {
+        replay.loadPgn(normalizedPgn, { strict: false });
+      } catch {
+        return false;
+      }
+      const sans = replay.history();
+      if (sans.length === 0) {
+        return false;
+      }
+      return loadMovesIntoBoard(sans);
+    }
     window.addEventListener("beforeunload", () => {
       stockfish?.terminate();
     });
-    var postGameMovesStr = localStorage.getItem("postGameMoves");
-    if (postGameMovesStr) {
+    var shouldAutoAnalyzeOnInit = false;
+    var postGamePgn = localStorage.getItem(POST_GAME_PGN_STORAGE_KEY);
+    if (postGamePgn) {
       try {
-        const movesToLoad = JSON.parse(postGameMovesStr);
-        localStorage.removeItem("postGameMoves");
-        if (movesToLoad.length > 0) {
-          for (const san of movesToLoad) {
-            const move = chess.move(san);
-            if (move) {
-              moveHistory.push(move);
-              fenHistory.push(chess.fen());
-            }
-          }
-          cursor = fenHistory.length - 1;
-          syncGameLineFromCurrent();
-          setTimeout(() => {
-            void runGameAnalysis();
-          }, 100);
+        localStorage.removeItem(POST_GAME_PGN_STORAGE_KEY);
+        localStorage.removeItem(POST_GAME_MOVES_STORAGE_KEY);
+        shouldAutoAnalyzeOnInit = loadPgnIntoBoard(postGamePgn);
+        if (!shouldAutoAnalyzeOnInit) {
+          console.error("Failed to parse postGamePgn into move history");
         }
       } catch (e) {
-        console.error("Failed to parse postGameMoves", e);
+        console.error("Failed to parse postGamePgn", e);
+      }
+    } else {
+      const postGameMovesStr = localStorage.getItem(POST_GAME_MOVES_STORAGE_KEY);
+      if (postGameMovesStr) {
+        try {
+          const movesToLoad = JSON.parse(postGameMovesStr);
+          localStorage.removeItem(POST_GAME_MOVES_STORAGE_KEY);
+          shouldAutoAnalyzeOnInit = Array.isArray(movesToLoad) && movesToLoad.length > 0 && loadMovesIntoBoard(movesToLoad);
+          if (!shouldAutoAnalyzeOnInit) {
+            console.error("Failed to parse postGameMoves into move history");
+          }
+        } catch (e) {
+          console.error("Failed to parse postGameMoves", e);
+        }
       }
     }
     syncGameLineFromCurrent();
     render();
     updateAnalysisLoadingOverlay();
+    if (shouldAutoAnalyzeOnInit) {
+      setTimeout(() => {
+        void runGameAnalysis();
+      }, 100);
+    }
   }
 });
 export default require_analyze();

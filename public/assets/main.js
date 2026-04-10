@@ -27559,11 +27559,53 @@ function normalizeConfig(value2) {
     measurementId: String(source.measurementId ?? "")
   };
 }
-function normalizeStoredGames(value2) {
+function buildGameIdFromPgn(pgn2) {
+  let hash = 2166136261;
+  for (let i = 0; i < pgn2.length; i += 1) {
+    hash ^= pgn2.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `game_${(hash >>> 0).toString(36)}_${pgn2.length}`;
+}
+function normalizeSavedAt(value2) {
+  if (typeof value2 !== "string") {
+    return null;
+  }
+  const date = new Date(value2);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toISOString();
+}
+function normalizeStoredGameHistory(value2) {
   if (!Array.isArray(value2)) {
     return [];
   }
-  return value2.filter((entry) => typeof entry === "string");
+  const uniqueByPgn = /* @__PURE__ */ new Set();
+  const normalizedGames = [];
+  for (const entry of value2) {
+    const rawPgn = typeof entry === "string" ? entry : typeof entry === "object" && entry && typeof entry.pgn === "string" ? entry.pgn : "";
+    const pgn2 = rawPgn.trim();
+    if (!pgn2 || uniqueByPgn.has(pgn2)) {
+      continue;
+    }
+    uniqueByPgn.add(pgn2);
+    const objectEntry = typeof entry === "object" && entry ? entry : null;
+    const explicitId = objectEntry && typeof objectEntry.id === "string" ? objectEntry.id.trim() : "";
+    normalizedGames.push({
+      id: explicitId || buildGameIdFromPgn(pgn2),
+      pgn: pgn2,
+      savedAt: normalizeSavedAt(objectEntry?.savedAt)
+    });
+  }
+  return normalizedGames;
+}
+function serializeStoredGameHistory(games) {
+  return games.map((game) => ({
+    id: game.id,
+    pgn: game.pgn,
+    savedAt: game.savedAt
+  }));
 }
 function requireAuth() {
   if (!auth) {
@@ -27690,7 +27732,7 @@ async function getStoredGameCount(userId) {
   if (!snapshot.exists()) {
     return 0;
   }
-  const games = normalizeStoredGames(snapshot.data().games);
+  const games = normalizeStoredGameHistory(snapshot.data().games);
   return games.length;
 }
 async function getStoredGameHistory(userId) {
@@ -27700,18 +27742,55 @@ async function getStoredGameHistory(userId) {
   if (!snapshot.exists()) {
     return [];
   }
-  return normalizeStoredGames(snapshot.data().games);
+  return normalizeStoredGameHistory(snapshot.data().games);
 }
 async function saveGamePgnForUser(userId, pgn2) {
   const database = requireDb();
   const documentRef = doc(database, "userGameHistory", userId);
   const snapshot = await getDoc(documentRef);
-  const existingGames = snapshot.exists() ? normalizeStoredGames(snapshot.data().games) : [];
-  const updatedGames = [pgn2, ...existingGames.filter((entry) => entry !== pgn2)].slice(0, 100);
+  const existingGames = snapshot.exists() ? normalizeStoredGameHistory(snapshot.data().games) : [];
+  const normalizedPgn = pgn2.trim();
+  if (!normalizedPgn) {
+    return existingGames.length;
+  }
+  const updatedGames = [
+    {
+      id: buildGameIdFromPgn(normalizedPgn),
+      pgn: normalizedPgn,
+      savedAt: (/* @__PURE__ */ new Date()).toISOString()
+    },
+    ...existingGames.filter((entry) => entry.pgn !== normalizedPgn)
+  ].slice(0, 100);
   await setDoc(
     documentRef,
     {
-      games: updatedGames,
+      games: serializeStoredGameHistory(updatedGames),
+      updatedAt: serverTimestamp()
+    },
+    { merge: true }
+  );
+  return updatedGames.length;
+}
+async function deleteStoredGameForUser(userId, gameId) {
+  const normalizedGameId = gameId.trim();
+  if (!normalizedGameId) {
+    return 0;
+  }
+  const database = requireDb();
+  const documentRef = doc(database, "userGameHistory", userId);
+  const snapshot = await getDoc(documentRef);
+  if (!snapshot.exists()) {
+    return 0;
+  }
+  const existingGames = normalizeStoredGameHistory(snapshot.data().games);
+  const updatedGames = existingGames.filter((entry) => entry.id !== normalizedGameId);
+  if (updatedGames.length === existingGames.length) {
+    return existingGames.length;
+  }
+  await setDoc(
+    documentRef,
+    {
+      games: serializeStoredGameHistory(updatedGames),
       updatedAt: serverTimestamp()
     },
     { merge: true }
@@ -27751,7 +27830,8 @@ function createAccountSidebarController({
   socket,
   refs,
   showToast,
-  onIdentityUpdated
+  onIdentityUpdated,
+  onOpenSavedGameForAnalysis
 }) {
   let authenticatedUser = null;
   let authUnsubscribe = null;
@@ -27763,6 +27843,7 @@ function createAccountSidebarController({
   let activeSidebarTab = "profile";
   let savedGameHistory = [];
   let historyLoading = false;
+  let deletingGameId = null;
   let savingGameSignature = null;
   let savedGameSignature = null;
   let failedGameSignature = null;
@@ -27916,6 +27997,89 @@ function createAccountSidebarController({
     refs.sidebarProfilePanel.hidden = !showProfile;
     refs.sidebarHistoryPanel.hidden = showProfile;
   }
+  function getSavedGameTimestamp(savedAt) {
+    if (!savedAt) {
+      return 0;
+    }
+    const parsed = new Date(savedAt).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  function getSortedSavedGameHistory() {
+    return savedGameHistory.map((entry, index) => ({ entry, index })).sort((left, right) => {
+      const timestampDiff = getSavedGameTimestamp(right.entry.savedAt) - getSavedGameTimestamp(left.entry.savedAt);
+      if (timestampDiff !== 0) {
+        return timestampDiff;
+      }
+      return left.index - right.index;
+    }).map((item) => item.entry);
+  }
+  function formatSavedGameDate(savedAt) {
+    if (!savedAt) {
+      return "Date unavailable";
+    }
+    const date = new Date(savedAt);
+    if (Number.isNaN(date.getTime())) {
+      return "Date unavailable";
+    }
+    return `Played ${date.toLocaleDateString(void 0, {
+      year: "numeric",
+      month: "short",
+      day: "2-digit"
+    })}`;
+  }
+  function openSavedGameInAnalysis(pgn2) {
+    const normalizedPgn = pgn2.trim();
+    if (!normalizedPgn) {
+      showToast("This saved game does not contain a valid PGN.");
+      return;
+    }
+    if (onOpenSavedGameForAnalysis) {
+      onOpenSavedGameForAnalysis(normalizedPgn);
+      return;
+    }
+    localStorage.removeItem("postGameMoves");
+    localStorage.setItem("postGamePgn", normalizedPgn);
+    window.location.assign("/analyze");
+  }
+  async function handleDeleteSavedGame(game) {
+    if (!authenticatedUser || !isFirebaseAuthEnabled()) {
+      return;
+    }
+    if (deletingGameId) {
+      return;
+    }
+    deletingGameId = game.id;
+    renderSavedHistoryPanel();
+    try {
+      storedGamesCount = await deleteStoredGameForUser(authenticatedUser.uid, game.id);
+      savedGameHistory = savedGameHistory.filter((entry) => entry.id !== game.id);
+      showToast("Saved game deleted.");
+    } catch {
+      showToast("Could not delete saved game.");
+    } finally {
+      deletingGameId = null;
+      renderAuthPanel();
+      renderSavedHistoryPanel();
+    }
+  }
+  function appendImportPlaceholderCard() {
+    const placeholderCard = document.createElement("article");
+    placeholderCard.className = "saved-game-import-placeholder";
+    const title = document.createElement("h3");
+    title.textContent = "Import external PGN";
+    const description = document.createElement("p");
+    description.className = "saved-game-import-description";
+    description.textContent = "Coming soon: paste a PGN or upload a PGN file directly into your history.";
+    const disabledButton = document.createElement("button");
+    disabledButton.type = "button";
+    disabledButton.className = "ghost saved-game-import-button";
+    disabledButton.disabled = true;
+    disabledButton.textContent = "Import PGN (coming soon)";
+    placeholderCard.appendChild(title);
+    placeholderCard.appendChild(description);
+    placeholderCard.appendChild(disabledButton);
+    refs.savedGamesList.appendChild(placeholderCard);
+  }
   function renderSavedHistoryPanel() {
     refs.savedGamesList.innerHTML = "";
     if (!authenticatedUser) {
@@ -27930,23 +28094,70 @@ function createAccountSidebarController({
       refs.historyPanelStatus.textContent = "Loading saved games...";
       return;
     }
-    if (savedGameHistory.length === 0) {
+    const sortedGames = getSortedSavedGameHistory();
+    if (sortedGames.length === 0) {
       refs.historyPanelStatus.textContent = "No saved games yet. Finished games are saved automatically.";
+      appendImportPlaceholderCard();
       return;
     }
-    refs.historyPanelStatus.textContent = `Showing ${savedGameHistory.length} saved PGN${savedGameHistory.length === 1 ? "" : "s"}.`;
-    savedGameHistory.forEach((pgn2, index) => {
+    refs.historyPanelStatus.textContent = `Showing ${sortedGames.length} saved game${sortedGames.length === 1 ? "" : "s"}. Select one to analyze.`;
+    sortedGames.forEach((game, index) => {
+      const deletingThisGame = deletingGameId === game.id;
       const item = document.createElement("article");
       item.className = "saved-game-item";
+      item.setAttribute("role", "button");
+      item.setAttribute("tabindex", "0");
+      if (deletingThisGame) {
+        item.classList.add("deleting");
+      }
+      const header = document.createElement("div");
+      header.className = "saved-game-header";
       const heading = document.createElement("h3");
       heading.textContent = `Game ${index + 1}`;
-      const pgnBlock = document.createElement("pre");
-      pgnBlock.className = "saved-game-pgn";
-      pgnBlock.textContent = pgn2;
-      item.appendChild(heading);
-      item.appendChild(pgnBlock);
+      const dateLabel = document.createElement("p");
+      dateLabel.className = "saved-game-date";
+      dateLabel.textContent = formatSavedGameDate(game.savedAt);
+      const actions = document.createElement("div");
+      actions.className = "saved-game-actions";
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "ghost saved-game-delete-button";
+      deleteButton.disabled = deletingThisGame;
+      deleteButton.textContent = deletingThisGame ? "Deleting..." : "Delete";
+      deleteButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void handleDeleteSavedGame(game);
+      });
+      const openHint = document.createElement("p");
+      openHint.className = "saved-game-open-hint";
+      openHint.textContent = "Tap to open in analysis";
+      actions.appendChild(deleteButton);
+      header.appendChild(heading);
+      header.appendChild(actions);
+      item.appendChild(header);
+      item.appendChild(dateLabel);
+      item.appendChild(openHint);
+      item.addEventListener("click", () => {
+        if (deletingGameId) {
+          return;
+        }
+        setSidebarOpen(false);
+        openSavedGameInAnalysis(game.pgn);
+      });
+      item.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") {
+          return;
+        }
+        event.preventDefault();
+        if (deletingGameId) {
+          return;
+        }
+        setSidebarOpen(false);
+        openSavedGameInAnalysis(game.pgn);
+      });
       refs.savedGamesList.appendChild(item);
     });
+    appendImportPlaceholderCard();
   }
   async function refreshSavedHistoryPanel() {
     if (!authenticatedUser || !isFirebaseAuthEnabled()) {
@@ -28125,6 +28336,7 @@ function createAccountSidebarController({
       storedGamesCount = null;
       savedGameHistory = [];
       historyLoading = false;
+      deletingGameId = null;
       editableUsername = getCurrentPlayerName();
       renderAuthPanel();
       renderSavedHistoryPanel();
@@ -28983,6 +29195,11 @@ var require_main = __commonJS({
       showToast,
       onIdentityUpdated: () => {
         render();
+      },
+      onOpenSavedGameForAnalysis: (pgn2) => {
+        localStorage.removeItem("postGameMoves");
+        localStorage.setItem("postGamePgn", pgn2);
+        window.location.assign("/analyze");
       }
     });
     function normalizeUsername(value2) {
