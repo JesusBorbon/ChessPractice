@@ -4494,6 +4494,9 @@ var require_analyze = __commonJS({
         playSound("checkMove");
         lastCheckFlashKey = `${cursor}:${chess.fen()}`;
         triggerCheckFlash();
+        if (move.captured) {
+          playSound("capture");
+        }
       } else if (move.flags.includes("k") || move.flags.includes("q")) {
         playSound("castle");
       } else if (move.captured) {

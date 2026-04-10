@@ -851,26 +851,34 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
   cancelAnalysis();
   const move = chess.move({ from, to, promotion });
   if (!move) return;
+
   const shouldBranchFromEarlierMove = cursor < fenHistory.length - 1;
   const shouldBranchPastGameEnd = gameLineLocked && !isVariationMode && cursor >= gameLineFenHistory.length - 1;
+  
   if (shouldBranchFromEarlierMove || shouldBranchPastGameEnd) {
     const branchPly = shouldBranchFromEarlierMove
       ? cursor
       : Math.max(0, gameLineFenHistory.length - 2);
     enterVariationMode(branchPly);
   }
+
   // Truncate any "future" history if we somehow branched (guard, normally not needed)
   fenHistory = fenHistory.slice(0, cursor + 1);
   moveHistory = moveHistory.slice(0, cursor);
+  
   moveHistory.push(move);
   fenHistory.push(chess.fen());
+  
   analysisByPly = analysisByPly.slice(0, moveHistory.length);
   cursor = fenHistory.length - 1;
+  
   if (!isVariationMode) {
     syncGameLineFromCurrent();
   }
+  
   clearArrows();
   clearSelection();
+
   // Play sound based on outcome
   if (chess.isCheckmate() || chess.isStalemate() || chess.isDraw()) {
     playSound("gameEndOrCheckmate");
@@ -878,6 +886,10 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
     playSound("checkMove");
     lastCheckFlashKey = `${cursor}:${chess.fen()}`;
     triggerCheckFlash();
+    
+    if (move.captured) {
+      playSound("capture");
+    }
   } else if (move.flags.includes("k") || move.flags.includes("q")) {
     playSound("castle");
   } else if (move.captured) {
@@ -885,9 +897,11 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
   } else {
     playSound("move-self");
   }
+
   if (bloodFxEnabled && move.captured) {
     spawnBloodSplatter(to, move.captured as PieceSymbol);
   }
+  
   render();
   void analyzeLatestMove();
 }
