@@ -772,6 +772,16 @@ boardEl.addEventListener("pointercancel", (event) => {
 
 // Promotion choice
 promoDialog.addEventListener("click", (e) => {
+  const clickedElement = e.target as HTMLElement;
+  const clickedInsideCard = Boolean(clickedElement.closest(".promotion-card"));
+  if (!clickedInsideCard) {
+    pendingPromotion = null;
+    promoDialog.hidden = true;
+    clearSelection();
+    renderBoard();
+    return;
+  }
+
   const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-p]");
   if (!btn || !pendingPromotion) return;
   commitMove(pendingPromotion.from, pendingPromotion.to, btn.dataset.p as PromotionPiece);

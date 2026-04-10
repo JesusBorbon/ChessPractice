@@ -419,26 +419,44 @@ function playSound(name: string): void {
 }
 let _lastPlayedMoveCount = -1;
 
-// main.ts
-// main.ts
 function playSoundForSnapshot(snapshot: RoomSnapshot): void {
   const last = snapshot.lastMove;
   if (!last) return;
 
-  // Seguimos usando sonidos especiales para eventos críticos
+  // 1. Eventos de fin de partida (prioridad absoluta)
   if (snapshot.checkmate || snapshot.draw) {
     playSound("gameEndOrCheckmate");
-  } else if (snapshot.check) {
+    return; // Si el juego termina, no nos importa lo demás
+  }
+
+  // 2. Usamos una variable para saber si ya sonó algo "especial"
+  let specialSoundPlayed = false;
+
+  // JAQUE
+  if (snapshot.check) {
     playSound("checkMove");
-  } else if (last.san.startsWith("O-O")) {
-    playSound("castle");
-  } else if (last.san.includes("x")) {
+    specialSoundPlayed = true;
+  }
+
+  // CAPTURA (Se evalúa de forma independiente al jaque)
+  if (last.san.includes("x")) {
     playSound("capture");
-  } else {
-    // FIX: Como no tienes move-opponent, usamos move-self para TODOS los movimientos
+    specialSoundPlayed = true;
+  }
+
+  // ENROQUE (Si no hubo jaque o captura que lo "pise", aunque es raro)
+  if (last.san.startsWith("O-O") && !specialSoundPlayed) {
+    playSound("castle");
+    specialSoundPlayed = true;
+  }
+
+  // 3. Movimiento normal: Solo si no ocurrió NADA de lo anterior
+  if (!specialSoundPlayed) {
     playSound("move-self");
   }
 }
+
+
 app.innerHTML = `
   <div class="app-shell">
     <nav class="game-nav" id="gameNav" hidden>
@@ -1326,6 +1344,16 @@ async function triggerBotResponse() {
   }
 }
 promotionDialog.addEventListener("click", (event) => {
+  const clickedElement = event.target as HTMLElement;
+  const clickedInsideCard = Boolean(clickedElement.closest(".promotion-card"));
+  if (!clickedInsideCard) {
+    state.pendingPromotion = null;
+    promotionDialog.hidden = true;
+    clearSelection();
+    requestBoardRefresh(true);
+    return;
+  }
+
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-promotion]");
   if (!button || !state.pendingPromotion) return;
 

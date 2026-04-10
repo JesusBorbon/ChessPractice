@@ -4411,6 +4411,15 @@ var require_analyze = __commonJS({
       endPointerDrag(event, false);
     });
     promoDialog.addEventListener("click", (e) => {
+      const clickedElement = e.target;
+      const clickedInsideCard = Boolean(clickedElement.closest(".promotion-card"));
+      if (!clickedInsideCard) {
+        pendingPromotion = null;
+        promoDialog.hidden = true;
+        clearSelection();
+        renderBoard();
+        return;
+      }
       const btn = e.target.closest("[data-p]");
       if (!btn || !pendingPromotion) return;
       commitMove(pendingPromotion.from, pendingPromotion.to, btn.dataset.p);

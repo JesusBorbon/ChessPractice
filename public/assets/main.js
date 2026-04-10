@@ -7627,13 +7627,22 @@ var require_main = __commonJS({
       if (!last) return;
       if (snapshot.checkmate || snapshot.draw) {
         playSound("gameEndOrCheckmate");
-      } else if (snapshot.check) {
+        return;
+      }
+      let specialSoundPlayed = false;
+      if (snapshot.check) {
         playSound("checkMove");
-      } else if (last.san.startsWith("O-O")) {
-        playSound("castle");
-      } else if (last.san.includes("x")) {
+        specialSoundPlayed = true;
+      }
+      if (last.san.includes("x")) {
         playSound("capture");
-      } else {
+        specialSoundPlayed = true;
+      }
+      if (last.san.startsWith("O-O") && !specialSoundPlayed) {
+        playSound("castle");
+        specialSoundPlayed = true;
+      }
+      if (!specialSoundPlayed) {
         playSound("move-self");
       }
     }
@@ -8384,6 +8393,15 @@ var require_main = __commonJS({
       }
     }
     promotionDialog.addEventListener("click", (event) => {
+      const clickedElement = event.target;
+      const clickedInsideCard = Boolean(clickedElement.closest(".promotion-card"));
+      if (!clickedInsideCard) {
+        state.pendingPromotion = null;
+        promotionDialog.hidden = true;
+        clearSelection();
+        requestBoardRefresh(true);
+        return;
+      }
       const button = event.target.closest("[data-promotion]");
       if (!button || !state.pendingPromotion) return;
       const promotion = button.dataset.promotion;
