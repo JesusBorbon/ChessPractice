@@ -1,3 +1,4 @@
+import "dotenv/config";
 import path from "node:path";
 import { createServer } from "node:http";
 
@@ -19,6 +20,7 @@ type TimeControlPreset = {
 type ClientState = {
   roomId?: string;
   role?: RoomRole;
+  displayName?: string;
 };
 
 type MoveSummary = {
@@ -47,6 +49,8 @@ type RoomSnapshot = {
     whiteConnected: boolean;
     blackConnected: boolean;
     spectatorCount: number;
+    whiteName: string;
+    blackName: string;
   };
   rematchVotes: number;
   analysis: {
@@ -128,6 +132,16 @@ const ROOM_TTL_MS = 1000 * 60 * 60 * 4;
 const PLAYER_DISCONNECT_GRACE_MS = 1000 * 60 * 3; // 3 minutos para reconectarse
 const LOW_TIME_THRESHOLD_MS = 20_000;
 
+type FirebaseClientConfig = {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  storageBucket: string;
+  messagingSenderId: string;
+  appId: string;
+  measurementId: string;
+};
+
 const TIME_CONTROL_PRESETS: Record<TimeControlPresetId, TimeControlPreset> = {
   blitz3: { id: "blitz3", label: "3-minute Blitz", initialMs: 3 * 60_000, incrementMs: 0 },
   rapid10: { id: "rapid10", label: "10-minute Rapid", initialMs: 10 * 60_000, incrementMs: 0 },
@@ -142,6 +156,24 @@ const publicDir =
 
 app.use(express.static(publicDir));
 app.use("/stockfish", express.static(path.join(projectRoot, "node_modules", "stockfish", "bin")));
+
+function buildFirebaseClientConfig(): FirebaseClientConfig {
+  return {
+    apiKey: process.env.FIREBASE_API_KEY ?? "",
+    authDomain: process.env.FIREBASE_AUTH_DOMAIN ?? "",
+    projectId: process.env.FIREBASE_PROJECT_ID ?? "",
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET ?? "",
+    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID ?? "",
+    appId: process.env.FIREBASE_APP_ID ?? "",
+    measurementId: process.env.FIREBASE_MEASUREMENT_ID ?? "",
+  };
+}
+
+app.get("/api/firebase-config", (_request, response) => {
+  response.setHeader("Cache-Control", "no-store");
+  response.json(buildFirebaseClientConfig());
+});
+
 app.get("/analyze", (_request, response) => {
   response.sendFile(path.join(publicDir, "analyze.html"));
 });
@@ -176,6 +208,21 @@ function buildShareUrl(socketId: string, roomId: string): string {
   }
 
   return `${protocol}://${host}/?room=${roomId}`;
+}
+
+function getSocketDisplayName(socketId: string | undefined): string {
+  if (!socketId) {
+    return "Guest";
+  }
+
+  const socket = io.sockets.sockets.get(socketId);
+  const clientState = socket?.data as ClientState | undefined;
+  const name = clientState?.displayName?.trim();
+  if (!name) {
+    return "Guest";
+  }
+
+  return name;
 }
 
 function getSpectatorCount(roomId: string, room: GameRoom): number {
@@ -339,6 +386,8 @@ return {
       whiteConnected: Boolean(room.white),
       blackConnected: Boolean(room.black),
       spectatorCount: getSpectatorCount(room.id, room),
+      whiteName: getSocketDisplayName(room.white),
+      blackName: getSocketDisplayName(room.black),
     },
     rematchVotes: room.rematchVotes.size,
     analysis: {
@@ -639,7 +688,34 @@ const clockTimer = setInterval(() => {
 clockTimer.unref();
 
 io.on("connection", (socket) => {
+  const initialState = socket.data as ClientState;
+  if (!initialState.displayName) {
+    initialState.displayName = "Guest";
+  }
+
   socket.emit("connection:status", { connected: true });
+
+  socket.on("profile:setName", (payload?: { name?: string }) => {
+    const rawName = payload?.name;
+    if (typeof rawName !== "string") {
+      socket.emit("room:error", { message: "Invalid player name." });
+      return;
+    }
+
+    const trimmed = rawName.trim().slice(0, 24);
+    if (!trimmed) {
+      socket.emit("room:error", { message: "Player name cannot be empty." });
+      return;
+    }
+
+    const state = socket.data as ClientState;
+    state.displayName = trimmed;
+
+    const room = getRoomForSocket(socket.id);
+    if (room) {
+      emitRoomState(room);
+    }
+  });
 
   socket.on("room:create", () => {
     // Creating a new room is an intentional leave from any previous room.

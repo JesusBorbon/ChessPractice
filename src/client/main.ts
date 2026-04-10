@@ -1,5 +1,6 @@
 import { Chess, Move, PieceSymbol, Square } from "chess.js";
 import { io } from "socket.io-client";
+import type { User } from "firebase/auth";
 
 import { BoardOrientation, SquareName, buildSquareList, isLightSquare } from "../../engine";
 import "./theme-palette.css";
@@ -9,6 +10,17 @@ import "./styles.css";
 import "./badge-icon-colors.css";
 import { buildArrowLayerMarkup } from "./arrow-render";
 import { BestMoveArrow, canShowBestMoveArrow, parseBestMoveArrow } from "./best-move-arrow";
+import {
+  formatGoogleAuthError,
+  getFirebaseAuthDisabledReason,
+  getStoredGameCount,
+  initializeFirebaseClient,
+  isFirebaseAuthEnabled,
+  listenToAuthState,
+  saveGamePgnForUser,
+  signInWithGoogle,
+  signOutCurrentUser,
+} from "./firebase";
 import { mountThemeSwitcher } from "./theme";
 
 type PlayerRole = "w" | "b";
@@ -53,6 +65,8 @@ type RoomSnapshot = {
     whiteConnected: boolean;
     blackConnected: boolean;
     spectatorCount: number;
+    whiteName: string;
+    blackName: string;
   };
   rematchVotes: number;
   analysis: {
@@ -205,6 +219,17 @@ let animatingToSquare: Square | null = null;
 let lastRoomStateReceivedAtMs = Date.now();
 let lastLiveQualityCalloutKey: string | null = null;
 let activeLiveQualityCallout: HTMLDivElement | null = null;
+let authenticatedUser: User | null = null;
+let authUnsubscribe: (() => void) | null = null;
+let authBusy = false;
+let authInitFinished = false;
+let storedGamesCount: number | null = null;
+let savingGameSignature: string | null = null;
+let savedGameSignature: string | null = null;
+let failedGameSignature: string | null = null;
+let editableUsername = "";
+
+const USERNAME_STORAGE_PREFIX = "chess-custom-username:";
 
 const SMOOTH_MOVE_DURATION_MS = 620;
 const EPIC_MOVE_DURATION_MS = {
@@ -459,6 +484,20 @@ function playSoundForSnapshot(snapshot: RoomSnapshot): void {
 
 app.innerHTML = `
   <div class="app-shell">
+    <section class="auth-quickbar" id="authQuickbar">
+      <div class="auth-quick-copy">
+        <p class="muted auth-quick-status" id="authStatus">Guest mode enabled.</p>
+        <p class="muted auth-quick-meta" id="storedGamesMeta">Sign in/sign up to save up to 100 PGNs in cloud history.</p>
+      </div>
+      <div class="auth-quick-actions">
+        <input class="auth-name-input" id="usernameInput" type="text" maxlength="24" placeholder="Custom username" hidden />
+        <button class="chip" id="saveUsernameButton" type="button" hidden>Save username</button>
+        <button class="chip" id="guestModeButton" type="button">Play as guest</button>
+        <button class="action cta-rainbow" id="signInGoogleButton" type="button">Sign in / Sign up</button>
+        <button class="chip" id="signOutButton" type="button" hidden>Sign out</button>
+      </div>
+    </section>
+
     <nav class="game-nav" id="gameNav" hidden>
       <button class="nav-back-link" id="backToMenuButton" type="button">← Back to menu</button>
     </nav>
@@ -467,7 +506,7 @@ app.innerHTML = `
       <section class="hero-card hero-copy">
         <h1>Multiplayer Chess</h1>
         <p>Create a room or join one with code.</p>
-        <a class="analysis-board-link cta-rainbow" href="/analyze">♟ Open Analysis Board</a>
+        <a class="analysis-board-link cta-rainbow" id="analysisBoardLink" href="/analyze">♟ Open Analysis Board</a>
       </section>
       <aside class="hero-card status-card">
         <div class="status-grid">
@@ -667,6 +706,14 @@ const board = must<HTMLDivElement>("#board");
 const boardWrap = board.parentElement as HTMLDivElement | null;
 const pregamePlaceholder = must<HTMLDivElement>("#pregamePlaceholder");
 const inviteJoinCard = must<HTMLElement>("#inviteJoinCard");
+const analysisBoardLink = must<HTMLAnchorElement>("#analysisBoardLink");
+const authStatus = must<HTMLParagraphElement>("#authStatus");
+const storedGamesMeta = must<HTMLParagraphElement>("#storedGamesMeta");
+const usernameInput = must<HTMLInputElement>("#usernameInput");
+const saveUsernameButton = must<HTMLButtonElement>("#saveUsernameButton");
+const guestModeButton = must<HTMLButtonElement>("#guestModeButton");
+const signInGoogleButton = must<HTMLButtonElement>("#signInGoogleButton");
+const signOutButton = must<HTMLButtonElement>("#signOutButton");
 const roomInput = must<HTMLInputElement>("#roomInput");
 const roomBadge = must<HTMLDivElement>("#roomBadge");
 const roleBadge = must<HTMLDivElement>("#roleBadge");
@@ -772,6 +819,214 @@ const gameNavRow = must<HTMLDivElement>("#gameNavRow");
 const arrowAnnotations = new Set<string>();
 const squareAnnotations = new Set<string>(); 
 
+function buildPgnFromMoves(moves: MoveSummary[]): string | null {
+  if (moves.length === 0) {
+    return null;
+  }
+
+  const replay = new Chess();
+  try {
+    for (const move of moves) {
+      const appliedMove = replay.move(move.san);
+      if (!appliedMove) {
+        return null;
+      }
+    }
+    return replay.pgn();
+  } catch {
+    return null;
+  }
+}
+
+function buildFinishedGameSignature(snapshot: RoomSnapshot): string {
+  return [
+    state.gameMode,
+    snapshot.roomId,
+    snapshot.moveCount,
+    snapshot.status,
+    snapshot.winner ?? "none",
+    snapshot.lastMove?.san ?? "none",
+  ].join(":");
+}
+
+function usernameStorageKey(uid: string): string {
+  return `${USERNAME_STORAGE_PREFIX}${uid}`;
+}
+
+function normalizeUsername(value: string): string {
+  return value.trim().replace(/\s+/g, " ").slice(0, 24);
+}
+
+function getCurrentPlayerName(): string {
+  if (!authenticatedUser) {
+    return "Guest";
+  }
+
+  const custom = normalizeUsername(localStorage.getItem(usernameStorageKey(authenticatedUser.uid)) ?? "");
+  if (custom) {
+    return custom;
+  }
+
+  const fallback = normalizeUsername(authenticatedUser.displayName ?? "");
+  if (fallback) {
+    return fallback;
+  }
+
+  return "Player";
+}
+
+function emitCurrentProfileName(): void {
+  if (!socket.connected) {
+    return;
+  }
+
+  socket.emit("profile:setName", { name: getCurrentPlayerName() });
+}
+
+function renderAuthPanel(): void {
+  if (!authInitFinished) {
+    authStatus.textContent = "Loading Firebase settings...";
+    storedGamesMeta.textContent = "Checking Firebase authentication...";
+    usernameInput.hidden = true;
+    saveUsernameButton.hidden = true;
+    guestModeButton.disabled = true;
+    signInGoogleButton.hidden = false;
+    signInGoogleButton.disabled = true;
+    signInGoogleButton.textContent = "Loading...";
+    signOutButton.hidden = true;
+    return;
+  }
+
+  if (!isFirebaseAuthEnabled()) {
+    const reason = getFirebaseAuthDisabledReason() ?? "Missing Firebase configuration.";
+    authStatus.textContent = `Playing as Guest. Firebase unavailable: ${reason}`;
+    storedGamesMeta.textContent = "Analysis is available, but cloud PGN history is disabled.";
+    usernameInput.hidden = true;
+    saveUsernameButton.hidden = true;
+    guestModeButton.disabled = false;
+    signInGoogleButton.hidden = false;
+    signInGoogleButton.disabled = true;
+    signInGoogleButton.textContent = "Firebase unavailable";
+    signOutButton.hidden = true;
+    return;
+  }
+
+  if (authenticatedUser) {
+    const userLabel = getCurrentPlayerName();
+    authStatus.textContent = `Signed in as ${userLabel}`;
+    storedGamesMeta.textContent = `History enabled: ${storedGamesCount ?? "..."} / 100 PGNs`;
+    usernameInput.hidden = false;
+    saveUsernameButton.hidden = false;
+    usernameInput.disabled = authBusy;
+    if (document.activeElement !== usernameInput) {
+      usernameInput.value = editableUsername;
+    }
+    const normalizedDraft = normalizeUsername(usernameInput.value);
+    saveUsernameButton.disabled = authBusy || normalizedDraft.length < 2 || normalizedDraft === getCurrentPlayerName();
+    guestModeButton.disabled = authBusy;
+    signInGoogleButton.hidden = true;
+    signOutButton.hidden = false;
+    signOutButton.disabled = authBusy;
+    return;
+  }
+
+  authStatus.textContent = "Playing as Guest.";
+  storedGamesMeta.textContent = "Guests can play and analyze, but games are not saved.";
+  usernameInput.hidden = true;
+  saveUsernameButton.hidden = true;
+  guestModeButton.disabled = authBusy;
+  signInGoogleButton.hidden = false;
+  signInGoogleButton.disabled = authBusy;
+  signInGoogleButton.textContent = authBusy ? "Signing in..." : "Sign in / Sign up";
+  signOutButton.hidden = true;
+}
+
+async function refreshStoredGamesCount(): Promise<void> {
+  if (!authenticatedUser || !isFirebaseAuthEnabled()) {
+    storedGamesCount = null;
+    renderAuthPanel();
+    return;
+  }
+
+  try {
+    storedGamesCount = await getStoredGameCount(authenticatedUser.uid);
+  } catch {
+    storedGamesCount = null;
+  }
+
+  renderAuthPanel();
+}
+
+async function maybePersistFinishedGame(snapshot: RoomSnapshot | null): Promise<void> {
+  if (!snapshot || !authenticatedUser || !isFirebaseAuthEnabled()) {
+    return;
+  }
+
+  const gameEnded = snapshot.checkmate || snapshot.draw || snapshot.winner !== null;
+  if (!gameEnded || snapshot.moveCount === 0) {
+    return;
+  }
+
+  const signature = buildFinishedGameSignature(snapshot);
+  if (
+    signature === savedGameSignature
+    || signature === savingGameSignature
+    || signature === failedGameSignature
+  ) {
+    return;
+  }
+
+  const pgn = buildPgnFromMoves(snapshot.moves);
+  if (!pgn) {
+    failedGameSignature = signature;
+    return;
+  }
+
+  savingGameSignature = signature;
+
+  try {
+    storedGamesCount = await saveGamePgnForUser(authenticatedUser.uid, pgn);
+    savedGameSignature = signature;
+    failedGameSignature = null;
+    showToast("Game saved to your cloud PGN history.");
+  } catch {
+    failedGameSignature = signature;
+    showToast("Could not save game to Firebase.");
+  } finally {
+    if (savingGameSignature === signature) {
+      savingGameSignature = null;
+    }
+    renderAuthPanel();
+  }
+}
+
+async function initializeAuthPanel(): Promise<void> {
+  renderAuthPanel();
+  await initializeFirebaseClient();
+  authInitFinished = true;
+  renderAuthPanel();
+
+  if (!isFirebaseAuthEnabled()) {
+    return;
+  }
+
+  authUnsubscribe?.();
+  authUnsubscribe = listenToAuthState((user) => {
+    authenticatedUser = user;
+    storedGamesCount = null;
+
+    editableUsername = getCurrentPlayerName();
+
+    renderAuthPanel();
+    emitCurrentProfileName();
+
+    if (user) {
+      void refreshStoredGamesCount();
+      void maybePersistFinishedGame(state.snapshot);
+    }
+  });
+}
+
 
 playBotButton.addEventListener("click", () => {
   if (state.roomId && state.gameMode === "multiplayer") {
@@ -779,6 +1034,103 @@ playBotButton.addEventListener("click", () => {
   } else {
     startBotGame();
   }
+});
+
+signInGoogleButton.addEventListener("click", async () => {
+  if (authBusy || !isFirebaseAuthEnabled()) {
+    return;
+  }
+
+  authBusy = true;
+  renderAuthPanel();
+
+  try {
+    await signInWithGoogle();
+  } catch (error) {
+    showToast(formatGoogleAuthError(error));
+  } finally {
+    authBusy = false;
+    renderAuthPanel();
+  }
+});
+
+usernameInput.addEventListener("input", () => {
+  editableUsername = usernameInput.value;
+  renderAuthPanel();
+});
+
+saveUsernameButton.addEventListener("click", () => {
+  if (!authenticatedUser) {
+    showToast("Only registered users can set a custom username.");
+    return;
+  }
+
+  const normalized = normalizeUsername(usernameInput.value);
+  if (normalized.length < 2) {
+    showToast("Username must be at least 2 characters.");
+    return;
+  }
+
+  localStorage.setItem(usernameStorageKey(authenticatedUser.uid), normalized);
+  editableUsername = normalized;
+  emitCurrentProfileName();
+  renderAuthPanel();
+  renderSession();
+  showToast("Username updated.");
+});
+
+guestModeButton.addEventListener("click", async () => {
+  if (authBusy) {
+    return;
+  }
+
+  if (!authenticatedUser) {
+    showToast("You are already playing as a guest.");
+    return;
+  }
+
+  if (!isFirebaseAuthEnabled()) {
+    showToast("Now playing as guest.");
+    return;
+  }
+
+  authBusy = true;
+  renderAuthPanel();
+
+  try {
+    await signOutCurrentUser();
+    showToast("Switched to guest mode.");
+  } catch {
+    showToast("Could not switch to guest mode.");
+  } finally {
+    authBusy = false;
+    renderAuthPanel();
+  }
+});
+
+signOutButton.addEventListener("click", async () => {
+  if (authBusy || !isFirebaseAuthEnabled()) {
+    return;
+  }
+
+  authBusy = true;
+  renderAuthPanel();
+
+  try {
+    await signOutCurrentUser();
+  } catch {
+    showToast("Sign-out failed.");
+  } finally {
+    authBusy = false;
+    renderAuthPanel();
+  }
+});
+
+void initializeAuthPanel();
+
+window.addEventListener("beforeunload", () => {
+  authUnsubscribe?.();
+  authUnsubscribe = null;
 });
 
 createRoomButton.addEventListener("click", () => {
@@ -1393,6 +1745,8 @@ promotionDialog.addEventListener("click", (event) => {
 
 function onSocketConnect() {
   state.connected = true;
+  emitCurrentProfileName();
+
   if (state.autoJoinCode) {
     if (ROOM_ID_PATTERN.test(state.autoJoinCode)) {
       socket.emit("room:join", { roomId: state.autoJoinCode });
@@ -1423,7 +1777,11 @@ socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl
     state.orientation = payload.role;
   }
 
+  savingGameSignature = null;
+  failedGameSignature = null;
+
   syncUrl(payload.roomId);
+  emitCurrentProfileName();
   render();
 });
 
@@ -1435,6 +1793,12 @@ socket.on("session:left", () => {
 });
 
 socket.on("room:state", (snapshot: RoomSnapshot) => {
+  if (!snapshot.checkmate && !snapshot.draw && snapshot.winner === null && snapshot.moveCount === 0) {
+    savingGameSignature = null;
+    failedGameSignature = null;
+    savedGameSignature = null;
+  }
+
   lastRoomStateReceivedAtMs = Date.now();
   const previousSnapshot = state.snapshot;
   const previousMoveCount = state.snapshot?.moveCount ?? 0;
@@ -1540,6 +1904,7 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
 
   void maybeRunLiveAnalysis(snapshot);
   void maybeUpdateBestMoveArrow(snapshot);
+  void maybePersistFinishedGame(snapshot);
 });
 
 socket.on("room:error", (payload: { message: string }) => {
@@ -1581,6 +1946,7 @@ function render(force = false): void {
   renderMoves();
   updateCaption();
   updateFocusHud();
+  void maybePersistFinishedGame(state.snapshot);
 
   // FIX: Ensure analysis runs for local bot moves
   if (state.snapshot?.analysis.enabled) {
@@ -1796,8 +2162,8 @@ function renderSession(): void {
 
   // 5. Live Game Data
   matchStatus.textContent = snapshot.status;
-  whiteSeat.textContent = snapshot.players.whiteConnected ? seatLabel("w") : "Waiting for player";
-  blackSeat.textContent = snapshot.players.blackConnected ? seatLabel("b") : "Waiting for player";
+  whiteSeat.textContent = snapshot.players.whiteConnected ? seatLabel("w", snapshot.players.whiteName) : "Waiting for player";
+  blackSeat.textContent = snapshot.players.blackConnected ? seatLabel("b", snapshot.players.blackName) : "Waiting for player";
   turnMeta.textContent = snapshot.turn === "w" ? "White" : "Black";
   movesMeta.textContent = String(snapshot.moveCount);
   spectatorMeta.textContent = String(snapshot.players.spectatorCount);
@@ -3330,6 +3696,10 @@ function tryMoveFromTo(from: Square, to: Square): void {
 
 /** Starts a local game against the AI */
 function startBotGame() {
+  savingGameSignature = null;
+  failedGameSignature = null;
+  savedGameSignature = null;
+
   state.gameMode = "bot";
   state.role = "w"; // Player is White
   state.roomId = "LOCAL_BOT";
@@ -3350,7 +3720,13 @@ function startBotGame() {
     moveCount: 0,
     moves: [],
     lastMove: null,
-    players: { whiteConnected: true, blackConnected: true, spectatorCount: 0 },
+    players: {
+      whiteConnected: true,
+      blackConnected: true,
+      spectatorCount: 0,
+      whiteName: getCurrentPlayerName(),
+      blackName: "Bot",
+    },
     rematchVotes: 0,
     analysis: { enabled: false, votes: 0, locked: false, labelsOnly: false, labelsVotes: 0 },
     undo: { pending: false, requester: null },
@@ -3551,28 +3927,32 @@ function reachesPromotionRank(square: Square, role: PlayerRole): boolean {
   return role === "w" ? square.endsWith("8") : square.endsWith("1");
 }
 
-function seatLabel(role: PlayerRole): string {
+function seatLabel(role: PlayerRole, playerName: string): string {
+  const safeName = normalizeUsername(playerName) || "Guest";
+
   if (state.role === role) {
-    return `You (${role === "w" ? "White" : "Black"})`;
+    return `You (${getCurrentPlayerName()})`;
   }
 
-  return `${role === "w" ? "White" : "Black"} player connected`;
+  return `${safeName} (${role === "w" ? "White" : "Black"})`;
 }
 
 function humanRole(role: RoomRole | null): string {
+  const name = getCurrentPlayerName();
+
   if (role === "w") {
-    return "White";
+    return `${name} (White)`;
   }
 
   if (role === "b") {
-    return "Black";
+    return `${name} (Black)`;
   }
 
   if (role === "spectator") {
-    return "Spectator";
+    return `${name} (Spectator)`;
   }
 
-  return "Not seated";
+  return `${name} (Not seated)`;
 }
 
 function syncUrl(roomId: string | null): void {

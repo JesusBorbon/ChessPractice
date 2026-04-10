@@ -874,6 +874,36 @@ button {
   margin: 0 auto;
   padding: 28px 0 40px;
 }
+.auth-quickbar {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.auth-quick-copy {
+  text-align: right;
+}
+.auth-quick-status,
+.auth-quick-meta {
+  margin: 0;
+}
+.auth-quick-meta {
+  font-size: 0.88rem;
+}
+.auth-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.auth-name-input {
+  min-height: 42px;
+  min-width: 220px;
+  border-radius: 999px;
+  border: 1px solid rgba(25, 35, 32, 0.14);
+  padding: 0 14px;
+  background: #fffaf1;
+}
 .hero {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.9fr);
@@ -932,6 +962,15 @@ button {
 .analysis-board-link:hover {
   transform: translateY(-2px);
   box-shadow: 0 16px 32px rgba(25, 35, 32, 0.15);
+}
+.analysis-board-link.locked {
+  opacity: 0.58;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.analysis-board-link.locked:hover {
+  transform: none;
+  box-shadow: none;
 }
 .status-card {
   padding: 10px;
@@ -1745,6 +1784,18 @@ button {
     width: min(100vw - 18px, 100%);
     padding-top: 14px;
   }
+  .auth-quickbar {
+    justify-items: stretch;
+  }
+  .auth-quick-copy {
+    text-align: left;
+  }
+  .auth-quick-actions {
+    justify-content: flex-start;
+  }
+  .auth-name-input {
+    min-width: 100%;
+  }
   .piece-quality-marker {
     border-color: cyan;
     top: clamp(1px, 0.4vmin, 3px);
@@ -2387,6 +2438,7 @@ body.focus-mode {
   overflow: hidden !important;
 }
 body.focus-mode .theme-switcher,
+body.focus-mode .auth-quickbar,
 body.focus-mode .hero,
 body.focus-mode .side-panel,
 body.focus-mode .analyze-side,
