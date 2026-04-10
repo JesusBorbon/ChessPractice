@@ -558,14 +558,27 @@ function goTo(index: number): void {
 
   if (chess.isCheckmate() || chess.isStalemate() || chess.isDraw()) {
     playSound("gameEndOrCheckmate");
-  } else if (chess.isCheck()) {
-    playSound("checkMove");
-  } else if (traversedMove?.flags.includes("k") || traversedMove?.flags.includes("q")) {
-    playSound("castle");
-  } else if (traversedMove?.captured) {
-    playSound("capture");
   } else {
-    playSound("move-self");
+    let specialSoundPlayed = false;
+
+    if (chess.isCheck()) {
+      playSound("checkMove");
+      specialSoundPlayed = true;
+    }
+
+    if (traversedMove?.captured) {
+      playSound("capture");
+      specialSoundPlayed = true;
+    }
+
+    if ((traversedMove?.flags.includes("k") || traversedMove?.flags.includes("q")) && !specialSoundPlayed) {
+      playSound("castle");
+      specialSoundPlayed = true;
+    }
+
+    if (!specialSoundPlayed) {
+      playSound("move-self");
+    }
   }
 
   clearSelection();
