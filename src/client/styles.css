@@ -2284,6 +2284,44 @@ body.focus-mode.focus-analyze .nav-row button:hover {
   }
 }
 
+/* Final override: keep focus HUD anchored to the viewport top, not board layout */
+body.focus-mode .focus-hud {
+  position: fixed !important;
+  inset: auto !important;
+  top: max(8px, env(safe-area-inset-top)) !important;
+  left: 50% !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: translateX(-50%) !important;
+  width: min(94vw, 560px) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 8px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  pointer-events: none !important;
+  z-index: 1200 !important;
+}
+
+body.focus-mode #focusTimer,
+body.focus-mode #focusMaterialHud {
+  pointer-events: auto;
+}
+
+body.focus-mode #focusMaterialHud {
+  position: static !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  gap: 6px !important;
+  width: 100% !important;
+}
+
 
 
 

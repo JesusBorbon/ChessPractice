@@ -645,18 +645,6 @@ app.innerHTML = `
           <button id="liveNavNext"  title="Next move">▶</button>
           <button id="liveNavLast"  title="Go to live">⏭</button>
         </div>
-
-        <div class="focus-hud" id="focusHud" hidden>
-            <span class="focus-chip" id="focusTimer">00:00</span>
-
-          <div id="focusMaterialHud" class="focus-material-hud" hidden>
-            <span class="focus-chip" id="focusMaterialScore"></span>
-            <span class="focus-chip" id="focusMaterialIcons"></span>
-          </div>
-        </div>
-
-      
-
         <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
       </section>
 
@@ -721,6 +709,15 @@ app.innerHTML = `
         </section>
       </aside>
     </main>
+  </div>
+
+  <div class="focus-hud" id="focusHud" hidden>
+    <span class="focus-chip" id="focusTimer">00:00</span>
+
+    <div id="focusMaterialHud" class="focus-material-hud" hidden>
+      <span class="focus-chip" id="focusMaterialScore"></span>
+      <span class="focus-chip" id="focusMaterialIcons"></span>
+    </div>
   </div>
 
   <div class="promotion-dialog" id="promotionDialog" hidden>
