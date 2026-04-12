@@ -12,6 +12,7 @@ import "./badge-icon-colors.css";
 import { buildArrowLayerMarkup } from "./arrow-render";
 import { BestMoveArrow, canShowBestMoveArrow, parseBestMoveArrow } from "./best-move-arrow";
 import { createAccountSidebarController } from "./account-sidebar";
+import { createVoiceChatController } from "./live-chat";
 import { mountThemeSwitcher } from "./theme";
 
 type PlayerRole = "w" | "b";
@@ -981,6 +982,31 @@ app.innerHTML = `
     </div>
   </div>
 </div>
+
+  <button class="chat-fab" id="chatFabButton" type="button" aria-label="Open live chat" hidden>
+    <span>Chat</span>
+    <span class="chat-fab-badge" id="chatFabBadge" hidden></span>
+  </button>
+
+  <section class="live-chat-panel" id="chatPanel" hidden>
+    <header class="live-chat-header">
+      <h2>Live Chat</h2>
+      <button class="chip" id="chatCloseButton" type="button">Close</button>
+    </header>
+    <p class="muted" id="chatStatusText">Live chat is available only for seated multiplayer players during active matches.</p>
+    <div class="live-chat-actions">
+      <button class="chip" id="chatConsentButton" type="button">Accept Communication</button>
+      <button class="action cta-turquoise chat-voice-btn" id="chatVoiceButton" type="button">Hold to Talk</button>
+    </div>
+    <div class="live-chat-messages" id="chatMessages">
+      <div class="empty-state">No messages yet.</div>
+    </div>
+    <div class="live-chat-compose">
+      <input class="join-input live-chat-input" id="chatInput" maxlength="420" placeholder="Type a message..." />
+      <button class="action" id="chatSendButton" type="button">Send</button>
+    </div>
+  </section>
+
   <div class="toast" id="toast"></div>
 `;
 
@@ -1025,6 +1051,16 @@ const movesMeta = must<HTMLSpanElement>("#movesMeta");
 const spectatorMeta = must<HTMLSpanElement>("#spectatorMeta");
 const summaryText = must<HTMLParagraphElement>("#summaryText");
 const liveAnalysisText = must<HTMLParagraphElement>("#liveAnalysisText");
+const chatFabButton = must<HTMLButtonElement>("#chatFabButton");
+const chatFabBadge = must<HTMLSpanElement>("#chatFabBadge");
+const chatPanel = must<HTMLElement>("#chatPanel");
+const chatCloseButton = must<HTMLButtonElement>("#chatCloseButton");
+const chatStatusText = must<HTMLParagraphElement>("#chatStatusText");
+const chatConsentButton = must<HTMLButtonElement>("#chatConsentButton");
+const chatMessages = must<HTMLDivElement>("#chatMessages");
+const chatInput = must<HTMLInputElement>("#chatInput");
+const chatSendButton = must<HTMLButtonElement>("#chatSendButton");
+const chatVoiceButton = must<HTMLButtonElement>("#chatVoiceButton");
 const moveList = must<HTMLDivElement>("#moveList");
 const toast = must<HTMLDivElement>("#toast");
 const promotionDialog = must<HTMLDivElement>("#promotionDialog");
@@ -1189,6 +1225,23 @@ const accountSidebarController = createAccountSidebarController({
   },
 });
 
+const voiceChatController = createVoiceChatController({
+  socket,
+  refs: {
+    chatFabButton,
+    chatFabBadge,
+    chatPanel,
+    chatCloseButton,
+    chatStatusText,
+    chatConsentButton,
+    chatMessages,
+    chatInput,
+    chatSendButton,
+    chatVoiceButton,
+  },
+  showToast,
+});
+
 function normalizeUsername(value: string): string {
   return accountSidebarController.normalizeUsername(value);
 }
@@ -1232,6 +1285,7 @@ void accountSidebarController.initialize();
 
 window.addEventListener("beforeunload", () => {
   accountSidebarController.dispose();
+  voiceChatController.dispose();
 });
 
 function refreshBotDifficultyUi(): void {
@@ -2305,6 +2359,13 @@ function renderSession(): void {
     (isMultiplayer && bothConnected && snapshot?.isStarted) || 
     (state.gameMode === "bot" && snapshot !== null)
   );
+
+  voiceChatController.syncSession({
+    roomId: state.roomId,
+    role: state.role,
+    gameMode: state.gameMode,
+    isGameActive,
+  });
 
   if (isGameActive && state.botPickerOpen) {
     closeBotDifficultyPicker();
@@ -4329,6 +4390,12 @@ function syncUrl(roomId: string | null): void {
 
 function clearLocalRoomState(): void {  
   clearScheduledBotResponse();
+  voiceChatController.syncSession({
+    roomId: null,
+    role: null,
+    gameMode: "multiplayer",
+    isGameActive: false,
+  });
 
   if (botAnalyzer) {
     botAnalyzer.terminate();

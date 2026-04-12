@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import express from "express";
 import { Chess, Move, Square } from "chess.js";
 import { Server } from "socket.io";
+import { ChatRole, ChatStoredMessage, createLiveChatStore } from "./live-chat-store";
 
 type PlayerRole = "w" | "b";
 type RoomRole = PlayerRole | "spectator";
@@ -111,6 +112,8 @@ type GameRoom = {
   clockActive: PlayerRole | null;
   clockRunning: boolean;
   clockLastUpdatedAt: number;
+  voiceWAcceptsB: boolean;
+  voiceBAcceptsW: boolean;
 };
 
 const app = express();
@@ -131,6 +134,11 @@ const ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
 const ROOM_TTL_MS = 1000 * 60 * 60 * 4;
 const PLAYER_DISCONNECT_GRACE_MS = 1000 * 60 * 3; // 3 minutos para reconectarse
 const LOW_TIME_THRESHOLD_MS = 20_000;
+const VOICE_MAX_BASE64_LENGTH = 2_200_000;
+const VOICE_MAX_DURATION_MS = 20_000;
+const VOICE_MIN_DURATION_MS = 250;
+const VOICE_ALLOWED_MIME_PREFIX = "audio/";
+const CHAT_MAX_TEXT_LENGTH = 420;
 
 type FirebaseClientConfig = {
   apiKey: string;
@@ -153,6 +161,7 @@ const publicDir =
   process.env.NODE_ENV === "production"
     ? path.join(projectRoot, "dist", "public")
     : path.join(projectRoot, "public");
+const liveChatStore = createLiveChatStore(projectRoot);
 
 const MAX_IMPORT_SOURCE_LENGTH = 200_000;
 const IMPORT_FETCH_TIMEOUT_MS = 12_000;
@@ -704,6 +713,98 @@ function getOpponentSocketId(room: GameRoom, socketId: string): string | null {
   return null;
 }
 
+function resetRoomChatConsent(room: GameRoom): void {
+  room.voiceWAcceptsB = false;
+  room.voiceBAcceptsW = false;
+}
+
+function setChatConsentForReceiver(room: GameRoom, receiverRole: PlayerRole, accept: boolean): void {
+  if (receiverRole === "w") {
+    room.voiceWAcceptsB = accept;
+    return;
+  }
+
+  room.voiceBAcceptsW = accept;
+}
+
+function hasMutualChatConsent(room: GameRoom): boolean {
+  return room.voiceWAcceptsB && room.voiceBAcceptsW;
+}
+
+function isAudioMimeType(value: unknown): value is string {
+  return typeof value === "string"
+    && value.startsWith(VOICE_ALLOWED_MIME_PREFIX)
+    && value.length <= 80;
+}
+
+function isCompactBase64(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= VOICE_MAX_BASE64_LENGTH
+    && /^[A-Za-z0-9+/=\s]+$/.test(value);
+}
+
+function sanitizeVoiceDurationMs(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const rounded = Math.round(value);
+  if (rounded < VOICE_MIN_DURATION_MS || rounded > VOICE_MAX_DURATION_MS) {
+    return null;
+  }
+
+  return rounded;
+}
+
+function sanitizeChatText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (!normalized || normalized.length > CHAT_MAX_TEXT_LENGTH) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function toChatRole(role: PlayerRole): ChatRole {
+  return role;
+}
+
+function buildChatState(room: GameRoom): {
+  wAcceptsB: boolean;
+  bAcceptsW: boolean;
+  mutualConsent: boolean;
+  messageCount: number;
+} {
+  return {
+    wAcceptsB: room.voiceWAcceptsB,
+    bAcceptsW: room.voiceBAcceptsW,
+    mutualConsent: hasMutualChatConsent(room),
+    messageCount: liveChatStore.getRoomMessages(room.id).length,
+  };
+}
+
+function emitChatState(room: GameRoom): void {
+  io.to(room.id).emit("chat:state", buildChatState(room));
+}
+
+function emitChatMessages(socketId: string, room: GameRoom): void {
+  io.to(socketId).emit("chat:messages", {
+    messages: liveChatStore.getRoomMessages(room.id),
+  });
+}
+
+function purgeRoomChatData(room: GameRoom, reason: "abandoned" | "room-closed"): void {
+  const deletedCount = liveChatStore.deleteRoomMessages(room.id);
+  resetRoomChatConsent(room);
+  io.to(room.id).emit("chat:purged", { reason, deletedCount });
+  emitChatState(room);
+}
+
 function emitRoomState(room: GameRoom): void {
   syncActiveClock(room);
 
@@ -716,7 +817,9 @@ function emitRoomState(room: GameRoom): void {
   io.to(room.id).emit("room:state", buildSnapshot(room));
 }
 
-function closeRoom(room: GameRoom): void {
+function closeRoom(room: GameRoom, reason: "abandoned" | "room-closed" = "room-closed"): void {
+  purgeRoomChatData(room, reason);
+
   const socketsInRoom = io.sockets.adapter.rooms.get(room.id);
   if (socketsInRoom) {
     for (const socketId of socketsInRoom) {
@@ -832,7 +935,7 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
     const noSpectators = getSpectatorCount(room.id, room) === 0;
 
     if (bothDisconnected && (immediate || noSpectators)) {
-      closeRoom(room);
+      closeRoom(room, "abandoned");
       resetSocketState(socketId);
       continue;
     }
@@ -847,12 +950,14 @@ function assignRole(room: GameRoom, socketId: string): RoomRole {
   if (!room.white) {
     room.spectators.delete(socketId);
     room.white = socketId;
+    resetRoomChatConsent(room);
     return "w";
   }
 
   if (!room.black) {
     room.spectators.delete(socketId);
     room.black = socketId;
+    resetRoomChatConsent(room);
     return "b";
   }
 
@@ -928,6 +1033,11 @@ const cleanupTimer = setInterval(() => {
       emitRoomState(room);
     }
 
+    if (!room.white && !room.black && getSpectatorCount(roomId, room) === 0) {
+      closeRoom(room, "abandoned");
+      continue;
+    }
+
     // Limpiar salas vacías después del TTL
     if (now - room.updatedAt < ROOM_TTL_MS) {
       continue;
@@ -937,7 +1047,7 @@ const cleanupTimer = setInterval(() => {
       continue;
     }
 
-    rooms.delete(roomId);
+    closeRoom(room, "abandoned");
   }
 }, 60_000);
 
@@ -1011,6 +1121,8 @@ io.on("connection", (socket) => {
       clockActive: null,
       clockRunning: false,
       clockLastUpdatedAt: Date.now(),
+      voiceWAcceptsB: false,
+      voiceBAcceptsW: false,
     };
 
     rooms.set(roomId, room);
@@ -1027,6 +1139,8 @@ io.on("connection", (socket) => {
     });
 
     emitRoomState(room);
+    emitChatState(room);
+    emitChatMessages(socket.id, room);
   });
 
   socket.on("room:join", (payload?: { roomId?: string }) => {
@@ -1090,6 +1204,10 @@ io.on("connection", (socket) => {
     });
 
     emitRoomState(room);
+    emitChatState(room);
+    if (role === "w" || role === "b") {
+      emitChatMessages(socket.id, room);
+    }
   });
 
   socket.on("room:leave", () => {
@@ -1101,6 +1219,132 @@ io.on("connection", (socket) => {
     socket.leave(room.id);
     removeFromRoom(socket.id, true);
     socket.emit("session:left");
+  });
+
+  socket.on("chat:consent:set", (payload?: { accept?: boolean }) => {
+    if (typeof payload?.accept !== "boolean") {
+      socket.emit("room:error", { message: "Invalid chat consent payload." });
+      return;
+    }
+
+    const room = getRoomForSocket(socket.id);
+    if (!room) {
+      socket.emit("room:error", { message: "Join a room before changing communication settings." });
+      return;
+    }
+
+    const role = getLiveRoomRole(room, socket.id);
+    if (!role || role === "spectator") {
+      socket.emit("room:error", { message: "Only seated players can change communication settings." });
+      return;
+    }
+
+    setChatConsentForReceiver(room, role, payload.accept);
+    emitChatState(room);
+    emitChatMessages(socket.id, room);
+  });
+
+  socket.on("chat:sync", () => {
+    const room = getRoomForSocket(socket.id);
+    if (!room) {
+      return;
+    }
+
+    const role = getLiveRoomRole(room, socket.id);
+    if (!role || role === "spectator") {
+      return;
+    }
+
+    emitChatMessages(socket.id, room);
+    emitChatState(room);
+  });
+
+  socket.on("chat:text:send", (payload?: { text?: string }) => {
+    const room = getRoomForSocket(socket.id);
+    if (!room) {
+      socket.emit("room:error", { message: "Join a room before sending messages." });
+      return;
+    }
+
+    if (!room.isStarted || !room.white || !room.black) {
+      socket.emit("room:error", { message: "Live chat is available during active multiplayer games." });
+      return;
+    }
+
+    const role = getLiveRoomRole(room, socket.id);
+    if (!role || role === "spectator") {
+      socket.emit("room:error", { message: "Only seated players can send messages." });
+      return;
+    }
+
+    if (!hasMutualChatConsent(room)) {
+      socket.emit("room:error", { message: "Both players must accept communication first." });
+      return;
+    }
+
+    const text = sanitizeChatText(payload?.text);
+    if (!text) {
+      socket.emit("room:error", { message: "Message is empty or too long." });
+      return;
+    }
+
+    const message: ChatStoredMessage = liveChatStore.addTextMessage({
+      roomId: room.id,
+      senderRole: toChatRole(role),
+      senderName: getSocketDisplayName(socket.id),
+      text,
+    });
+
+    io.to(room.id).emit("chat:message", { message });
+    emitChatState(room);
+  });
+
+  socket.on("chat:voice:send", (payload?: {
+    mimeType?: string;
+    audioBase64?: string;
+    durationMs?: number;
+  }) => {
+    const room = getRoomForSocket(socket.id);
+    if (!room) {
+      socket.emit("room:error", { message: "Join a room before sending voice notes." });
+      return;
+    }
+
+    if (!room.isStarted || !room.white || !room.black) {
+      socket.emit("room:error", { message: "Live chat is available during active multiplayer games." });
+      return;
+    }
+
+    const role = getLiveRoomRole(room, socket.id);
+    if (!role || role === "spectator") {
+      socket.emit("room:error", { message: "Only seated players can send voice notes." });
+      return;
+    }
+
+    if (!hasMutualChatConsent(room)) {
+      socket.emit("room:error", { message: "Both players must accept communication first." });
+      return;
+    }
+
+    const mimeType = payload?.mimeType;
+    const audioBase64 = payload?.audioBase64;
+    const durationMs = sanitizeVoiceDurationMs(payload?.durationMs);
+    if (!isAudioMimeType(mimeType) || !isCompactBase64(audioBase64) || durationMs === null) {
+      socket.emit("room:error", { message: "Invalid voice note payload." });
+      return;
+    }
+
+    const message: ChatStoredMessage = liveChatStore.addVoiceMessage({
+      roomId: room.id,
+      senderRole: toChatRole(role),
+      senderName: getSocketDisplayName(socket.id),
+      mimeType,
+      audioBase64,
+      durationMs,
+    });
+
+    io.to(room.id).emit("chat:message", { message });
+    emitChatState(room);
   });
 
   socket.on("pregame:mode", (payload?: { mode?: TimeControlPresetId }) => {
@@ -1533,6 +1777,15 @@ io.on("connection", (socket) => {
           if (bData) bData.role = "b";
         }
 
+        resetRoomChatConsent(room);
+        emitChatState(room);
+        if (room.white) {
+          emitChatMessages(room.white, room);
+        }
+        if (room.black) {
+          emitChatMessages(room.black, room);
+        }
+
         startClock(room);
       }
     }
@@ -1575,6 +1828,8 @@ socket.on("game:rematch", () => {
         room.black = w;
       }
 
+      resetRoomChatConsent(room);
+
       if (room.white) {
         const wData = io.sockets.sockets.get(room.white)?.data as ClientState | undefined;
         if (wData) wData.role = "w";
@@ -1585,6 +1840,14 @@ socket.on("game:rematch", () => {
         if (bData) bData.role = "b";
         io.sockets.sockets.get(room.black)?.emit("session:joined", { roomId: room.id, role: "b", shareUrl: buildShareUrl(room.black, room.id) });
       }
+
+      if (room.white) {
+        emitChatMessages(room.white, room);
+      }
+      if (room.black) {
+        emitChatMessages(room.black, room);
+      }
+      emitChatState(room);
 
       startClock(room);
     }

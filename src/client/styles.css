@@ -1173,6 +1173,151 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.chat-fab {
+  position: fixed;
+  right: 20px;
+  bottom: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 88px;
+  height: 50px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 80%, #0f2720), color-mix(in srgb, var(--accent-strong) 78%, #0b1916));
+  color: #f5fbf8;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  box-shadow: 0 16px 30px rgba(6, 14, 12, 0.34), 0 0 0 1px rgba(255, 255, 255, 0.14) inset;
+  z-index: 1650;
+}
+
+.chat-fab-badge {
+  position: absolute;
+  top: -7px;
+  right: -5px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: #d22a2a;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  box-shadow: 0 6px 14px rgba(165, 0, 0, 0.42);
+}
+
+.live-chat-panel {
+  position: fixed;
+  right: 20px;
+  bottom: 82px;
+  width: min(92vw, 380px);
+  max-height: min(72vh, 560px);
+  padding: 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(23, 39, 33, 0.16);
+  background: color-mix(in srgb, var(--paper) 92%, #ffffff 8%);
+  box-shadow: 0 22px 50px rgba(6, 14, 12, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  display: grid;
+  grid-template-rows: auto auto auto minmax(120px, 1fr) auto;
+  gap: 10px;
+  z-index: 1650;
+}
+
+.live-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.live-chat-header h2 {
+  margin: 0;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 1.15rem;
+}
+
+.live-chat-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.chat-voice-btn.is-recording {
+  background: linear-gradient(145deg, #b1302d, #dd4337);
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #fff6f1;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25), 0 10px 26px rgba(177, 48, 45, 0.38);
+  animation: chat-record-pulse 880ms ease-in-out infinite;
+}
+
+.live-chat-messages {
+  min-height: 120px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.chat-bubble {
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(25, 35, 32, 0.12);
+  background: color-mix(in srgb, var(--paper) 85%, white 15%);
+}
+
+.chat-bubble.mine {
+  background: color-mix(in srgb, var(--accent-soft) 74%, #ffffff 26%);
+  border-color: color-mix(in srgb, var(--accent) 26%, rgba(25, 35, 32, 0.2));
+}
+
+.chat-bubble-meta {
+  margin-bottom: 5px;
+  color: color-mix(in srgb, var(--muted) 88%, #ffffff 12%);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.chat-bubble-text {
+  margin: 0;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.chat-bubble audio {
+  width: 100%;
+}
+
+.live-chat-compose {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.live-chat-input {
+  min-height: 42px;
+}
+
+@keyframes chat-record-pulse {
+  0% {
+    transform: translateY(0) scale(1);
+    filter: saturate(1);
+  }
+  50% {
+    transform: translateY(-1px) scale(1.018);
+    filter: saturate(1.07);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    filter: saturate(1);
+  }
+}
+
 .join-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2719,6 +2864,31 @@ body.focus-mode.focus-analyze .nav-row button:hover {
     top: auto !important;
     transform: none !important;
     margin: 0 !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .chat-fab {
+    right: 12px;
+    bottom: 14px;
+    min-width: 78px;
+    height: 46px;
+  }
+
+  .live-chat-panel {
+    right: 10px;
+    left: 10px;
+    bottom: 68px;
+    width: auto;
+    max-height: min(74vh, 560px);
+  }
+
+  .live-chat-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .live-chat-compose {
+    grid-template-columns: 1fr;
   }
 }
 

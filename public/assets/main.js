@@ -28582,6 +28582,503 @@ var init_account_sidebar2 = __esm({
   }
 });
 
+// src/client/live-chat.ts
+function createVoiceChatController({ socket, refs, showToast }) {
+  let roomId = null;
+  let role = null;
+  let gameMode = "multiplayer";
+  let isGameActive = false;
+  let chatPanelOpen = false;
+  let unreadCount = 0;
+  let lastSyncKey = null;
+  let chatState = {
+    wAcceptsB: false,
+    bAcceptsW: false,
+    mutualConsent: false,
+    messageCount: 0
+  };
+  let messages = [];
+  const readMessageIds = /* @__PURE__ */ new Set();
+  let recorder = null;
+  let recorderStream = null;
+  let recorderChunks = [];
+  let recording = false;
+  let recordingStartedAt = 0;
+  let recordingMaxTimer = null;
+  let recorderMimeType = "audio/webm";
+  const onChatState = (payload) => {
+    chatState = payload;
+    render();
+  };
+  const onChatMessages = (payload) => {
+    messages = Array.isArray(payload?.messages) ? payload.messages.slice().sort((a, b2) => a.createdAt - b2.createdAt) : [];
+    if (chatPanelOpen) {
+      markAllAsRead();
+    } else {
+      unreadCount = countUnreadIncoming();
+    }
+    render();
+  };
+  const onChatMessage = (payload) => {
+    const message = payload?.message;
+    if (!message || !roomId || message.roomId !== roomId) {
+      return;
+    }
+    messages = [...messages, message].sort((a, b2) => a.createdAt - b2.createdAt).slice(-120);
+    const incomingFromOpponent = isIncomingMessage(message);
+    if (chatPanelOpen) {
+      markAllAsRead();
+    } else if (incomingFromOpponent) {
+      unreadCount += 1;
+    }
+    render();
+  };
+  const onChatPurged = () => {
+    messages = [];
+    unreadCount = 0;
+    chatState = {
+      wAcceptsB: false,
+      bAcceptsW: false,
+      mutualConsent: false,
+      messageCount: 0
+    };
+    readMessageIds.clear();
+    showToast("Chat and voice messages were permanently deleted for this room.");
+    render();
+  };
+  const onFabClick = () => {
+    if (!canUseChat()) {
+      return;
+    }
+    chatPanelOpen = !chatPanelOpen;
+    if (chatPanelOpen) {
+      markAllAsRead();
+      unreadCount = 0;
+    }
+    render();
+  };
+  const onCloseClick = () => {
+    chatPanelOpen = false;
+    render();
+  };
+  const onConsentClick = () => {
+    if (!canUseChat()) {
+      return;
+    }
+    socket.emit("chat:consent:set", { accept: !myConsent() });
+  };
+  const onSendClick = () => {
+    void sendTextMessage();
+  };
+  const onInputKeyDown = (event) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    void sendTextMessage();
+  };
+  const onVoicePointerDown = (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    void startRecording();
+  };
+  const onVoicePointerEnd = () => {
+    void stopRecording();
+  };
+  const onVoiceKeyDown = (event) => {
+    if (event.key !== " " && event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    if (!recording) {
+      void startRecording();
+    }
+  };
+  const onVoiceKeyUp = (event) => {
+    if (event.key !== " " && event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    if (recording) {
+      void stopRecording();
+    }
+  };
+  socket.on("chat:state", onChatState);
+  socket.on("chat:messages", onChatMessages);
+  socket.on("chat:message", onChatMessage);
+  socket.on("chat:purged", onChatPurged);
+  refs.chatFabButton.addEventListener("click", onFabClick);
+  refs.chatCloseButton.addEventListener("click", onCloseClick);
+  refs.chatConsentButton.addEventListener("click", onConsentClick);
+  refs.chatSendButton.addEventListener("click", onSendClick);
+  refs.chatInput.addEventListener("keydown", onInputKeyDown);
+  refs.chatVoiceButton.addEventListener("pointerdown", onVoicePointerDown);
+  refs.chatVoiceButton.addEventListener("pointerup", onVoicePointerEnd);
+  refs.chatVoiceButton.addEventListener("pointercancel", onVoicePointerEnd);
+  refs.chatVoiceButton.addEventListener("pointerleave", onVoicePointerEnd);
+  refs.chatVoiceButton.addEventListener("keydown", onVoiceKeyDown);
+  refs.chatVoiceButton.addEventListener("keyup", onVoiceKeyUp);
+  function canUseChat() {
+    return gameMode === "multiplayer" && isGameActive && (role === "w" || role === "b") && Boolean(roomId);
+  }
+  function myConsent() {
+    if (role === "w") {
+      return chatState.wAcceptsB;
+    }
+    if (role === "b") {
+      return chatState.bAcceptsW;
+    }
+    return false;
+  }
+  function opponentConsent() {
+    if (role === "w") {
+      return chatState.bAcceptsW;
+    }
+    if (role === "b") {
+      return chatState.wAcceptsB;
+    }
+    return false;
+  }
+  function isIncomingMessage(message) {
+    return role === "w" || role === "b" ? message.senderRole !== role : false;
+  }
+  function countUnreadIncoming() {
+    return messages.filter((message) => isIncomingMessage(message) && !readMessageIds.has(message.id)).length;
+  }
+  function markAllAsRead() {
+    for (const message of messages) {
+      if (isIncomingMessage(message)) {
+        readMessageIds.add(message.id);
+      }
+    }
+  }
+  function clearSessionState() {
+    chatPanelOpen = false;
+    unreadCount = 0;
+    lastSyncKey = null;
+    messages = [];
+    readMessageIds.clear();
+    refs.chatInput.value = "";
+    resetRecordingState();
+  }
+  async function sendTextMessage() {
+    if (!canUseChat()) {
+      return;
+    }
+    if (!chatState.mutualConsent) {
+      showToast("Both players need to accept communication first.");
+      return;
+    }
+    const text = refs.chatInput.value.trim();
+    if (!text) {
+      return;
+    }
+    socket.emit("chat:text:send", { text });
+    refs.chatInput.value = "";
+  }
+  function resetRecordingState() {
+    if (recordingMaxTimer !== null) {
+      window.clearTimeout(recordingMaxTimer);
+      recordingMaxTimer = null;
+    }
+    recording = false;
+    recordingStartedAt = 0;
+    recorderChunks = [];
+    refs.chatVoiceButton.classList.remove("is-recording");
+    refs.chatVoiceButton.textContent = "Hold to Talk";
+  }
+  function chooseRecorderMimeType() {
+    if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
+      return "audio/webm";
+    }
+    const candidates = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/ogg;codecs=opus",
+      "audio/mp4"
+    ];
+    for (const candidate of candidates) {
+      if (MediaRecorder.isTypeSupported(candidate)) {
+        return candidate;
+      }
+    }
+    return "audio/webm";
+  }
+  async function ensureRecorderStream() {
+    if (recorderStream && recorderStream.active) {
+      return recorderStream;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      showToast("Your browser does not support microphone capture.");
+      return null;
+    }
+    try {
+      recorderStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      return recorderStream;
+    } catch {
+      showToast("Microphone permission was denied.");
+      return null;
+    }
+  }
+  async function startRecording() {
+    if (!canUseChat()) {
+      return;
+    }
+    if (!chatState.mutualConsent) {
+      showToast("Both players need to accept communication first.");
+      return;
+    }
+    if (recording) {
+      return;
+    }
+    const stream = await ensureRecorderStream();
+    if (!stream) {
+      return;
+    }
+    if (typeof MediaRecorder === "undefined") {
+      showToast("Voice notes are not supported in this browser.");
+      return;
+    }
+    recorderChunks = [];
+    recorderMimeType = chooseRecorderMimeType();
+    try {
+      recorder = new MediaRecorder(stream, { mimeType: recorderMimeType });
+    } catch {
+      try {
+        recorder = new MediaRecorder(stream);
+        recorderMimeType = recorder.mimeType || "audio/webm";
+      } catch {
+        recorder = null;
+        showToast("Could not initialize voice recording.");
+        return;
+      }
+    }
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        recorderChunks.push(event.data);
+      }
+    };
+    recorder.onstop = () => {
+      void finalizeRecording();
+    };
+    recording = true;
+    recordingStartedAt = performance.now();
+    refs.chatVoiceButton.classList.add("is-recording");
+    refs.chatVoiceButton.textContent = "Release to Send";
+    try {
+      recorder.start();
+      recordingMaxTimer = window.setTimeout(() => {
+        void stopRecording();
+      }, MAX_RECORDING_MS);
+    } catch {
+      recorder = null;
+      resetRecordingState();
+      showToast("Could not start voice recording.");
+    }
+  }
+  async function stopRecording() {
+    if (!recording || !recorder) {
+      return;
+    }
+    if (recorder.state !== "inactive") {
+      try {
+        recorder.stop();
+      } catch {
+        resetRecordingState();
+      }
+    }
+  }
+  async function finalizeRecording() {
+    const activeRecorder = recorder;
+    const durationMs = Math.round(performance.now() - recordingStartedAt);
+    recorder = null;
+    resetRecordingState();
+    if (!activeRecorder || !canUseChat() || !chatState.mutualConsent) {
+      return;
+    }
+    if (durationMs < 250) {
+      return;
+    }
+    const blob = new Blob(recorderChunks, {
+      type: activeRecorder.mimeType || recorderMimeType || "audio/webm"
+    });
+    if (blob.size < 600) {
+      return;
+    }
+    const audioBase64 = await blobToBase64(blob);
+    if (!audioBase64) {
+      showToast("Could not encode voice note.");
+      return;
+    }
+    socket.emit("chat:voice:send", {
+      mimeType: blob.type || "audio/webm",
+      audioBase64,
+      durationMs
+    });
+  }
+  function blobToBase64(blob) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const data = typeof reader.result === "string" ? reader.result : "";
+        const commaIndex = data.indexOf(",");
+        if (commaIndex < 0) {
+          resolve(null);
+          return;
+        }
+        resolve(data.slice(commaIndex + 1));
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  }
+  function escapeHtml(value2) {
+    return value2.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+  }
+  function formatTime(timestamp) {
+    return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  function formatDuration(durationMs) {
+    const totalSeconds = Math.max(1, Math.round(durationMs / 1e3));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+  function renderMessages() {
+    if (messages.length === 0) {
+      refs.chatMessages.innerHTML = '<div class="empty-state">No messages yet.</div>';
+      return;
+    }
+    refs.chatMessages.innerHTML = messages.map((message) => {
+      const mine = role === "w" || role === "b" ? message.senderRole === role : false;
+      const bubbleClass = mine ? "chat-bubble mine" : "chat-bubble opp";
+      const sender = escapeHtml(message.senderName || "Player");
+      const time = formatTime(message.createdAt);
+      if (message.kind === "text") {
+        return `
+          <article class="${bubbleClass}">
+            <header class="chat-bubble-meta">${sender} \u2022 ${time}</header>
+            <p class="chat-bubble-text">${escapeHtml(message.text)}</p>
+          </article>
+        `;
+      }
+      const src = `data:${message.mimeType};base64,${message.audioBase64}`;
+      return `
+        <article class="${bubbleClass}">
+          <header class="chat-bubble-meta">${sender} \u2022 ${time} \u2022 ${formatDuration(message.durationMs)}</header>
+          <audio controls preload="none" src="${src}"></audio>
+        </article>
+      `;
+    }).join("");
+    refs.chatMessages.scrollTop = refs.chatMessages.scrollHeight;
+  }
+  function renderStatus() {
+    if (!canUseChat()) {
+      return "Live chat is available only for seated multiplayer players during active matches.";
+    }
+    const mine = myConsent();
+    const opp = opponentConsent();
+    if (chatState.mutualConsent) {
+      return "Communication active. You can send text and voice notes in real time.";
+    }
+    if (!mine && !opp) {
+      return "Both players have communication blocked. Accept to start chatting.";
+    }
+    if (mine && !opp) {
+      return "You accepted communication. Waiting for your opponent to accept.";
+    }
+    return "Your opponent accepted communication. Accept to start chatting.";
+  }
+  function render() {
+    const enabled = canUseChat();
+    refs.chatFabButton.hidden = !enabled;
+    refs.chatPanel.hidden = !enabled || !chatPanelOpen;
+    refs.chatStatusText.textContent = renderStatus();
+    refs.chatConsentButton.textContent = myConsent() ? "Block Communication" : "Accept Communication";
+    const canSend = enabled && chatState.mutualConsent;
+    refs.chatInput.disabled = !canSend;
+    refs.chatSendButton.disabled = !canSend;
+    refs.chatVoiceButton.disabled = !canSend;
+    if (!recording) {
+      refs.chatVoiceButton.textContent = "Hold to Talk";
+      refs.chatVoiceButton.classList.remove("is-recording");
+    }
+    if (unreadCount > 0) {
+      refs.chatFabBadge.hidden = false;
+      refs.chatFabBadge.textContent = unreadCount > 99 ? "99+" : String(unreadCount);
+    } else {
+      refs.chatFabBadge.hidden = true;
+      refs.chatFabBadge.textContent = "";
+    }
+    renderMessages();
+  }
+  function syncSession(context) {
+    const previousRoomId = roomId;
+    roomId = context.roomId;
+    role = context.role;
+    gameMode = context.gameMode;
+    isGameActive = context.isGameActive;
+    if (!roomId || roomId !== previousRoomId) {
+      clearSessionState();
+    }
+    const syncKey = canUseChat() && role ? `${roomId}:${role}` : null;
+    if (syncKey && syncKey !== lastSyncKey) {
+      socket.emit("chat:sync");
+      lastSyncKey = syncKey;
+    }
+    if (!syncKey) {
+      chatPanelOpen = false;
+      lastSyncKey = null;
+    }
+    render();
+  }
+  function dispose() {
+    socket.off("chat:state", onChatState);
+    socket.off("chat:messages", onChatMessages);
+    socket.off("chat:message", onChatMessage);
+    socket.off("chat:purged", onChatPurged);
+    refs.chatFabButton.removeEventListener("click", onFabClick);
+    refs.chatCloseButton.removeEventListener("click", onCloseClick);
+    refs.chatConsentButton.removeEventListener("click", onConsentClick);
+    refs.chatSendButton.removeEventListener("click", onSendClick);
+    refs.chatInput.removeEventListener("keydown", onInputKeyDown);
+    refs.chatVoiceButton.removeEventListener("pointerdown", onVoicePointerDown);
+    refs.chatVoiceButton.removeEventListener("pointerup", onVoicePointerEnd);
+    refs.chatVoiceButton.removeEventListener("pointercancel", onVoicePointerEnd);
+    refs.chatVoiceButton.removeEventListener("pointerleave", onVoicePointerEnd);
+    refs.chatVoiceButton.removeEventListener("keydown", onVoiceKeyDown);
+    refs.chatVoiceButton.removeEventListener("keyup", onVoiceKeyUp);
+    if (recording && recorder && recorder.state !== "inactive") {
+      try {
+        recorder.stop();
+      } catch {
+      }
+    }
+    recorder = null;
+    resetRecordingState();
+    if (recorderStream) {
+      for (const track of recorderStream.getTracks()) {
+        track.stop();
+      }
+      recorderStream = null;
+    }
+  }
+  render();
+  return {
+    syncSession,
+    dispose
+  };
+}
+var MAX_RECORDING_MS;
+var init_live_chat = __esm({
+  "src/client/live-chat.ts"() {
+    "use strict";
+    MAX_RECORDING_MS = 2e4;
+  }
+});
+
 // src/client/theme.ts
 function setTheme(theme) {
   if (theme === "forest") {
@@ -28747,6 +29244,7 @@ var require_main = __commonJS({
     init_arrow_render();
     init_best_move_arrow();
     init_account_sidebar2();
+    init_live_chat();
     init_theme();
     var BOT_DIFFICULTY_PRESETS = [
       { level: 1, label: "Level 1 - 800 Elo", elo: 800, skillLevel: 0, moveTimeMs: 90, fullStrength: false },
@@ -29459,6 +29957,31 @@ var require_main = __commonJS({
     </div>
   </div>
 </div>
+
+  <button class="chat-fab" id="chatFabButton" type="button" aria-label="Open live chat" hidden>
+    <span>Chat</span>
+    <span class="chat-fab-badge" id="chatFabBadge" hidden></span>
+  </button>
+
+  <section class="live-chat-panel" id="chatPanel" hidden>
+    <header class="live-chat-header">
+      <h2>Live Chat</h2>
+      <button class="chip" id="chatCloseButton" type="button">Close</button>
+    </header>
+    <p class="muted" id="chatStatusText">Live chat is available only for seated multiplayer players during active matches.</p>
+    <div class="live-chat-actions">
+      <button class="chip" id="chatConsentButton" type="button">Accept Communication</button>
+      <button class="action cta-turquoise chat-voice-btn" id="chatVoiceButton" type="button">Hold to Talk</button>
+    </div>
+    <div class="live-chat-messages" id="chatMessages">
+      <div class="empty-state">No messages yet.</div>
+    </div>
+    <div class="live-chat-compose">
+      <input class="join-input live-chat-input" id="chatInput" maxlength="420" placeholder="Type a message..." />
+      <button class="action" id="chatSendButton" type="button">Send</button>
+    </div>
+  </section>
+
   <div class="toast" id="toast"></div>
 `;
     var board = must("#board");
@@ -29500,6 +30023,16 @@ var require_main = __commonJS({
     var spectatorMeta = must("#spectatorMeta");
     var summaryText = must("#summaryText");
     var liveAnalysisText = must("#liveAnalysisText");
+    var chatFabButton = must("#chatFabButton");
+    var chatFabBadge = must("#chatFabBadge");
+    var chatPanel = must("#chatPanel");
+    var chatCloseButton = must("#chatCloseButton");
+    var chatStatusText = must("#chatStatusText");
+    var chatConsentButton = must("#chatConsentButton");
+    var chatMessages = must("#chatMessages");
+    var chatInput = must("#chatInput");
+    var chatSendButton = must("#chatSendButton");
+    var chatVoiceButton = must("#chatVoiceButton");
     var moveList = must("#moveList");
     var toast = must("#toast");
     var promotionDialog = must("#promotionDialog");
@@ -29648,6 +30181,22 @@ var require_main = __commonJS({
         window.location.assign("/analyze");
       }
     });
+    var voiceChatController = createVoiceChatController({
+      socket,
+      refs: {
+        chatFabButton,
+        chatFabBadge,
+        chatPanel,
+        chatCloseButton,
+        chatStatusText,
+        chatConsentButton,
+        chatMessages,
+        chatInput,
+        chatSendButton,
+        chatVoiceButton
+      },
+      showToast
+    });
     function normalizeUsername(value2) {
       return accountSidebarController.normalizeUsername(value2);
     }
@@ -29677,6 +30226,7 @@ var require_main = __commonJS({
     void accountSidebarController.initialize();
     window.addEventListener("beforeunload", () => {
       accountSidebarController.dispose();
+      voiceChatController.dispose();
     });
     function refreshBotDifficultyUi() {
       const preset = getBotDifficultyPreset(state.botLevel);
@@ -30505,6 +31055,12 @@ var require_main = __commonJS({
       const isGameActive = Boolean(
         isMultiplayer && bothConnected && snapshot?.isStarted || state.gameMode === "bot" && snapshot !== null
       );
+      voiceChatController.syncSession({
+        roomId: state.roomId,
+        role: state.role,
+        gameMode: state.gameMode,
+        isGameActive
+      });
       if (isGameActive && state.botPickerOpen) {
         closeBotDifficultyPicker();
       }
@@ -32038,6 +32594,12 @@ var require_main = __commonJS({
     }
     function clearLocalRoomState() {
       clearScheduledBotResponse();
+      voiceChatController.syncSession({
+        roomId: null,
+        role: null,
+        gameMode: "multiplayer",
+        isGameActive: false
+      });
       if (botAnalyzer) {
         botAnalyzer.terminate();
         botAnalyzer = null;
