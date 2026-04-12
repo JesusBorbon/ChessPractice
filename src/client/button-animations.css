@@ -62,7 +62,7 @@
   border: 1px solid rgba(0, 229, 255, 0.3);
   color: #e4e5e6;
   box-shadow: 0 12px 24px rgba(233, 237, 233, 0.15);
-  width: 50%;
+  width: auto;
 }
 
 .action.cta-turquoise:hover {
