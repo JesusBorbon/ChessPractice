@@ -71,181 +71,6 @@ button {
 }
 
 
-.top-utility {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.quick-identity {
-  margin: 0;
-  font-weight: 700;
-}
-
-.account-menu-button {
-  min-width: 140px;
-}
-
-.sidebar-backdrop {
-  position: fixed;
-  inset: 0;
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
-  z-index: 800;
-} 
-
-[data-theme="purple"] .sidebar-backdrop {
-  background: color-mix(in srgb, rgba(11, 4, 42, 0.486) 48%, transparent);
-}
-
-
-.account-sidebar {
-  position: fixed;
-  top: 0;
-  right: 0;
-  width: min(410px, 100vw);
-  height: 100dvh;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  /*adapted to the color palette*/
-  /* background: var(--accent-soft); */
-  backdrop-filter: blur(18px);
-  border-left: 1px solid rgba(25, 35, 32, 0.16);
-  box-shadow: -5px 0 38px rgba(16, 28, 24, 0.25);
-  transform: translateX(100%);
-  transition: transform 220ms ease;
-  z-index: 850;
-}
-
-.account-sidebar.open {
-  transform: translateX(0);
-}
-
-.sidebar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.sidebar-header h2 {
-  margin: 0;
-  font-family: "Fraunces", Georgia, serif;
-  font-size: 1.55rem;
-}
-
-
-
-#sidebarCloseButton, #sidebarHistoryTab, #sidebarProfileTab{
-  color: white;
-}
-
-.sidebar-nav {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.sidebar-tab.active {
-  background: var(--accent-strong);
-  color: #fffaf3;
-  box-shadow: 0 10px 22px rgba(25, 63, 48, 0.2);
-}
-
-.sidebar-panel {
-  background: var(--paper);
-  border: 1px solid rgba(25, 35, 32, 0.1);
-  border-radius: 18px;
-  padding: 14px;
-  display: grid;
-  gap: 10px;
-}
-
-.sidebar-actions {
-  display: grid;
-  gap: 10px;
-}
-
-.auth-name-input {
-  min-height: 42px;
-  min-width: 100%;
-  border-radius: 999px;
-  border: 1px solid rgba(25, 35, 32, 0.14);
-  padding: 0 14px;
-  background: #fffaf1;
-}
-
-.saved-games-list {
-  max-height: min(58vh, 580px);
-  overflow: auto;
-  display: grid;
-  gap: 12px;
-  padding-right: 4px;
-  background-color: rgba(184, 184, 184, 0.01);
-  border-radius: 20px;
-}
-
-.saved-game-item {
-  border: 1px solid rgba(25, 35, 32, 0.1);
-  border-radius: 14px;
-  background: var(--paper);
-  padding: 11px;
-  cursor: pointer;
-  transition: transform 130ms ease, box-shadow 130ms ease, border-color 130ms ease;
-}
-
-.saved-game-item:hover,
-.saved-game-item:focus-visible {
-  transform: translateY(-1px);
-  border-color: rgba(25, 63, 48, 0.22);
-  box-shadow: 0 10px 18px rgba(18, 40, 31, 0.08);
-  outline: none;
-}
-
-.saved-game-item.deleting {
-  opacity: 0.72;
-}
-
-.saved-game-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.saved-game-header h3 {
-  margin: 0;
-  font-size: 0.95rem;
-}
-
-.saved-game-actions {
-  display: inline-flex;
-  align-items: center;
-}
-
-.saved-game-date {
-  margin: 8px 0 4px;
-  font-size: 0.82rem;
-  color: var(--muted);
-}
-
-.saved-game-open-hint {
-  margin: 0;
-  font-size: 0.8rem;
-  color: var(--accent-strong);
-  font-weight: 600;
-}
-
-.saved-game-delete-button {
-  min-height: 34px;
-  padding: 0 10px;
-  border-radius: 999px;
-  font-size: 0.76rem;
-}
-
 .hero {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.9fr);
@@ -1220,54 +1045,9 @@ button {
 }
 
 @media (max-width: 640px) {
-  body.sidebar-open-mobile {
-    overflow: hidden;
-    touch-action: none;
-    overscroll-behavior: none;
-  }
-
   .app-shell {
     width: min(100vw - 18px, 100%);
     padding-top: 14px;
-  }
-
-  .top-utility {
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 10px;
-  }
-
-  .quick-identity {
-    max-width: 46vw;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .account-menu-button {
-    min-width: 126px;
-  }
-
-  .account-sidebar {
-    width: 100vw;
-    padding: 14px;
-  }
-
-  .saved-games-list {
-    max-height: 50dvh;
-  }
-
-  .saved-game-header {
-    align-items: flex-start;
-  }
-
-  .saved-game-delete-button {
-    min-height: 32px;
-    padding: 0 9px;
-  }
-
-  .auth-name-input {
-    min-width: 100%;
   }
 
   .piece-quality-marker {
@@ -1366,15 +1146,6 @@ button {
   }
 
   
-  .sidebar-close-button {
-  min-width: 96px;
-  background-color: rgba(254, 1, 1, 0.356) !important;
-  backdrop-filter: blur(6px);
-  border: 1px solid rgba(213, 17, 17, 0.8) !important;
-  
-}
-
-
  .square.legal::after {
   content: "";
   position: absolute;
@@ -2007,9 +1778,6 @@ body.focus-mode {
 
 /* 1. Hide all non-essential UI */
 body.focus-mode .theme-switcher,
-body.focus-mode .top-utility,
-body.focus-mode .account-sidebar,
-body.focus-mode .sidebar-backdrop,
 body.focus-mode .hero,
 body.focus-mode .side-panel,
 body.focus-mode .analyze-side,

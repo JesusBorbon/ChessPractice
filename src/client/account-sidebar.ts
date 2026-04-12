@@ -91,6 +91,7 @@ export function createAccountSidebarController({
   let importSourceDraft = "";
   let importComposerOpen = false;
   let importBusy = false;
+  let savedGamesTouchStartY: number | null = null;
 
   let savingGameSignature: string | null = null;
   let savedGameSignature: string | null = null;
@@ -270,6 +271,44 @@ export function createAccountSidebarController({
     const isMobileViewport = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX}px)`).matches;
     document.body.classList.toggle(MOBILE_SCROLL_LOCK_CLASS, sidebarOpen && isMobileViewport);
   }
+
+  function isMobileViewport(): boolean {
+    return window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX}px)`).matches;
+  }
+
+  const onSavedGamesTouchStart = (event: TouchEvent): void => {
+    if (!sidebarOpen || !isMobileViewport() || event.touches.length !== 1) {
+      return;
+    }
+
+    savedGamesTouchStartY = event.touches[0]?.clientY ?? null;
+  };
+
+  const onSavedGamesTouchMove = (event: TouchEvent): void => {
+    if (!sidebarOpen || !isMobileViewport() || event.touches.length !== 1) {
+      return;
+    }
+
+    const currentY = event.touches[0]?.clientY;
+    if (typeof currentY !== "number") {
+      return;
+    }
+
+    const scrollContainer = refs.savedGamesList;
+    const previousY = savedGamesTouchStartY ?? currentY;
+    const deltaY = currentY - previousY;
+    const atTop = scrollContainer.scrollTop <= 0;
+    const atBottom = scrollContainer.scrollTop + scrollContainer.clientHeight >= scrollContainer.scrollHeight - 1;
+    const cannotScroll = scrollContainer.scrollHeight <= scrollContainer.clientHeight;
+
+    savedGamesTouchStartY = currentY;
+
+    if (cannotScroll || (atTop && deltaY > 0) || (atBottom && deltaY < 0)) {
+      event.preventDefault();
+    }
+
+    event.stopPropagation();
+  };
 
   function setActiveSidebarTab(nextTab: "profile" | "history"): void {
     activeSidebarTab = nextTab;
@@ -494,6 +533,14 @@ export function createAccountSidebarController({
         composer.style.maxHeight = `${composer.scrollHeight}px`;
       }
     });
+    input.addEventListener("touchmove", (event) => {
+      if (!sidebarOpen || !isMobileViewport()) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+    }, { passive: false });
 
     const controls = document.createElement("div");
     controls.className = "saved-game-import-controls";
@@ -828,6 +875,8 @@ export function createAccountSidebarController({
     refs.sidebarHistoryTab.addEventListener("click", onSidebarHistoryTabClick);
     window.addEventListener("keydown", onEscapeCloseSidebar);
     window.addEventListener("resize", onViewportResize);
+    refs.savedGamesList.addEventListener("touchstart", onSavedGamesTouchStart, { passive: true });
+    refs.savedGamesList.addEventListener("touchmove", onSavedGamesTouchMove, { passive: false });
 
     refs.signInGoogleButton.addEventListener("click", onSignInGoogleClick);
     refs.usernameInput.addEventListener("input", onUsernameInput);
@@ -850,6 +899,8 @@ export function createAccountSidebarController({
     refs.sidebarHistoryTab.removeEventListener("click", onSidebarHistoryTabClick);
     window.removeEventListener("keydown", onEscapeCloseSidebar);
     window.removeEventListener("resize", onViewportResize);
+    refs.savedGamesList.removeEventListener("touchstart", onSavedGamesTouchStart);
+    refs.savedGamesList.removeEventListener("touchmove", onSavedGamesTouchMove);
 
     refs.signInGoogleButton.removeEventListener("click", onSignInGoogleClick);
     refs.usernameInput.removeEventListener("input", onUsernameInput);

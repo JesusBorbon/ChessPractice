@@ -6,6 +6,7 @@ import "./theme-palette.css";
 import "./button-animations.css";
 import "./arrows.css";
 import "./styles.css";
+import "./account-sidebar.css";
 import "./account-sidebar-import.css";
 import "./badge-icon-colors.css";
 import { buildArrowLayerMarkup } from "./arrow-render";

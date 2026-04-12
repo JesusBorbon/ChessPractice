@@ -7120,6 +7120,12 @@ var init_styles = __esm({
   }
 });
 
+// src/client/account-sidebar.css
+var init_account_sidebar = __esm({
+  "src/client/account-sidebar.css"() {
+  }
+});
+
 // src/client/account-sidebar-import.css
 var init_account_sidebar_import = __esm({
   "src/client/account-sidebar-import.css"() {
@@ -27853,6 +27859,7 @@ function createAccountSidebarController({
   let importSourceDraft = "";
   let importComposerOpen = false;
   let importBusy = false;
+  let savedGamesTouchStartY = null;
   let savingGameSignature = null;
   let savedGameSignature = null;
   let failedGameSignature = null;
@@ -27995,9 +28002,38 @@ function createAccountSidebarController({
     syncBodyScrollLock();
   }
   function syncBodyScrollLock() {
-    const isMobileViewport = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX}px)`).matches;
-    document.body.classList.toggle(MOBILE_SCROLL_LOCK_CLASS, sidebarOpen && isMobileViewport);
+    const isMobileViewport2 = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX}px)`).matches;
+    document.body.classList.toggle(MOBILE_SCROLL_LOCK_CLASS, sidebarOpen && isMobileViewport2);
   }
+  function isMobileViewport() {
+    return window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX}px)`).matches;
+  }
+  const onSavedGamesTouchStart = (event) => {
+    if (!sidebarOpen || !isMobileViewport() || event.touches.length !== 1) {
+      return;
+    }
+    savedGamesTouchStartY = event.touches[0]?.clientY ?? null;
+  };
+  const onSavedGamesTouchMove = (event) => {
+    if (!sidebarOpen || !isMobileViewport() || event.touches.length !== 1) {
+      return;
+    }
+    const currentY = event.touches[0]?.clientY;
+    if (typeof currentY !== "number") {
+      return;
+    }
+    const scrollContainer = refs.savedGamesList;
+    const previousY = savedGamesTouchStartY ?? currentY;
+    const deltaY = currentY - previousY;
+    const atTop = scrollContainer.scrollTop <= 0;
+    const atBottom = scrollContainer.scrollTop + scrollContainer.clientHeight >= scrollContainer.scrollHeight - 1;
+    const cannotScroll = scrollContainer.scrollHeight <= scrollContainer.clientHeight;
+    savedGamesTouchStartY = currentY;
+    if (cannotScroll || atTop && deltaY > 0 || atBottom && deltaY < 0) {
+      event.preventDefault();
+    }
+    event.stopPropagation();
+  };
   function setActiveSidebarTab(nextTab) {
     activeSidebarTab = nextTab;
     const showProfile = activeSidebarTab === "profile";
@@ -28180,6 +28216,13 @@ function createAccountSidebarController({
         composer.style.maxHeight = `${composer.scrollHeight}px`;
       }
     });
+    input.addEventListener("touchmove", (event) => {
+      if (!sidebarOpen || !isMobileViewport()) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+    }, { passive: false });
     const controls = document.createElement("div");
     controls.className = "saved-game-import-controls";
     const importButton = document.createElement("button");
@@ -28452,6 +28495,8 @@ function createAccountSidebarController({
     refs.sidebarHistoryTab.addEventListener("click", onSidebarHistoryTabClick);
     window.addEventListener("keydown", onEscapeCloseSidebar);
     window.addEventListener("resize", onViewportResize);
+    refs.savedGamesList.addEventListener("touchstart", onSavedGamesTouchStart, { passive: true });
+    refs.savedGamesList.addEventListener("touchmove", onSavedGamesTouchMove, { passive: false });
     refs.signInGoogleButton.addEventListener("click", onSignInGoogleClick);
     refs.usernameInput.addEventListener("input", onUsernameInput);
     refs.saveUsernameButton.addEventListener("click", onSaveUsernameClick);
@@ -28470,6 +28515,8 @@ function createAccountSidebarController({
     refs.sidebarHistoryTab.removeEventListener("click", onSidebarHistoryTabClick);
     window.removeEventListener("keydown", onEscapeCloseSidebar);
     window.removeEventListener("resize", onViewportResize);
+    refs.savedGamesList.removeEventListener("touchstart", onSavedGamesTouchStart);
+    refs.savedGamesList.removeEventListener("touchmove", onSavedGamesTouchMove);
     refs.signInGoogleButton.removeEventListener("click", onSignInGoogleClick);
     refs.usernameInput.removeEventListener("input", onUsernameInput);
     refs.saveUsernameButton.removeEventListener("click", onSaveUsernameClick);
@@ -28524,7 +28571,7 @@ function createAccountSidebarController({
   };
 }
 var USERNAME_STORAGE_PREFIX, MOBILE_BREAKPOINT_PX, MOBILE_SCROLL_LOCK_CLASS;
-var init_account_sidebar = __esm({
+var init_account_sidebar2 = __esm({
   "src/client/account-sidebar.ts"() {
     "use strict";
     init_chess();
@@ -28694,11 +28741,12 @@ var require_main = __commonJS({
     init_button_animations();
     init_arrows();
     init_styles();
+    init_account_sidebar();
     init_account_sidebar_import();
     init_badge_icon_colors();
     init_arrow_render();
     init_best_move_arrow();
-    init_account_sidebar();
+    init_account_sidebar2();
     init_theme();
     var PIECES = {
       wp: "/pieces/wP.svg",
