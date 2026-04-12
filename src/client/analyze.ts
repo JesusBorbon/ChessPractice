@@ -33,6 +33,31 @@ type MoveAnalysis = {
   afterCp: number;
 };
 
+type PlayerAnalysisSummary = {
+  name: string;
+  moveCount: number;
+  accuracy: number;
+  averageCpl: number;
+  estimatedElo: number;
+  categoryCounts: {
+    excellent: number;
+    great: number;
+    brilliant: number;
+    blunder: number;
+  };
+};
+
+type GameAnalysisSummary = {
+  white: PlayerAnalysisSummary;
+  black: PlayerAnalysisSummary;
+  totals: {
+    excellent: number;
+    great: number;
+    brilliant: number;
+    blunder: number;
+  };
+};
+
 const CATEGORY_LABELS: Record<MoveCategory, string> = {
   brilliant: "Brilliant",
   great: "Great",
@@ -42,6 +67,13 @@ const CATEGORY_LABELS: Record<MoveCategory, string> = {
   mistake: "Mistake",
   blunder: "Blunder",
 };
+
+const SUMMARY_CATEGORY_SYMBOLS = {
+  excellent: "★",
+  great: "!",
+  brilliant: "!!",
+  blunder: "??",
+} as const;
 
 const CATEGORY_TEXT_SYMBOLS: Record<MoveCategory, string> = {
   brilliant: "!!",
@@ -264,6 +296,7 @@ let analysisProgressCompleted = 0;
 let analysisProgressTotal = 0;
 let lastQualityCalloutCursor = -1;
 let activeQualityCallout: HTMLDivElement | null = null;
+let analysisSummaryAcknowledged = false;
 let focusMode = false;
 let legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
 let animationStyle: "smooth" | "epic" = (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth";
@@ -279,6 +312,10 @@ const EPIC_MOVE_DURATION_MS = {
 
 const POST_GAME_MOVES_STORAGE_KEY = "postGameMoves";
 const POST_GAME_PGN_STORAGE_KEY = "postGamePgn";
+const POST_GAME_META_STORAGE_KEY = "postGameMeta";
+
+let analyzedWhiteName = "White";
+let analyzedBlackName = "Black";
 
 
 // ── Mount ──────────────────────────────────────────────────────────────────────
@@ -371,6 +408,15 @@ app.innerHTML = `
     <p class="analysis-loading-note">Navigation is disabled until analysis is complete.</p>
   </div>
 </div>
+
+<div class="analysis-summary-overlay" id="analysisSummaryOverlay" hidden>
+  <div class="analysis-summary-card" role="dialog" aria-modal="true" aria-labelledby="analysisSummaryTitle">
+    <h2 id="analysisSummaryTitle">Review Snapshot</h2>
+    <p class="analysis-summary-subtitle">Combined totals. Tap anywhere to continue.</p>
+    <div class="analysis-summary-counts" id="analysisSummaryCounts"></div>
+    <button class="btn-primary analysis-summary-continue" id="analysisSummaryContinue" type="button">Continue</button>
+  </div>
+</div>
 `;
 
 // ── Element refs ───────────────────────────────────────────────────────────────
@@ -407,6 +453,9 @@ const toast      = q<HTMLDivElement>("#toast");
 const analysisLoadingOverlay = q<HTMLDivElement>("#analysisLoadingOverlay");
 const analysisLoadingStatus = q<HTMLParagraphElement>("#analysisLoadingStatus");
 const analysisLoadingFill = q<HTMLDivElement>("#analysisLoadingFill");
+const analysisSummaryOverlay = q<HTMLDivElement>("#analysisSummaryOverlay");
+const analysisSummaryCounts = q<HTMLDivElement>("#analysisSummaryCounts");
+const analysisSummaryContinue = q<HTMLButtonElement>("#analysisSummaryContinue");
 const navFirst   = q<HTMLButtonElement>("#navFirst");
 const navPrev    = q<HTMLButtonElement>("#navPrev");
 const navNext    = q<HTMLButtonElement>("#navNext");
@@ -425,10 +474,20 @@ analysisLoadingOverlay.addEventListener("touchmove", (event) => {
   event.preventDefault();
 }, { passive: false });
 
+analysisSummaryOverlay.addEventListener("click", () => {
+  hideAnalysisSummaryOverlay(true);
+});
+
+analysisSummaryContinue.addEventListener("click", (event) => {
+  event.preventDefault();
+  hideAnalysisSummaryOverlay(true);
+});
+
 
 // ── Button wiring ──────────────────────────────────────────────────────────────
 function resetBoardStateToStart(): void {
   cancelAnalysis();
+  hideAnalysisSummaryOverlay();
   chess.reset();
   fenHistory = [chess.fen()];
   moveHistory = [];
@@ -1221,6 +1280,39 @@ function updateAnalysisLoadingOverlay(): void {
   document.body.classList.toggle("analysis-loading-active", fullAnalysisInProgress);
 }
 
+function hideAnalysisSummaryOverlay(acknowledged = false): void {
+  analysisSummaryAcknowledged = acknowledged;
+  analysisSummaryOverlay.hidden = true;
+  document.body.classList.remove("analysis-summary-active");
+  renderSide();
+}
+
+function showAnalysisSummaryOverlay(summary: GameAnalysisSummary): void {
+  analysisSummaryAcknowledged = false;
+
+  const metrics = [
+    { key: "excellent", label: "Excellent", value: summary.totals.excellent },
+    { key: "great", label: "Great", value: summary.totals.great },
+    { key: "brilliant", label: "Brilliant", value: summary.totals.brilliant },
+    { key: "blunder", label: "Blunder", value: summary.totals.blunder },
+  ].filter((metric) => metric.value > 0);
+
+  if (metrics.length === 0) {
+    analysisSummaryCounts.innerHTML = '<p class="analysis-summary-empty">No excellent, great, brilliant, or blunder moves in this game.</p>';
+  } else {
+    analysisSummaryCounts.innerHTML = metrics.map((metric) => `
+      <article class="analysis-summary-metric metric-${metric.key}" aria-label="${metric.label} moves: ${metric.value}">
+        <span class="metric-symbol">${SUMMARY_CATEGORY_SYMBOLS[metric.key as keyof typeof SUMMARY_CATEGORY_SYMBOLS]}</span>
+        <span class="metric-count">${metric.value}</span>
+        <span class="metric-label">${metric.label}</span>
+      </article>
+    `).join("");
+  }
+
+  analysisSummaryOverlay.hidden = false;
+  document.body.classList.add("analysis-summary-active");
+}
+
 function stopActiveMoveAnimation(): void {
   if (activeGhostAnimation) {
     activeGhostAnimation.cancel();
@@ -1789,8 +1881,10 @@ async function runGameAnalysis(): Promise<void> {
 
   analysisRunId += 1;
   const runId = analysisRunId;
+  let completedSuccessfully = false;
   analysisInProgress = true;
   fullAnalysisInProgress = true;
+  hideAnalysisSummaryOverlay();
   stopActiveMoveAnimation();
   analysisProgressCompleted = 0;
   analysisProgressTotal = moveHistory.length;
@@ -1829,6 +1923,7 @@ async function runGameAnalysis(): Promise<void> {
       renderSide();
     }
 
+    completedSuccessfully = true;
     showToast("Analysis complete.");
     if (!isVariationMode) {
       syncGameLineFromCurrent();
@@ -1842,6 +1937,13 @@ async function runGameAnalysis(): Promise<void> {
       updateAnalysisLoadingOverlay();
       renderSide();
       renderNav();
+
+      if (completedSuccessfully) {
+        const summary = buildGameAnalysisSummary();
+        if (summary) {
+          showAnalysisSummaryOverlay(summary);
+        }
+      }
     }
   }
 }
@@ -1908,6 +2010,7 @@ function cancelAnalysis(): void {
   fullAnalysisInProgress = false;
   analysisProgressCompleted = 0;
   analysisProgressTotal = 0;
+  hideAnalysisSummaryOverlay();
   updateAnalysisLoadingOverlay();
   renderNav();
 }
@@ -2170,6 +2273,95 @@ async function verifyBrilliantOffer(input: {
   };
 }
 
+function calculateAccuracy(moves: MoveAnalysis[]): number {
+  if (moves.length === 0) return 100;
+
+  const winProbability = (cp: number) => {
+    const clampedCp = Math.max(-4000, Math.min(4000, cp));
+    return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * clampedCp)) - 1);
+  };
+
+  let totalAccuracy = 0;
+  for (const move of moves) {
+    const wpBefore = winProbability(move.beforeCp);
+    const wpAfter = winProbability(move.afterCp);
+    const loss = Math.max(0, wpBefore - wpAfter);
+    const moveAcc = 103.1668 * Math.exp(-0.04354 * loss) - 3.1669;
+    totalAccuracy += Math.max(0, Math.min(100, moveAcc));
+  }
+
+  return Math.round(totalAccuracy / moves.length);
+}
+
+function estimatePlayerElo(accuracy: number, averageCpl: number): number {
+  const normalizedAccuracy = Math.max(0, Math.min(100, accuracy));
+  const normalizedCpl = Math.max(0, Math.min(600, averageCpl));
+
+  const fromAccuracy = 700 + Math.pow(normalizedAccuracy / 100, 1.7) * 2200;
+  const fromCpl = 2900 - normalizedCpl * 4.1;
+  const estimated = fromAccuracy * 0.58 + fromCpl * 0.42;
+
+  return Math.round(Math.max(400, Math.min(3000, estimated)));
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function buildGameAnalysisSummary(): GameAnalysisSummary | null {
+  const all = analysisByPly.filter((entry): entry is MoveAnalysis => Boolean(entry));
+  if (all.length === 0) {
+    return null;
+  }
+
+  const whiteMoves = all.filter((move) => move.ply % 2 !== 0);
+  const blackMoves = all.filter((move) => move.ply % 2 === 0);
+
+  const summarizeSide = (moves: MoveAnalysis[], name: string): PlayerAnalysisSummary => {
+    const excellent = moves.filter((move) => move.category === "excellent").length;
+    const great = moves.filter((move) => move.category === "great").length;
+    const brilliant = moves.filter((move) => move.category === "brilliant").length;
+    const blunder = moves.filter((move) => move.category === "blunder").length;
+    const averageCpl = moves.length > 0
+      ? Math.round(moves.reduce((sum, move) => sum + move.cpl, 0) / moves.length)
+      : 0;
+    const accuracy = calculateAccuracy(moves);
+
+    return {
+      name,
+      moveCount: moves.length,
+      accuracy,
+      averageCpl,
+      estimatedElo: estimatePlayerElo(accuracy, averageCpl),
+      categoryCounts: {
+        excellent,
+        great,
+        brilliant,
+        blunder,
+      },
+    };
+  };
+
+  const white = summarizeSide(whiteMoves, analyzedWhiteName);
+  const black = summarizeSide(blackMoves, analyzedBlackName);
+
+  return {
+    white,
+    black,
+    totals: {
+      excellent: white.categoryCounts.excellent + black.categoryCounts.excellent,
+      great: white.categoryCounts.great + black.categoryCounts.great,
+      brilliant: white.categoryCounts.brilliant + black.categoryCounts.brilliant,
+      blunder: white.categoryCounts.blunder + black.categoryCounts.blunder,
+    },
+  };
+}
+
 function renderEngineFeedback(): void {
   stopAnalyzeBtn.hidden = !fullAnalysisInProgress;
   stopAnalyzeBtn.disabled = !fullAnalysisInProgress;
@@ -2180,66 +2372,54 @@ function renderEngineFeedback(): void {
     return;
   }
 
-  if (analysisByPly.filter(Boolean).length === 0) {
+  const summary = buildGameAnalysisSummary();
+  if (!summary) {
     engineFeedback.innerHTML = "Run analysis to get move quality feedback.";
     return;
   }
 
+  const reviewEloBlock = analysisSummaryAcknowledged
+    ? `
+      <div class="analysis-review-elo-box">
+        <div><strong>${escapeHtml(summary.white.name)}</strong> Elo est. <strong>${summary.white.estimatedElo}</strong></div>
+        <div><strong>${escapeHtml(summary.black.name)}</strong> Elo est. <strong>${summary.black.estimatedElo}</strong></div>
+      </div>
+    `
+    : "";
+
   if (cursor === 0) {
-    const all = analysisByPly.filter((entry): entry is MoveAnalysis => Boolean(entry));
-    
-    // Separate moves by color
-    const whiteMoves = all.filter(m => m.ply % 2 !== 0);
-    const blackMoves = all.filter(m => m.ply % 2 === 0);
-
-    // Accuracy Calculation Formula
-   const calculateAccuracy = (moves: MoveAnalysis[]) => {
-      if (moves.length === 0) return 100;
-      
-      const winProbability = (cp: number) => {
-        // Clamp CP to prevent extreme Math.exp values
-        const clampedCp = Math.max(-4000, Math.min(4000, cp));
-        return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * clampedCp)) - 1);
-      };
-
-      let totalAccuracy = 0;
-      for (const m of moves) {
-        const wpBefore = winProbability(m.beforeCp);
-        const wpAfter = winProbability(m.afterCp);
-        const loss = Math.max(0, wpBefore - wpAfter); // Never negative
-        
-        // Convert WP loss to move accuracy (Exponential curve)
-        const moveAcc = 103.1668 * Math.exp(-0.04354 * loss) - 3.1669;
-        
-        // Clamp move accuracy between 0 and 100 and add to total
-        totalAccuracy += Math.max(0, Math.min(100, moveAcc));
-      }
-      
-      return Math.round(totalAccuracy / moves.length);
-    };
-
-    const whiteAcc = calculateAccuracy(whiteMoves);
-    const blackAcc = calculateAccuracy(blackMoves);
-
-    const blunders = all.filter((item) => item.category === "blunder").length;
-    const brilliants = all.filter((item) => item.category === "brilliant").length;
-
     engineFeedback.innerHTML = `
-      <div style="display: flex; justify-content: space-between; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.1);">
-        <div style="text-align: center;">
-          <div style="font-size: 2rem; font-weight: 700; color: var(--ink);">${whiteAcc}%</div>
+      ${reviewEloBlock}
+      <div style="display: flex; justify-content: space-between; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.1); gap: 10px;">
+        <div style="text-align: center; flex: 1;">
+          <div style="font-size: 1.1rem; font-weight: 700; color: var(--ink);">${escapeHtml(summary.white.name)}</div>
+          <div style="font-size: 1.9rem; font-weight: 700; color: var(--ink);">${summary.white.accuracy}%</div>
           <div style="font-size: 0.8rem; color: var(--muted); text-transform: uppercase;">White Accuracy</div>
         </div>
-        <div style="text-align: center;">
-          <div style="font-size: 2rem; font-weight: 700; color: var(--ink);">${blackAcc}%</div>
+        <div style="text-align: center; flex: 1;">
+          <div style="font-size: 1.1rem; font-weight: 700; color: var(--ink);">${escapeHtml(summary.black.name)}</div>
+          <div style="font-size: 1.9rem; font-weight: 700; color: var(--ink);">${summary.black.accuracy}%</div>
           <div style="font-size: 0.8rem; color: var(--muted); text-transform: uppercase;">Black Accuracy</div>
         </div>
       </div>
-      <p class="engine-inline">Brilliants: <strong>${brilliants}</strong> · Blunders: <strong>${blunders}</strong></p>
+      <p class="engine-inline">Excellent: <strong>${summary.totals.excellent}</strong> · Great: <strong>${summary.totals.great}</strong> · Brilliant: <strong>${summary.totals.brilliant}</strong> · Blunders: <strong>${summary.totals.blunder}</strong></p>
       <p class="engine-inline" style="margin-top: 10px;">Select a move in the list to see detailed feedback.</p>
     `;
     return;
   }
+
+  const selected = analysisByPly[cursor];
+  if (!selected) {
+    engineFeedback.innerHTML = `${reviewEloBlock}<p class="engine-inline">Select a move in the list to see detailed feedback.</p>`;
+    return;
+  }
+
+  engineFeedback.innerHTML = `
+    ${reviewEloBlock}
+    <p class="engine-inline"><strong>${selected.label}</strong> · ${selected.playedMove} · ${selected.cpl} CPL</p>
+    <p class="engine-inline">${escapeHtml(selected.note)}</p>
+    <p class="engine-inline" style="margin-top: 8px; color: var(--muted);">Engine best: ${escapeHtml(selected.bestMove || "-")}</p>
+  `;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -2260,6 +2440,16 @@ function showToast(msg: string): void {
   toast.classList.add("visible");
   clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 2400);
+}
+
+function applyAnalyzedPlayerNames(whiteName?: string | null, blackName?: string | null): void {
+  analyzedWhiteName = whiteName?.trim() || "White";
+  analyzedBlackName = blackName?.trim() || "Black";
+}
+
+function parsePgnHeaderValue(pgn: string, key: "White" | "Black"): string | null {
+  const match = pgn.match(new RegExp(`\\[${key}\\s+"([^"]+)"\\]`, "i"));
+  return match?.[1]?.trim() || null;
 }
 
 function loadMovesIntoBoard(sans: string[]): boolean {
@@ -2287,6 +2477,12 @@ function loadPgnIntoBoard(pgn: string): boolean {
     return false;
   }
 
+  const pgnWhite = parsePgnHeaderValue(normalizedPgn, "White");
+  const pgnBlack = parsePgnHeaderValue(normalizedPgn, "Black");
+  if (pgnWhite || pgnBlack) {
+    applyAnalyzedPlayerNames(pgnWhite, pgnBlack);
+  }
+
   const replay = new Chess();
   try {
     replay.loadPgn(normalizedPgn, { strict: false });
@@ -2308,6 +2504,17 @@ window.addEventListener("beforeunload", () => {
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 let shouldAutoAnalyzeOnInit = false;
+
+const postGameMetaRaw = localStorage.getItem(POST_GAME_META_STORAGE_KEY);
+if (postGameMetaRaw) {
+  try {
+    const parsedMeta = JSON.parse(postGameMetaRaw) as { whiteName?: string; blackName?: string };
+    applyAnalyzedPlayerNames(parsedMeta.whiteName, parsedMeta.blackName);
+  } catch {
+    // Ignore malformed metadata and keep defaults.
+  }
+  localStorage.removeItem(POST_GAME_META_STORAGE_KEY);
+}
 
 const postGamePgn = localStorage.getItem(POST_GAME_PGN_STORAGE_KEY);
 if (postGamePgn) {

@@ -3784,6 +3784,12 @@ var require_analyze = __commonJS({
       mistake: "Mistake",
       blunder: "Blunder"
     };
+    var SUMMARY_CATEGORY_SYMBOLS = {
+      excellent: "\u2605",
+      great: "!",
+      brilliant: "!!",
+      blunder: "??"
+    };
     var CATEGORY_TEXT_SYMBOLS = {
       brilliant: "!!",
       great: "!",
@@ -3983,6 +3989,7 @@ var require_analyze = __commonJS({
     var analysisProgressTotal = 0;
     var lastQualityCalloutCursor = -1;
     var activeQualityCallout = null;
+    var analysisSummaryAcknowledged = false;
     var focusMode = false;
     var legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
     var animationStyle = localStorage.getItem("chess-animation-style") || "smooth";
@@ -3996,6 +4003,9 @@ var require_analyze = __commonJS({
     };
     var POST_GAME_MOVES_STORAGE_KEY = "postGameMoves";
     var POST_GAME_PGN_STORAGE_KEY = "postGamePgn";
+    var POST_GAME_META_STORAGE_KEY = "postGameMeta";
+    var analyzedWhiteName = "White";
+    var analyzedBlackName = "Black";
     var app = document.querySelector("#app");
     app.innerHTML = `
 <div class="analyze-shell">
@@ -4084,6 +4094,15 @@ var require_analyze = __commonJS({
     <p class="analysis-loading-note">Navigation is disabled until analysis is complete.</p>
   </div>
 </div>
+
+<div class="analysis-summary-overlay" id="analysisSummaryOverlay" hidden>
+  <div class="analysis-summary-card" role="dialog" aria-modal="true" aria-labelledby="analysisSummaryTitle">
+    <h2 id="analysisSummaryTitle">Review Snapshot</h2>
+    <p class="analysis-summary-subtitle">Combined totals. Tap anywhere to continue.</p>
+    <div class="analysis-summary-counts" id="analysisSummaryCounts"></div>
+    <button class="btn-primary analysis-summary-continue" id="analysisSummaryContinue" type="button">Continue</button>
+  </div>
+</div>
 `;
     mountThemeSwitcher();
     window.addEventListener("animationchange", (event) => {
@@ -4113,6 +4132,9 @@ var require_analyze = __commonJS({
     var analysisLoadingOverlay = q("#analysisLoadingOverlay");
     var analysisLoadingStatus = q("#analysisLoadingStatus");
     var analysisLoadingFill = q("#analysisLoadingFill");
+    var analysisSummaryOverlay = q("#analysisSummaryOverlay");
+    var analysisSummaryCounts = q("#analysisSummaryCounts");
+    var analysisSummaryContinue = q("#analysisSummaryContinue");
     var navFirst = q("#navFirst");
     var navPrev = q("#navPrev");
     var navNext = q("#navNext");
@@ -4128,8 +4150,16 @@ var require_analyze = __commonJS({
     analysisLoadingOverlay.addEventListener("touchmove", (event) => {
       event.preventDefault();
     }, { passive: false });
+    analysisSummaryOverlay.addEventListener("click", () => {
+      hideAnalysisSummaryOverlay(true);
+    });
+    analysisSummaryContinue.addEventListener("click", (event) => {
+      event.preventDefault();
+      hideAnalysisSummaryOverlay(true);
+    });
     function resetBoardStateToStart() {
       cancelAnalysis();
+      hideAnalysisSummaryOverlay();
       chess.reset();
       fenHistory = [chess.fen()];
       moveHistory = [];
@@ -4762,6 +4792,34 @@ var require_analyze = __commonJS({
       analysisLoadingOverlay.hidden = !fullAnalysisInProgress;
       document.body.classList.toggle("analysis-loading-active", fullAnalysisInProgress);
     }
+    function hideAnalysisSummaryOverlay(acknowledged = false) {
+      analysisSummaryAcknowledged = acknowledged;
+      analysisSummaryOverlay.hidden = true;
+      document.body.classList.remove("analysis-summary-active");
+      renderSide();
+    }
+    function showAnalysisSummaryOverlay(summary) {
+      analysisSummaryAcknowledged = false;
+      const metrics = [
+        { key: "excellent", label: "Excellent", value: summary.totals.excellent },
+        { key: "great", label: "Great", value: summary.totals.great },
+        { key: "brilliant", label: "Brilliant", value: summary.totals.brilliant },
+        { key: "blunder", label: "Blunder", value: summary.totals.blunder }
+      ].filter((metric) => metric.value > 0);
+      if (metrics.length === 0) {
+        analysisSummaryCounts.innerHTML = '<p class="analysis-summary-empty">No excellent, great, brilliant, or blunder moves in this game.</p>';
+      } else {
+        analysisSummaryCounts.innerHTML = metrics.map((metric) => `
+      <article class="analysis-summary-metric metric-${metric.key}" aria-label="${metric.label} moves: ${metric.value}">
+        <span class="metric-symbol">${SUMMARY_CATEGORY_SYMBOLS[metric.key]}</span>
+        <span class="metric-count">${metric.value}</span>
+        <span class="metric-label">${metric.label}</span>
+      </article>
+    `).join("");
+      }
+      analysisSummaryOverlay.hidden = false;
+      document.body.classList.add("analysis-summary-active");
+    }
     function stopActiveMoveAnimation() {
       if (activeGhostAnimation) {
         activeGhostAnimation.cancel();
@@ -5236,8 +5294,10 @@ var require_analyze = __commonJS({
       }
       analysisRunId += 1;
       const runId = analysisRunId;
+      let completedSuccessfully = false;
       analysisInProgress = true;
       fullAnalysisInProgress = true;
+      hideAnalysisSummaryOverlay();
       stopActiveMoveAnimation();
       analysisProgressCompleted = 0;
       analysisProgressTotal = moveHistory.length;
@@ -5269,6 +5329,7 @@ var require_analyze = __commonJS({
           }
           renderSide();
         }
+        completedSuccessfully = true;
         showToast("Analysis complete.");
         if (!isVariationMode) {
           syncGameLineFromCurrent();
@@ -5282,6 +5343,12 @@ var require_analyze = __commonJS({
           updateAnalysisLoadingOverlay();
           renderSide();
           renderNav();
+          if (completedSuccessfully) {
+            const summary = buildGameAnalysisSummary();
+            if (summary) {
+              showAnalysisSummaryOverlay(summary);
+            }
+          }
         }
       }
     }
@@ -5337,6 +5404,7 @@ var require_analyze = __commonJS({
       fullAnalysisInProgress = false;
       analysisProgressCompleted = 0;
       analysisProgressTotal = 0;
+      hideAnalysisSummaryOverlay();
       updateAnalysisLoadingOverlay();
       renderNav();
     }
@@ -5512,6 +5580,74 @@ var require_analyze = __commonJS({
         note: `Brilliant piece offer: ${move.san} invites ${replySans}, but the deeper line still keeps a winning evaluation.`
       };
     }
+    function calculateAccuracy(moves) {
+      if (moves.length === 0) return 100;
+      const winProbability = (cp) => {
+        const clampedCp = Math.max(-4e3, Math.min(4e3, cp));
+        return 50 + 50 * (2 / (1 + Math.exp(-368208e-8 * clampedCp)) - 1);
+      };
+      let totalAccuracy = 0;
+      for (const move of moves) {
+        const wpBefore = winProbability(move.beforeCp);
+        const wpAfter = winProbability(move.afterCp);
+        const loss = Math.max(0, wpBefore - wpAfter);
+        const moveAcc = 103.1668 * Math.exp(-0.04354 * loss) - 3.1669;
+        totalAccuracy += Math.max(0, Math.min(100, moveAcc));
+      }
+      return Math.round(totalAccuracy / moves.length);
+    }
+    function estimatePlayerElo(accuracy, averageCpl) {
+      const normalizedAccuracy = Math.max(0, Math.min(100, accuracy));
+      const normalizedCpl = Math.max(0, Math.min(600, averageCpl));
+      const fromAccuracy = 700 + Math.pow(normalizedAccuracy / 100, 1.7) * 2200;
+      const fromCpl = 2900 - normalizedCpl * 4.1;
+      const estimated = fromAccuracy * 0.58 + fromCpl * 0.42;
+      return Math.round(Math.max(400, Math.min(3e3, estimated)));
+    }
+    function escapeHtml(text) {
+      return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&#039;");
+    }
+    function buildGameAnalysisSummary() {
+      const all = analysisByPly.filter((entry) => Boolean(entry));
+      if (all.length === 0) {
+        return null;
+      }
+      const whiteMoves = all.filter((move) => move.ply % 2 !== 0);
+      const blackMoves = all.filter((move) => move.ply % 2 === 0);
+      const summarizeSide = (moves, name) => {
+        const excellent = moves.filter((move) => move.category === "excellent").length;
+        const great = moves.filter((move) => move.category === "great").length;
+        const brilliant = moves.filter((move) => move.category === "brilliant").length;
+        const blunder = moves.filter((move) => move.category === "blunder").length;
+        const averageCpl = moves.length > 0 ? Math.round(moves.reduce((sum, move) => sum + move.cpl, 0) / moves.length) : 0;
+        const accuracy = calculateAccuracy(moves);
+        return {
+          name,
+          moveCount: moves.length,
+          accuracy,
+          averageCpl,
+          estimatedElo: estimatePlayerElo(accuracy, averageCpl),
+          categoryCounts: {
+            excellent,
+            great,
+            brilliant,
+            blunder
+          }
+        };
+      };
+      const white = summarizeSide(whiteMoves, analyzedWhiteName);
+      const black = summarizeSide(blackMoves, analyzedBlackName);
+      return {
+        white,
+        black,
+        totals: {
+          excellent: white.categoryCounts.excellent + black.categoryCounts.excellent,
+          great: white.categoryCounts.great + black.categoryCounts.great,
+          brilliant: white.categoryCounts.brilliant + black.categoryCounts.brilliant,
+          blunder: white.categoryCounts.blunder + black.categoryCounts.blunder
+        }
+      };
+    }
     function renderEngineFeedback() {
       stopAnalyzeBtn.hidden = !fullAnalysisInProgress;
       stopAnalyzeBtn.disabled = !fullAnalysisInProgress;
@@ -5520,50 +5656,48 @@ var require_analyze = __commonJS({
         engineFeedback.innerHTML = `<p class="engine-inline">Analyzing... ${analysisByPly.filter(Boolean).length}/${moveHistory.length} moves complete.</p>`;
         return;
       }
-      if (analysisByPly.filter(Boolean).length === 0) {
+      const summary = buildGameAnalysisSummary();
+      if (!summary) {
         engineFeedback.innerHTML = "Run analysis to get move quality feedback.";
         return;
       }
+      const reviewEloBlock = analysisSummaryAcknowledged ? `
+      <div class="analysis-review-elo-box">
+        <div><strong>${escapeHtml(summary.white.name)}</strong> Elo est. <strong>${summary.white.estimatedElo}</strong></div>
+        <div><strong>${escapeHtml(summary.black.name)}</strong> Elo est. <strong>${summary.black.estimatedElo}</strong></div>
+      </div>
+    ` : "";
       if (cursor === 0) {
-        const all = analysisByPly.filter((entry) => Boolean(entry));
-        const whiteMoves = all.filter((m) => m.ply % 2 !== 0);
-        const blackMoves = all.filter((m) => m.ply % 2 === 0);
-        const calculateAccuracy = (moves) => {
-          if (moves.length === 0) return 100;
-          const winProbability = (cp) => {
-            const clampedCp = Math.max(-4e3, Math.min(4e3, cp));
-            return 50 + 50 * (2 / (1 + Math.exp(-368208e-8 * clampedCp)) - 1);
-          };
-          let totalAccuracy = 0;
-          for (const m of moves) {
-            const wpBefore = winProbability(m.beforeCp);
-            const wpAfter = winProbability(m.afterCp);
-            const loss = Math.max(0, wpBefore - wpAfter);
-            const moveAcc = 103.1668 * Math.exp(-0.04354 * loss) - 3.1669;
-            totalAccuracy += Math.max(0, Math.min(100, moveAcc));
-          }
-          return Math.round(totalAccuracy / moves.length);
-        };
-        const whiteAcc = calculateAccuracy(whiteMoves);
-        const blackAcc = calculateAccuracy(blackMoves);
-        const blunders = all.filter((item) => item.category === "blunder").length;
-        const brilliants = all.filter((item) => item.category === "brilliant").length;
         engineFeedback.innerHTML = `
-      <div style="display: flex; justify-content: space-between; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.1);">
-        <div style="text-align: center;">
-          <div style="font-size: 2rem; font-weight: 700; color: var(--ink);">${whiteAcc}%</div>
+      ${reviewEloBlock}
+      <div style="display: flex; justify-content: space-between; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.1); gap: 10px;">
+        <div style="text-align: center; flex: 1;">
+          <div style="font-size: 1.1rem; font-weight: 700; color: var(--ink);">${escapeHtml(summary.white.name)}</div>
+          <div style="font-size: 1.9rem; font-weight: 700; color: var(--ink);">${summary.white.accuracy}%</div>
           <div style="font-size: 0.8rem; color: var(--muted); text-transform: uppercase;">White Accuracy</div>
         </div>
-        <div style="text-align: center;">
-          <div style="font-size: 2rem; font-weight: 700; color: var(--ink);">${blackAcc}%</div>
+        <div style="text-align: center; flex: 1;">
+          <div style="font-size: 1.1rem; font-weight: 700; color: var(--ink);">${escapeHtml(summary.black.name)}</div>
+          <div style="font-size: 1.9rem; font-weight: 700; color: var(--ink);">${summary.black.accuracy}%</div>
           <div style="font-size: 0.8rem; color: var(--muted); text-transform: uppercase;">Black Accuracy</div>
         </div>
       </div>
-      <p class="engine-inline">Brilliants: <strong>${brilliants}</strong> \xB7 Blunders: <strong>${blunders}</strong></p>
+      <p class="engine-inline">Excellent: <strong>${summary.totals.excellent}</strong> \xB7 Great: <strong>${summary.totals.great}</strong> \xB7 Brilliant: <strong>${summary.totals.brilliant}</strong> \xB7 Blunders: <strong>${summary.totals.blunder}</strong></p>
       <p class="engine-inline" style="margin-top: 10px;">Select a move in the list to see detailed feedback.</p>
     `;
         return;
       }
+      const selected = analysisByPly[cursor];
+      if (!selected) {
+        engineFeedback.innerHTML = `${reviewEloBlock}<p class="engine-inline">Select a move in the list to see detailed feedback.</p>`;
+        return;
+      }
+      engineFeedback.innerHTML = `
+    ${reviewEloBlock}
+    <p class="engine-inline"><strong>${selected.label}</strong> \xB7 ${selected.playedMove} \xB7 ${selected.cpl} CPL</p>
+    <p class="engine-inline">${escapeHtml(selected.note)}</p>
+    <p class="engine-inline" style="margin-top: 8px; color: var(--muted);">Engine best: ${escapeHtml(selected.bestMove || "-")}</p>
+  `;
     }
     function getLastMove() {
       if (cursor === 0) return void 0;
@@ -5580,6 +5714,14 @@ var require_analyze = __commonJS({
       toast.classList.add("visible");
       clearTimeout(toastTimer);
       toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 2400);
+    }
+    function applyAnalyzedPlayerNames(whiteName, blackName) {
+      analyzedWhiteName = whiteName?.trim() || "White";
+      analyzedBlackName = blackName?.trim() || "Black";
+    }
+    function parsePgnHeaderValue(pgn2, key) {
+      const match = pgn2.match(new RegExp(`\\[${key}\\s+"([^"]+)"\\]`, "i"));
+      return match?.[1]?.trim() || null;
     }
     function loadMovesIntoBoard(sans) {
       resetBoardStateToStart();
@@ -5601,6 +5743,11 @@ var require_analyze = __commonJS({
       if (!normalizedPgn) {
         return false;
       }
+      const pgnWhite = parsePgnHeaderValue(normalizedPgn, "White");
+      const pgnBlack = parsePgnHeaderValue(normalizedPgn, "Black");
+      if (pgnWhite || pgnBlack) {
+        applyAnalyzedPlayerNames(pgnWhite, pgnBlack);
+      }
       const replay = new Chess();
       try {
         replay.loadPgn(normalizedPgn, { strict: false });
@@ -5617,6 +5764,15 @@ var require_analyze = __commonJS({
       stockfish?.terminate();
     });
     var shouldAutoAnalyzeOnInit = false;
+    var postGameMetaRaw = localStorage.getItem(POST_GAME_META_STORAGE_KEY);
+    if (postGameMetaRaw) {
+      try {
+        const parsedMeta = JSON.parse(postGameMetaRaw);
+        applyAnalyzedPlayerNames(parsedMeta.whiteName, parsedMeta.blackName);
+      } catch {
+      }
+      localStorage.removeItem(POST_GAME_META_STORAGE_KEY);
+    }
     var postGamePgn = localStorage.getItem(POST_GAME_PGN_STORAGE_KEY);
     if (postGamePgn) {
       try {

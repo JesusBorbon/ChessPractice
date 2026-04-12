@@ -38,6 +38,12 @@ type MoveSummary = {
   piece: string;
 };
 
+type PgnHeaderOptions = {
+  whiteName?: string;
+  blackName?: string;
+  result?: "1-0" | "0-1" | "1/2-1/2" | "*";
+};
+
 type RoomSnapshot = {
   roomId: string;
   ownerId: string | null;
@@ -123,6 +129,7 @@ type AppState = {
   animationStyle: "smooth" | "epic";
   bloodFxEnabled: boolean;
   gameMode: "multiplayer" | "bot";
+  botLevel: number;
   viewCursor: number | null;
   trailFxEnabled: boolean; 
   legalMovesEnabled: boolean;
@@ -136,6 +143,46 @@ type EngineEval = {
   bestMove: string;
   pv: string;
 };
+
+type BotDifficultyPreset = {
+  level: number;
+  label: string;
+  elo: number | null;
+  skillLevel: number;
+  moveTimeMs: number;
+  fullStrength: boolean;
+};
+
+const BOT_DIFFICULTY_PRESETS: BotDifficultyPreset[] = [
+  { level: 1, label: "Level 1 - 800 Elo", elo: 800, skillLevel: 2, moveTimeMs: 360, fullStrength: false },
+  { level: 2, label: "Level 2 - 1000 Elo", elo: 1000, skillLevel: 4, moveTimeMs: 440, fullStrength: false },
+  { level: 3, label: "Level 3 - 1200 Elo", elo: 1200, skillLevel: 6, moveTimeMs: 560, fullStrength: false },
+  { level: 4, label: "Level 4 - 1400 Elo", elo: 1400, skillLevel: 8, moveTimeMs: 700, fullStrength: false },
+  { level: 5, label: "Level 5 - 1600 Elo", elo: 1600, skillLevel: 10, moveTimeMs: 860, fullStrength: false },
+  { level: 6, label: "Level 6 - 1800 Elo", elo: 1800, skillLevel: 12, moveTimeMs: 1040, fullStrength: false },
+  { level: 7, label: "Level 7 - 2000 Elo", elo: 2000, skillLevel: 14, moveTimeMs: 1260, fullStrength: false },
+  { level: 8, label: "Level 8 - 2200 Elo", elo: 2200, skillLevel: 16, moveTimeMs: 1520, fullStrength: false },
+  { level: 9, label: "Level 9 - 2400 Elo", elo: 2400, skillLevel: 18, moveTimeMs: 1840, fullStrength: false },
+  { level: 10, label: "Level 10 - Max", elo: null, skillLevel: 20, moveTimeMs: 2400, fullStrength: true },
+];
+
+function clampBotLevel(level: number): number {
+  if (!Number.isFinite(level)) {
+    return 1;
+  }
+  return Math.min(10, Math.max(1, Math.round(level)));
+}
+
+function getBotDifficultyPreset(level: number): BotDifficultyPreset {
+  const resolved = BOT_DIFFICULTY_PRESETS[clampBotLevel(level) - 1];
+  return resolved ?? BOT_DIFFICULTY_PRESETS[0]!;
+}
+
+function botDifficultySummary(preset: BotDifficultyPreset): string {
+  return preset.fullStrength
+    ? `Level ${preset.level} Max`
+    : `Level ${preset.level} ${preset.elo} Elo`;
+}
 
 const PIECES: Record<`${PlayerRole}${PieceSymbol}`, string> = {
   wp: "/pieces/wP.svg",
@@ -165,6 +212,7 @@ const initialRoomCode = new URLSearchParams(window.location.search).get("room")?
 // Restaurar roomId guardada en localStorage si existe
 const savedRoomId = localStorage.getItem("chess_roomId");
 const autoJoinCode = initialRoomCode ?? (savedRoomId || null);
+const savedBotLevel = clampBotLevel(Number(localStorage.getItem("chess-bot-level")) || 1);
 
 const state: AppState = {
   connected: false,
@@ -186,6 +234,7 @@ const state: AppState = {
     animationStyle: (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth",
   bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on",
   gameMode: "multiplayer",
+  botLevel: savedBotLevel,
   viewCursor: null,
   trailFxEnabled: localStorage.getItem("chess-trail-fx") === "on",
   legalMovesEnabled: localStorage.getItem("chess-legal-moves") !== "off",
@@ -202,6 +251,7 @@ let activeGhostNode: HTMLElement | null = null;
 let activeGhostDestinationPiece: HTMLElement | null = null;
 let pendingBoardRefresh = false;
 let liveAnalyzer: StockfishBridge | null = null;
+let botAnalyzer: StockfishBridge | null = null;
 let liveAnalysisToken = 0;
 let bestMoveArrowToken = 0;
 let currentModalAction: "leave" | "resign" | "bot" | null = null;
@@ -276,6 +326,8 @@ class StockfishBridge {
   private initResolve!: () => void;
   private initReject!: (error: Error) => void;
   private readonly initPromise: Promise<void>;
+  private readonly readyWaiters: Array<() => void> = [];
+  private lastBotConfigKey: string | null = null;
   private activeEval: {
     resolve: (value: EngineEval) => void;
     reject: (reason?: unknown) => void;
@@ -302,18 +354,14 @@ class StockfishBridge {
 
     // --- INITIAL CONFIGURATION ---
     this.send("uci");
-    
-    // Set engine strength to approximately 800 ELO
-    this.send("setoption name UCI_LimitStrength value true");
-    this.send("setoption name UCI_Elo value 800"); 
-
     this.send("isready");
   }
 
   /** Gets the best move from the engine for the Bot player */
-  async getBotMove(fen: string, timeLimitMs = 1000): Promise<string> {
+  async getBotMove(fen: string, preset: BotDifficultyPreset): Promise<string> {
     await this.initPromise;
-    const botPromise = this.queue.then(() => {
+    const botPromise = this.queue.then(async () => {
+      await this.applyBotDifficulty(preset);
       return new Promise<string>((resolve, reject) => {
         this.activeEval = {
           resolve: (res) => resolve(res.bestMove),
@@ -321,7 +369,7 @@ class StockfishBridge {
           lastCp: 0, mate: null, pv: "", bestMove: "",
         };
         this.send(`position fen ${fen}`);
-        this.send(`go movetime ${timeLimitMs}`);
+        this.send(`go movetime ${preset.moveTimeMs}`);
       });
     });
     this.queue = botPromise.then(() => undefined).catch(() => undefined);
@@ -343,9 +391,15 @@ class StockfishBridge {
   }
 
   private onMessage(line: string): void {
-    if (line === "readyok" && !this.ready) {
-      this.ready = true;
-      this.initResolve();
+    if (line === "readyok") {
+      if (!this.ready) {
+        this.ready = true;
+        this.initResolve();
+      }
+      const waiters = this.readyWaiters.splice(0);
+      for (const waiter of waiters) {
+        waiter();
+      }
       return;
     }
     if (!this.activeEval) return;
@@ -366,6 +420,32 @@ class StockfishBridge {
       });
       this.activeEval = null;
     }
+  }
+
+  private awaitReadyRoundTrip(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.readyWaiters.push(resolve);
+      this.send("isready");
+    });
+  }
+
+  private async applyBotDifficulty(preset: BotDifficultyPreset): Promise<void> {
+    const configKey = `${preset.level}:${preset.elo ?? "max"}:${preset.skillLevel}:${preset.fullStrength}`;
+    if (configKey === this.lastBotConfigKey) {
+      return;
+    }
+
+    if (preset.fullStrength) {
+      this.send("setoption name UCI_LimitStrength value false");
+      this.send("setoption name Skill Level value 20");
+    } else {
+      this.send("setoption name UCI_LimitStrength value true");
+      this.send(`setoption name UCI_Elo value ${preset.elo}`);
+      this.send(`setoption name Skill Level value ${preset.skillLevel}`);
+    }
+
+    await this.awaitReadyRoundTrip();
+    this.lastBotConfigKey = configKey;
   }
 
   private send(cmd: string): void { this.worker.postMessage(cmd); }
@@ -581,7 +661,13 @@ app.innerHTML = `
       <section class="panel board-panel">
         <div class="board-toolbar">
           <button class="action cta-turquoise" id="createRoomButton" type="button">Create room</button>
-          <button class="action cta-rainbow" id="playBotButton" type="button">Play vs Bot (800 ELO)</button>
+          <button class="action cta-rainbow" id="playBotButton" type="button">Play vs Bot (${botDifficultySummary(getBotDifficultyPreset(savedBotLevel))})</button>
+          <div class="bot-difficulty-picker" id="botDifficultyPicker">
+            <label class="bot-difficulty-label" for="botDifficultySelect">Bot level</label>
+            <select id="botDifficultySelect" class="bot-difficulty-select" aria-label="Choose bot difficulty">
+              ${BOT_DIFFICULTY_PRESETS.map((preset) => `<option value="${preset.level}">${preset.label}</option>`).join("")}
+            </select>
+          </div>
           <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
           <button class="ghost" id="undoRequestButton" type="button" hidden>Request undo</button>
           <button class="ghost" id="undoDeclineButton" type="button" hidden>Decline undo</button>
@@ -714,10 +800,7 @@ app.innerHTML = `
   <div class="focus-hud" id="focusHud" hidden>
     <span class="focus-chip" id="focusTimer">00:00</span>
 
-    <div id="focusMaterialHud" class="focus-material-hud" hidden>
-      <span class="focus-chip" id="focusMaterialScore"></span>
-      <span class="focus-chip" id="focusMaterialIcons"></span>
-    </div>
+    <div id="focusMaterialHud" class="focus-material-hud" hidden></div>
   </div>
 
   <div class="promotion-dialog" id="promotionDialog" hidden>
@@ -798,9 +881,9 @@ const focusHud = must<HTMLDivElement>("#focusHud");
 const focusTimer = must<HTMLSpanElement>("#focusTimer");
 const focusModeButton = must<HTMLButtonElement>("#focusModeBtn");
 const focusMaterialHud = must<HTMLDivElement>("#focusMaterialHud");
-const focusMaterialScore = must<HTMLSpanElement>("#focusMaterialScore");
-const focusMaterialIcons = must<HTMLSpanElement>("#focusMaterialIcons");
 const playBotButton = must<HTMLButtonElement>("#playBotButton");
+const botDifficultyPicker = must<HTMLDivElement>("#botDifficultyPicker");
+const botDifficultySelect = must<HTMLSelectElement>("#botDifficultySelect");
 const confirmDialog = must<HTMLElement>("#confirmDialog");
 const confirmYesBtn = must<HTMLButtonElement>("#confirmYesBtn");
 const confirmNoBtn = must<HTMLButtonElement>("#confirmNoBtn");
@@ -878,13 +961,21 @@ const gameNavRow = must<HTMLDivElement>("#gameNavRow");
 const arrowAnnotations = new Set<string>();
 const squareAnnotations = new Set<string>(); 
 
-function buildPgnFromMoves(moves: MoveSummary[]): string | null {
+function buildPgnFromMoves(moves: MoveSummary[], headers?: PgnHeaderOptions): string | null {
   if (moves.length === 0) {
     return null;
   }
 
   const replay = new Chess();
   try {
+    if (headers?.whiteName || headers?.blackName || headers?.result) {
+      replay.header(
+        "White", headers.whiteName?.trim() || "White",
+        "Black", headers.blackName?.trim() || "Black",
+        "Result", headers.result || "*",
+      );
+    }
+
     for (const move of moves) {
       const appliedMove = replay.move(move.san);
       if (!appliedMove) {
@@ -936,6 +1027,7 @@ const accountSidebarController = createAccountSidebarController({
   },
   onOpenSavedGameForAnalysis: (pgn: string) => {
     localStorage.removeItem("postGameMoves");
+    localStorage.removeItem("postGameMeta");
     localStorage.setItem("postGamePgn", pgn);
     window.location.assign("/analyze");
   },
@@ -964,7 +1056,19 @@ async function maybePersistFinishedGame(snapshot: RoomSnapshot | null): Promise<
   }
 
   const signature = buildFinishedGameSignature(snapshot);
-  const pgn = buildPgnFromMoves(snapshot.moves);
+  const result: "1-0" | "0-1" | "1/2-1/2" | "*" =
+    snapshot.draw
+      ? "1/2-1/2"
+      : snapshot.winner === "w"
+      ? "1-0"
+      : snapshot.winner === "b"
+      ? "0-1"
+      : "*";
+  const pgn = buildPgnFromMoves(snapshot.moves, {
+    whiteName: snapshot.players.whiteName,
+    blackName: snapshot.players.blackName,
+    result,
+  });
   await accountSidebarController.handleFinishedGamePersist({ signature, pgn });
 }
 
@@ -973,6 +1077,25 @@ void accountSidebarController.initialize();
 window.addEventListener("beforeunload", () => {
   accountSidebarController.dispose();
 });
+
+function refreshBotDifficultyUi(): void {
+  const preset = getBotDifficultyPreset(state.botLevel);
+  playBotButton.textContent = `Play vs Bot (${botDifficultySummary(preset)})`;
+  botDifficultySelect.value = String(preset.level);
+}
+
+botDifficultySelect.addEventListener("change", () => {
+  const nextLevel = clampBotLevel(Number(botDifficultySelect.value));
+  state.botLevel = nextLevel;
+  localStorage.setItem("chess-bot-level", String(nextLevel));
+  refreshBotDifficultyUi();
+
+  if (state.gameMode === "bot") {
+    showToast(`Bot strength updated: ${botDifficultySummary(getBotDifficultyPreset(nextLevel))}.`);
+  }
+});
+
+refreshBotDifficultyUi();
 
 playBotButton.addEventListener("click", () => {
   if (state.roomId && state.gameMode === "multiplayer") {
@@ -1507,9 +1630,12 @@ board.addEventListener("pointercancel", (event) => {
 });
 
 async function triggerBotResponse() {
-  if (!liveAnalyzer) liveAnalyzer = new StockfishBridge();
-  
-  const botMoveUci = await liveAnalyzer.getBotMove(chess.fen());
+  if (!botAnalyzer) {
+    botAnalyzer = new StockfishBridge();
+  }
+
+  const botPreset = getBotDifficultyPreset(state.botLevel);
+  const botMoveUci = await botAnalyzer.getBotMove(chess.fen(), botPreset);
   const bFrom = botMoveUci.substring(0, 2) as Square;
   const bTo = botMoveUci.substring(2, 4) as Square;
   const bPromo = botMoveUci.length === 5 ? botMoveUci[4] as any : "q";
@@ -1850,6 +1976,7 @@ function renderSession(): void {
   const snapshot = state.snapshot;
   const hasRoom = Boolean(state.roomId);
   const isCreator = Boolean(snapshot?.ownerId && socket.id && snapshot.ownerId === socket.id);
+  refreshBotDifficultyUi();
   
   // 1. Core State Calculations
   const isMultiplayer = state.gameMode === "multiplayer";
@@ -1878,6 +2005,7 @@ function renderSession(): void {
   inviteJoinCard.hidden = isGameActive;
   createRoomButton.hidden = isGameActive;
   playBotButton.hidden = isGameActive;
+  botDifficultyPicker.hidden = isGameActive;
 
   leaveRoomButton.hidden = !hasRoom;
   // Join controls are main-menu only to avoid room-switch conflicts while already in a room.
@@ -2342,6 +2470,10 @@ function renderBoard(): void {
     overlayAnalyzeBtn.className = "action cta-rainbow";
     overlayAnalyzeBtn.style.textDecoration = "none";
     overlayAnalyzeBtn.onclick = () => {
+      localStorage.setItem("postGameMeta", JSON.stringify({
+        whiteName: snapshot.players.whiteName,
+        blackName: snapshot.players.blackName,
+      }));
       localStorage.setItem("postGameMoves", JSON.stringify(snapshot.moves.map(m => m.san)));
       window.location.href = "/analyze";
     };
@@ -3603,9 +3735,11 @@ function tryMoveFromTo(from: Square, to: Square): void {
 function startBotGame() {
   accountSidebarController.resetFinishedGameTracking();
 
+  const botPreset = getBotDifficultyPreset(state.botLevel);
+
   state.gameMode = "bot";
   state.role = "w"; // Player is White
-  state.roomId = "LOCAL_BOT";
+  state.roomId = "BOT";
   
   chess.reset();
   
@@ -3628,7 +3762,7 @@ function startBotGame() {
       blackConnected: true,
       spectatorCount: 0,
       whiteName: getCurrentPlayerName(),
-      blackName: "Bot",
+      blackName: `Bot (${botDifficultySummary(botPreset)})`,
     },
     rematchVotes: 0,
     analysis: { enabled: false, votes: 0, locked: false, labelsOnly: false, labelsVotes: 0 },
@@ -3651,7 +3785,7 @@ function startBotGame() {
     },
   };
 
-  showToast("Bot mode active. You are White!");
+  showToast(`Bot mode active. You are White. ${botDifficultySummary(botPreset)}.`);
   render();
 }
 
@@ -3870,6 +4004,11 @@ function syncUrl(roomId: string | null): void {
 }
 
 function clearLocalRoomState(): void {  
+  if (botAnalyzer) {
+    botAnalyzer.terminate();
+    botAnalyzer = null;
+  }
+
   if (activeGhostAnimation) {
     const animation = activeGhostAnimation;
     activeGhostAnimation = null;
@@ -4006,13 +4145,37 @@ function getFocusTimerText(): string {
   return `W ${whiteText} | B ${blackText}`;
 }
 
-function updateFocusHud(): void {
-  if (!state.focusMode) {
-    focusHud.hidden = true;
+let lastFocusMaterialKey: string | null = null;
+let focusMaterialWasVisible = false;
+
+function setFocusMaterialVisibility(visible: boolean): void {
+  if (!visible) {
+    focusMaterialHud.classList.remove("focus-material-appear");
     focusMaterialHud.hidden = true;
+    focusMaterialWasVisible = false;
     return;
   }
 
+  focusMaterialHud.hidden = false;
+  if (!focusMaterialWasVisible) {
+    focusMaterialHud.classList.remove("focus-material-appear");
+    void focusMaterialHud.offsetWidth;
+    focusMaterialHud.classList.add("focus-material-appear");
+  }
+  focusMaterialWasVisible = true;
+}
+
+function updateFocusHud(): void {
+  if (!state.focusMode) {
+    focusHud.hidden = true;
+    focusMaterialHud.innerHTML = "";
+    lastFocusMaterialKey = null;
+    setFocusMaterialVisibility(false);
+    return;
+  }
+
+  // Reveal container first to avoid stale first-frame text after toggling focus mode.
+  focusHud.hidden = false;
   focusTimer.textContent = getFocusTimerText();
 
   const snapshot = state.snapshot;
@@ -4057,9 +4220,12 @@ function updateFocusHud(): void {
     const currentFen = replayBoard.fen();
     const rawValue = materialFromPerspective(currentFen, myColor);
     const netValue = Math.floor(rawValue / 100);
+    const hasMovesPlayed = movesToReplay.length > 0;
+    const hasMaterialData = Boolean(myCapturesHtml || opCapturesHtml || netValue !== 0);
+    const shouldShowMaterialHud = hasMovesPlayed && hasMaterialData;
 
-    if (myCapturesHtml || opCapturesHtml || netValue !== 0) {
-      focusMaterialHud.innerHTML = `
+    if (shouldShowMaterialHud) {
+      const markup = `
         ${myCapturesHtml || netValue > 0 ? `
         <div class="focus-capture-row">
            <div class="focus-icons">${myCapturesHtml}</div>
@@ -4072,15 +4238,22 @@ function updateFocusHud(): void {
            ${netValue < 0 ? `<span class="focus-score minus">${netValue}</span>` : ""}
         </div>` : ""}
       `;
-      focusMaterialHud.hidden = false;
+      const materialKey = `${movesToReplay.length}:${myCaptures.join("")}:${opCaptures.join("")}:${netValue}`;
+      if (materialKey !== lastFocusMaterialKey) {
+        focusMaterialHud.innerHTML = markup;
+        lastFocusMaterialKey = materialKey;
+      }
+      setFocusMaterialVisibility(true);
     } else {
-      focusMaterialHud.hidden = true;
+      focusMaterialHud.innerHTML = "";
+      lastFocusMaterialKey = null;
+      setFocusMaterialVisibility(false);
     }
   } else {
-    focusMaterialHud.hidden = true;
+    focusMaterialHud.innerHTML = "";
+    lastFocusMaterialKey = null;
+    setFocusMaterialVisibility(false);
   }
-
-  focusHud.hidden = false;
 }
 function applyFocusMode(): void {
   document.body.classList.toggle("focus-mode", state.focusMode);
@@ -4124,4 +4297,5 @@ window.setInterval(() => {
 
 window.addEventListener("beforeunload", () => {
   liveAnalyzer?.terminate();
+  botAnalyzer?.terminate();
 });

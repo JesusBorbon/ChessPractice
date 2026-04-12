@@ -212,6 +212,40 @@ button {
   justify-items: center;
 }
 
+.bot-difficulty-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(25, 35, 32, 0.08);
+  border: 1px solid rgba(25, 35, 32, 0.12);
+}
+
+.bot-difficulty-label {
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+.bot-difficulty-select {
+  min-height: 30px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: color-mix(in srgb, var(--paper-strong), black 5%);
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 700;
+  outline: none;
+}
+
+.bot-difficulty-select:focus-visible {
+  box-shadow: 0 0 0 2px rgba(0, 229, 255, 0.34);
+}
+
 .action,
 .ghost,
 .chip,
@@ -1100,6 +1134,11 @@ button {
   .seat-grid,
   .meta-grid {
     grid-template-columns: 1fr;
+  }
+
+  .bot-difficulty-picker {
+    width: 100%;
+    justify-content: center;
   }
 }
 
@@ -2259,6 +2298,14 @@ body.focus-mode.focus-analyze .nav-row button:hover {
   box-shadow: 0 4px 12px rgba(0,0,0,0.2);
 }
 
+.focus-material-hud.focus-material-appear {
+  animation: focus-material-appear 220ms ease-out both;
+}
+
+.focus-material-hud.focus-material-appear .focus-capture-row {
+  animation: focus-capture-chip-appear 280ms ease-out both;
+}
+
 .focus-capture-label {
   font-size: 0.65rem;
   text-transform: uppercase;
@@ -2288,6 +2335,35 @@ body.focus-mode.focus-analyze .nav-row button:hover {
 
 .focus-score.plus { color: #4ade80; }
 .focus-score.minus { color: #f87171; }
+
+@keyframes focus-material-appear {
+  0% {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes focus-capture-chip-appear {
+  0% {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-material-hud.focus-material-appear,
+  .focus-material-hud.focus-material-appear .focus-capture-row {
+    animation: none !important;
+  }
+}
 
 
 
@@ -2338,6 +2414,20 @@ body.focus-mode.focus-analyze .nav-row button:hover {
     left: 28px !important;
     flex-direction: row !important; /* Timer and captures side-by-side */
     gap: 16px !important;
+  }
+}
+
+@media (max-width: 900px) {
+  body.focus-mode #focusModeBtn,
+  body.focus-mode .focus-toggle-btn {
+    width: fit-content !important;
+    max-width: max-content !important;
+    min-width: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    white-space: nowrap !important;
+    padding: 6px 12px !important;
   }
 }
 
