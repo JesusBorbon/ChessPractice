@@ -3807,6 +3807,7 @@ var require_analyze = __commonJS({
       k: 0
     };
     var MATE_CP = 1e5;
+    var BRILLIANT_VERIFICATION_DEPTH = 16;
     var StockfishBridge = class {
       worker;
       ready = false;
@@ -5260,7 +5261,7 @@ var require_analyze = __commonJS({
           if (runId !== analysisRunId) {
             return;
           }
-          analysisByPly[ply] = classifyMove(ply, move, before, after, beforeFen, afterFen);
+          analysisByPly[ply] = await classifyMove(ply, move, before, after, beforeFen, afterFen, engine);
           analysisProgressCompleted = ply;
           updateAnalysisLoadingOverlay();
           if (cursor === ply) {
@@ -5309,7 +5310,7 @@ var require_analyze = __commonJS({
         if (runId !== analysisRunId) {
           return;
         }
-        analysisByPly[ply] = classifyMove(ply, move, before, after, beforeFen, afterFen);
+        analysisByPly[ply] = await classifyMove(ply, move, before, after, beforeFen, afterFen, engine);
         if (!isVariationMode) {
           syncGameLineFromCurrent();
         }
@@ -5339,7 +5340,7 @@ var require_analyze = __commonJS({
       updateAnalysisLoadingOverlay();
       renderNav();
     }
-    function classifyMove(ply, move, before, after, beforeFen, afterFen) {
+    async function classifyMove(ply, move, before, after, beforeFen, afterFen, engine) {
       const playedMove = toUci(move);
       const beforeMoverCp = before.cp;
       const afterMoverCp = -after.cp;
@@ -5351,15 +5352,27 @@ var require_analyze = __commonJS({
       const materialDelta = materialAfter - materialBefore;
       const evalGain = Math.round(afterMoverCp - beforeMoverCp);
       const previousOpponentCategory = ply > 1 ? analysisByPly[ply - 1]?.category : void 0;
+      const brilliantOffer = await verifyBrilliantOffer({
+        engine,
+        move,
+        beforeFen,
+        afterFen,
+        beforeMoverCp,
+        afterMoverCp,
+        cpl,
+        matchesBest,
+        materialDelta
+      });
       const quality = classifyMoveQuality({
         cpl,
         matchesBest,
         materialDelta,
         evalGain,
         isCapture: Boolean(move.captured),
-        previousOpponentCategory
+        previousOpponentCategory,
+        brilliantOffer: brilliantOffer.brilliantOffer
       });
-      const note = buildMoveNote(quality.category, cpl, before, playedMove, move, materialDelta, evalGain);
+      const note = buildMoveNote(quality.category, cpl, before, playedMove, move, materialDelta, evalGain, brilliantOffer.note);
       return {
         ply,
         label: quality.label,
@@ -5379,13 +5392,14 @@ var require_analyze = __commonJS({
         materialDelta,
         evalGain,
         isCapture,
-        previousOpponentCategory
+        previousOpponentCategory,
+        brilliantOffer
       } = input;
       const opponentBlundered = previousOpponentCategory === "mistake" || previousOpponentCategory === "blunder";
       const isSacrifice = materialDelta <= -100;
       const brilliantSacrifice = isSacrifice && evalGain >= 80 && cpl <= 35;
       const greatPunish = matchesBest && cpl <= 22 && opponentBlundered && (isCapture || materialDelta >= 100 || evalGain >= 110);
-      if (brilliantSacrifice) {
+      if (brilliantSacrifice || brilliantOffer) {
         return { category: "brilliant", label: CATEGORY_LABELS.brilliant };
       }
       if (greatPunish) {
@@ -5426,8 +5440,11 @@ var require_analyze = __commonJS({
       }
       return color === "w" ? white - black : black - white;
     }
-    function buildMoveNote(category, cpl, before, playedMove, move, materialDelta, evalGain) {
+    function buildMoveNote(category, cpl, before, playedMove, move, materialDelta, evalGain, brilliantOfferNote) {
       if (category === "brilliant") {
+        if (brilliantOfferNote) {
+          return brilliantOfferNote;
+        }
         return `Intentional sacrifice (${materialDelta}) with strong compensation (+${Math.max(0, evalGain)} cp).`;
       }
       if (category === "great") {
@@ -5446,6 +5463,54 @@ var require_analyze = __commonJS({
         return "Active move that keeps practical pressure.";
       }
       return `Stable move (${cpl} CPL).`;
+    }
+    async function verifyBrilliantOffer(input) {
+      const {
+        engine,
+        move,
+        beforeFen,
+        afterFen,
+        beforeMoverCp,
+        afterMoverCp,
+        cpl,
+        matchesBest,
+        materialDelta
+      } = input;
+      if (materialDelta < 0 || cpl > 35 || !matchesBest && afterMoverCp < beforeMoverCp - 40) {
+        return { brilliantOffer: false };
+      }
+      const movedPieceValue = PIECE_VALUES[move.piece] ?? 0;
+      if (movedPieceValue < 330) {
+        return { brilliantOffer: false };
+      }
+      const board = new Chess(afterFen);
+      const captureReplies = board.moves({ verbose: true }).filter((reply) => {
+        if (reply.to !== move.to || !reply.captured) {
+          return false;
+        }
+        const capturerValue = PIECE_VALUES[reply.piece] ?? 0;
+        return capturerValue <= movedPieceValue;
+      });
+      if (captureReplies.length === 0) {
+        return { brilliantOffer: false };
+      }
+      let worstReplyScore = Number.POSITIVE_INFINITY;
+      const examinedReplies = captureReplies.slice(0, 3);
+      for (const reply of examinedReplies) {
+        const replyBoard = new Chess(afterFen);
+        replyBoard.move(reply);
+        const replyEval = await engine.evaluateFen(replyBoard.fen(), Math.max(BRILLIANT_VERIFICATION_DEPTH, analysisDepth + 2));
+        worstReplyScore = Math.min(worstReplyScore, replyEval.cp);
+      }
+      const keepsAdvantage = worstReplyScore >= Math.max(150, beforeMoverCp - 90);
+      if (!keepsAdvantage) {
+        return { brilliantOffer: false };
+      }
+      const replySans = examinedReplies.map((reply) => reply.san).join(", ");
+      return {
+        brilliantOffer: true,
+        note: `Brilliant piece offer: ${move.san} invites ${replySans}, but the deeper line still keeps a winning evaluation.`
+      };
     }
     function renderEngineFeedback() {
       stopAnalyzeBtn.hidden = !fullAnalysisInProgress;

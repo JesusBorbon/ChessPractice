@@ -259,6 +259,7 @@ const LIVE_CATEGORY_BADGE_ICON_PATHS: Partial<Record<MoveCategory, string>> = {
   good: "/assets/labelBadges/good.svg",
   mistake: "/assets/labelBadges/mistake.svg",
 };
+const LIVE_BRILLIANT_VERIFICATION_DEPTH = 16;
 const ROOM_CODE_LENGTH = 4;
 const ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
 
@@ -2806,6 +2807,7 @@ function classifyLiveMoveQuality(input: {
   evalGain: number;
   isCapture: boolean;
   previousOpponentCategory: MoveCategory | undefined;
+  brilliantOffer: boolean;
 }): QualityResult {
   const {
     cpl,
@@ -2814,6 +2816,7 @@ function classifyLiveMoveQuality(input: {
     evalGain,
     isCapture,
     previousOpponentCategory,
+    brilliantOffer,
   } = input;
 
   const opponentBlundered = previousOpponentCategory === "mistake" || previousOpponentCategory === "blunder";
@@ -2824,7 +2827,7 @@ function classifyLiveMoveQuality(input: {
     && opponentBlundered
     && (isCapture || materialDelta >= 100 || evalGain >= 110);
 
-  if (brilliantSacrifice) {
+  if (brilliantSacrifice || brilliantOffer) {
     return { category: "brilliant", label: LIVE_CATEGORY_LABELS.brilliant };
   }
 
@@ -2849,6 +2852,64 @@ function classifyLiveMoveQuality(input: {
   }
 
   return { category: "blunder", label: LIVE_CATEGORY_LABELS.blunder };
+}
+
+async function verifyLiveBrilliantOffer(input: {
+  engine: StockfishBridge;
+  move: { to: string; san: string; piece?: string };
+  beforeFen: string;
+  afterFen: string;
+  beforeMoverCp: number;
+  afterMoverCp: number;
+  cpl: number;
+  matchesBestMove: boolean;
+  materialDelta: number;
+}): Promise<boolean> {
+  const {
+    engine,
+    move,
+    beforeFen,
+    afterFen,
+    beforeMoverCp,
+    afterMoverCp,
+    cpl,
+    matchesBestMove,
+    materialDelta,
+  } = input;
+
+  if (materialDelta < 0 || cpl > 35 || (!matchesBestMove && afterMoverCp < beforeMoverCp - 40)) {
+    return false;
+  }
+
+  const board = new Chess(afterFen);
+  const movedPiece = board.get(move.to as Square)?.type ?? (move.piece as PieceSymbol | undefined);
+  const movedPieceValue = movedPiece ? (PIECE_VALUES[movedPiece] ?? 0) : 0;
+  if (movedPieceValue < 330) {
+    return false;
+  }
+
+  const captureReplies = board.moves({ verbose: true }).filter((reply) => {
+    if (reply.to !== move.to || !reply.captured) {
+      return false;
+    }
+
+    const capturerValue = PIECE_VALUES[reply.piece] ?? 0;
+    return capturerValue <= movedPieceValue;
+  });
+
+  if (captureReplies.length === 0) {
+    return false;
+  }
+
+  let worstReplyScore = Number.POSITIVE_INFINITY;
+  for (const reply of captureReplies.slice(0, 3)) {
+    const replyBoard = new Chess(afterFen);
+    replyBoard.move(reply);
+    const replyEval = await engine.evaluateFen(replyBoard.fen(), LIVE_BRILLIANT_VERIFICATION_DEPTH);
+    worstReplyScore = Math.min(worstReplyScore, replyEval.cp);
+  }
+
+  return worstReplyScore >= Math.max(150, beforeMoverCp - 90);
 }
 
 function symbolForLiveCategory(category: "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder"): string {
@@ -2949,6 +3010,17 @@ async function maybeRunLiveAnalysis(snapshot: RoomSnapshot): Promise<void> {
     const materialDelta = materialAfter - materialBefore;
     const evalGain = Math.round(moverAfter - moverBefore);
     const previousOpponentCategory = state.liveMoveGrades[snapshot.moveCount - 1]?.category;
+    const brilliantOffer = await verifyLiveBrilliantOffer({
+      engine: liveAnalyzer,
+      move: snapshot.lastMove,
+      beforeFen: fenPair.beforeFen,
+      afterFen: fenPair.afterFen,
+      beforeMoverCp: moverBefore,
+      afterMoverCp: moverAfter,
+      cpl,
+      matchesBestMove,
+      materialDelta,
+    });
     const quality = classifyLiveMoveQuality({
       cpl,
       matchesBestMove,
@@ -2956,6 +3028,7 @@ async function maybeRunLiveAnalysis(snapshot: RoomSnapshot): Promise<void> {
       evalGain,
       isCapture: snapshot.lastMove.san.includes("x"),
       previousOpponentCategory,
+      brilliantOffer,
     });
 
     const label = quality.label;
@@ -3020,6 +3093,17 @@ async function maybeRunLiveAnalysisForMove(
     const materialDelta = materialAfter - materialBefore;
     const evalGain = Math.round(moverAfter - moverBefore);
     const previousOpponentCategory = state.liveMoveGrades[(state.snapshot?.moveCount ?? 0) - 1]?.category;
+    const brilliantOffer = await verifyLiveBrilliantOffer({
+      engine: liveAnalyzer,
+      move: moveResult,
+      beforeFen,
+      afterFen,
+      beforeMoverCp: moverBefore,
+      afterMoverCp: moverAfter,
+      cpl,
+      matchesBestMove,
+      materialDelta,
+    });
     const quality = classifyLiveMoveQuality({
       cpl,
       matchesBestMove,
@@ -3027,6 +3111,7 @@ async function maybeRunLiveAnalysisForMove(
       evalGain,
       isCapture: Boolean(moveResult.captured),
       previousOpponentCategory,
+      brilliantOffer,
     });
     const label = quality.label;
 

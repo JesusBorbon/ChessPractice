@@ -28738,6 +28738,7 @@ var require_main = __commonJS({
       good: "/assets/labelBadges/good.svg",
       mistake: "/assets/labelBadges/mistake.svg"
     };
+    var LIVE_BRILLIANT_VERIFICATION_DEPTH = 16;
     var ROOM_CODE_LENGTH = 4;
     var ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
     function applyAnimationTiming(style) {
@@ -30766,13 +30767,14 @@ var require_main = __commonJS({
         materialDelta,
         evalGain,
         isCapture,
-        previousOpponentCategory
+        previousOpponentCategory,
+        brilliantOffer
       } = input;
       const opponentBlundered = previousOpponentCategory === "mistake" || previousOpponentCategory === "blunder";
       const isSacrifice = materialDelta <= -100;
       const brilliantSacrifice = isSacrifice && evalGain >= 80 && cpl <= 35;
       const greatPunish = matchesBestMove && cpl <= 22 && opponentBlundered && (isCapture || materialDelta >= 100 || evalGain >= 110);
-      if (brilliantSacrifice) {
+      if (brilliantSacrifice || brilliantOffer) {
         return { category: "brilliant", label: LIVE_CATEGORY_LABELS.brilliant };
       }
       if (greatPunish) {
@@ -30791,6 +30793,46 @@ var require_main = __commonJS({
         return { category: "mistake", label: LIVE_CATEGORY_LABELS.mistake };
       }
       return { category: "blunder", label: LIVE_CATEGORY_LABELS.blunder };
+    }
+    async function verifyLiveBrilliantOffer(input) {
+      const {
+        engine,
+        move,
+        beforeFen,
+        afterFen,
+        beforeMoverCp,
+        afterMoverCp,
+        cpl,
+        matchesBestMove,
+        materialDelta
+      } = input;
+      if (materialDelta < 0 || cpl > 35 || !matchesBestMove && afterMoverCp < beforeMoverCp - 40) {
+        return false;
+      }
+      const board2 = new Chess(afterFen);
+      const movedPiece = board2.get(move.to)?.type ?? move.piece;
+      const movedPieceValue = movedPiece ? PIECE_VALUES[movedPiece] ?? 0 : 0;
+      if (movedPieceValue < 330) {
+        return false;
+      }
+      const captureReplies = board2.moves({ verbose: true }).filter((reply) => {
+        if (reply.to !== move.to || !reply.captured) {
+          return false;
+        }
+        const capturerValue = PIECE_VALUES[reply.piece] ?? 0;
+        return capturerValue <= movedPieceValue;
+      });
+      if (captureReplies.length === 0) {
+        return false;
+      }
+      let worstReplyScore = Number.POSITIVE_INFINITY;
+      for (const reply of captureReplies.slice(0, 3)) {
+        const replyBoard = new Chess(afterFen);
+        replyBoard.move(reply);
+        const replyEval = await engine.evaluateFen(replyBoard.fen(), LIVE_BRILLIANT_VERIFICATION_DEPTH);
+        worstReplyScore = Math.min(worstReplyScore, replyEval.cp);
+      }
+      return worstReplyScore >= Math.max(150, beforeMoverCp - 90);
     }
     function symbolForLiveCategory(category) {
       return LIVE_CATEGORY_TEXT_SYMBOLS[category];
@@ -30873,13 +30915,25 @@ var require_main = __commonJS({
         const materialDelta = materialAfter - materialBefore;
         const evalGain = Math.round(moverAfter - moverBefore);
         const previousOpponentCategory = state.liveMoveGrades[snapshot.moveCount - 1]?.category;
+        const brilliantOffer = await verifyLiveBrilliantOffer({
+          engine: liveAnalyzer,
+          move: snapshot.lastMove,
+          beforeFen: fenPair.beforeFen,
+          afterFen: fenPair.afterFen,
+          beforeMoverCp: moverBefore,
+          afterMoverCp: moverAfter,
+          cpl,
+          matchesBestMove,
+          materialDelta
+        });
         const quality = classifyLiveMoveQuality({
           cpl,
           matchesBestMove,
           materialDelta,
           evalGain,
           isCapture: snapshot.lastMove.san.includes("x"),
-          previousOpponentCategory
+          previousOpponentCategory,
+          brilliantOffer
         });
         const label = quality.label;
         const category = quality.category;
@@ -30928,13 +30982,25 @@ var require_main = __commonJS({
         const materialDelta = materialAfter - materialBefore;
         const evalGain = Math.round(moverAfter - moverBefore);
         const previousOpponentCategory = state.liveMoveGrades[(state.snapshot?.moveCount ?? 0) - 1]?.category;
+        const brilliantOffer = await verifyLiveBrilliantOffer({
+          engine: liveAnalyzer,
+          move: moveResult,
+          beforeFen,
+          afterFen,
+          beforeMoverCp: moverBefore,
+          afterMoverCp: moverAfter,
+          cpl,
+          matchesBestMove,
+          materialDelta
+        });
         const quality = classifyLiveMoveQuality({
           cpl,
           matchesBestMove,
           materialDelta,
           evalGain,
           isCapture: Boolean(moveResult.captured),
-          previousOpponentCategory
+          previousOpponentCategory,
+          brilliantOffer
         });
         const label = quality.label;
         state.liveAnalysisSummary = `You played: ${summarizeLiveMove(label, cpl, moveResult.san)}`;

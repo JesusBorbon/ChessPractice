@@ -69,6 +69,7 @@ const PIECE_VALUES: Record<string, number> = {
 };
 
 const MATE_CP = 100000;
+const BRILLIANT_VERIFICATION_DEPTH = 16;
 
 class StockfishBridge {
   private readonly worker: Worker;
@@ -1819,7 +1820,7 @@ async function runGameAnalysis(): Promise<void> {
         return;
       }
 
-      analysisByPly[ply] = classifyMove(ply, move, before, after, beforeFen, afterFen);
+      analysisByPly[ply] = await classifyMove(ply, move, before, after, beforeFen, afterFen, engine);
       analysisProgressCompleted = ply;
       updateAnalysisLoadingOverlay();
       if (cursor === ply) {
@@ -1876,7 +1877,7 @@ async function analyzeLatestMove(): Promise<void> {
       return;
     }
 
-    analysisByPly[ply] = classifyMove(ply, move, before, after, beforeFen, afterFen);
+    analysisByPly[ply] = await classifyMove(ply, move, before, after, beforeFen, afterFen, engine);
     if (!isVariationMode) {
       syncGameLineFromCurrent();
     }
@@ -1911,14 +1912,15 @@ function cancelAnalysis(): void {
   renderNav();
 }
 
-function classifyMove(
+async function classifyMove(
   ply: number,
   move: Move,
   before: EngineEval,
   after: EngineEval,
   beforeFen: string,
   afterFen: string,
-): MoveAnalysis {
+  engine: StockfishBridge,
+): Promise<MoveAnalysis> {
   const playedMove = toUci(move);
   const beforeMoverCp = before.cp;
   const afterMoverCp = -after.cp;
@@ -1930,6 +1932,17 @@ function classifyMove(
   const materialDelta = materialAfter - materialBefore;
   const evalGain = Math.round(afterMoverCp - beforeMoverCp);
   const previousOpponentCategory = ply > 1 ? analysisByPly[ply - 1]?.category : undefined;
+  const brilliantOffer = await verifyBrilliantOffer({
+    engine,
+    move,
+    beforeFen,
+    afterFen,
+    beforeMoverCp,
+    afterMoverCp,
+    cpl,
+    matchesBest,
+    materialDelta,
+  });
 
   const quality = classifyMoveQuality({
     cpl,
@@ -1938,9 +1951,10 @@ function classifyMove(
     evalGain,
     isCapture: Boolean(move.captured),
     previousOpponentCategory,
+    brilliantOffer: brilliantOffer.brilliantOffer,
   });
 
-  const note = buildMoveNote(quality.category, cpl, before, playedMove, move, materialDelta, evalGain);
+  const note = buildMoveNote(quality.category, cpl, before, playedMove, move, materialDelta, evalGain, brilliantOffer.note);
 
   return {
     ply,
@@ -1962,6 +1976,7 @@ function classifyMoveQuality(input: {
   evalGain: number;
   isCapture: boolean;
   previousOpponentCategory: MoveCategory | undefined;
+  brilliantOffer: boolean;
 }): QualityResult {
   const {
     cpl,
@@ -1970,6 +1985,7 @@ function classifyMoveQuality(input: {
     evalGain,
     isCapture,
     previousOpponentCategory,
+    brilliantOffer,
   } = input;
 
   const opponentBlundered = previousOpponentCategory === "mistake" || previousOpponentCategory === "blunder";
@@ -1980,7 +1996,7 @@ function classifyMoveQuality(input: {
     && opponentBlundered
     && (isCapture || materialDelta >= 100 || evalGain >= 110);
 
-  if (brilliantSacrifice) {
+  if (brilliantSacrifice || brilliantOffer) {
     return { category: "brilliant", label: CATEGORY_LABELS.brilliant };
   }
 
@@ -2055,8 +2071,12 @@ function buildMoveNote(
   move: Move,
   materialDelta: number,
   evalGain: number,
+  brilliantOfferNote?: string,
 ): string {
   if (category === "brilliant") {
+    if (brilliantOfferNote) {
+      return brilliantOfferNote;
+    }
     return `Intentional sacrifice (${materialDelta}) with strong compensation (+${Math.max(0, evalGain)} cp).`;
   }
 
@@ -2081,6 +2101,73 @@ function buildMoveNote(
   }
 
   return `Stable move (${cpl} CPL).`;
+}
+
+async function verifyBrilliantOffer(input: {
+  engine: StockfishBridge;
+  move: Move;
+  beforeFen: string;
+  afterFen: string;
+  beforeMoverCp: number;
+  afterMoverCp: number;
+  cpl: number;
+  matchesBest: boolean;
+  materialDelta: number;
+}): Promise<{ brilliantOffer: boolean; note?: string }> {
+  const {
+    engine,
+    move,
+    beforeFen,
+    afterFen,
+    beforeMoverCp,
+    afterMoverCp,
+    cpl,
+    matchesBest,
+    materialDelta,
+  } = input;
+
+  if (materialDelta < 0 || cpl > 35 || (!matchesBest && afterMoverCp < beforeMoverCp - 40)) {
+    return { brilliantOffer: false };
+  }
+
+  const movedPieceValue = PIECE_VALUES[move.piece] ?? 0;
+  if (movedPieceValue < 330) {
+    return { brilliantOffer: false };
+  }
+
+  const board = new Chess(afterFen);
+  const captureReplies = board.moves({ verbose: true }).filter((reply) => {
+    if (reply.to !== move.to || !reply.captured) {
+      return false;
+    }
+
+    const capturerValue = PIECE_VALUES[reply.piece] ?? 0;
+    return capturerValue <= movedPieceValue;
+  });
+
+  if (captureReplies.length === 0) {
+    return { brilliantOffer: false };
+  }
+
+  let worstReplyScore = Number.POSITIVE_INFINITY;
+  const examinedReplies = captureReplies.slice(0, 3);
+  for (const reply of examinedReplies) {
+    const replyBoard = new Chess(afterFen);
+    replyBoard.move(reply);
+    const replyEval = await engine.evaluateFen(replyBoard.fen(), Math.max(BRILLIANT_VERIFICATION_DEPTH, analysisDepth + 2));
+    worstReplyScore = Math.min(worstReplyScore, replyEval.cp);
+  }
+
+  const keepsAdvantage = worstReplyScore >= Math.max(150, beforeMoverCp - 90);
+  if (!keepsAdvantage) {
+    return { brilliantOffer: false };
+  }
+
+  const replySans = examinedReplies.map((reply) => reply.san).join(", ");
+  return {
+    brilliantOffer: true,
+    note: `Brilliant piece offer: ${move.san} invites ${replySans}, but the deeper line still keeps a winning evaluation.`,
+  };
 }
 
 function renderEngineFeedback(): void {
