@@ -28779,6 +28779,60 @@ var require_main = __commonJS({
     function pickRandomMove(moves) {
       return moves[Math.floor(Math.random() * moves.length)];
     }
+    function randomInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+    function clampBotMoveTimeMs(value2) {
+      if (!Number.isFinite(value2)) {
+        return 60;
+      }
+      return Math.max(25, Math.min(4200, Math.round(value2)));
+    }
+    function computeBotResponseTiming(preset, playerMove) {
+      const legalReplies = chess.moves({ verbose: true }).length;
+      const moveCount = state.snapshot?.moveCount ?? 0;
+      const isOpening = moveCount <= 14;
+      const playerCaptured = Boolean(playerMove?.captured);
+      const playerGaveCheck = Boolean(playerMove?.san.includes("+"));
+      const forcedReply = legalReplies <= 2;
+      const roll = Math.random();
+      let profile = "standard";
+      if (forcedReply || playerCaptured && roll < 0.45 || isOpening && roll < 0.22) {
+        profile = "premove";
+      } else if (roll < 0.62) {
+        profile = "quick";
+      } else if (!playerGaveCheck && !forcedReply && roll > 0.9) {
+        profile = "deep";
+      }
+      const levelMultiplier = 0.82 + preset.level * 0.045;
+      const baseThink = preset.moveTimeMs;
+      if (profile === "premove") {
+        return {
+          profile,
+          preDelayMs: randomInt(16, 88),
+          engineMoveTimeMs: clampBotMoveTimeMs(baseThink * (0.2 + Math.random() * 0.25))
+        };
+      }
+      if (profile === "quick") {
+        return {
+          profile,
+          preDelayMs: randomInt(85, 250),
+          engineMoveTimeMs: clampBotMoveTimeMs(baseThink * (0.48 + Math.random() * 0.36))
+        };
+      }
+      if (profile === "deep") {
+        return {
+          profile,
+          preDelayMs: randomInt(340, 920),
+          engineMoveTimeMs: clampBotMoveTimeMs(baseThink * levelMultiplier * (1.08 + Math.random() * 0.52))
+        };
+      }
+      return {
+        profile,
+        preDelayMs: randomInt(170, 460),
+        engineMoveTimeMs: clampBotMoveTimeMs(baseThink * levelMultiplier * (0.8 + Math.random() * 0.44))
+      };
+    }
     function scoreMoveForHumanizedBot(move) {
       const capturedValue = move.captured ? PIECE_VALUES[move.captured] ?? 0 : 0;
       const moverValue = PIECE_VALUES[move.piece] ?? 0;
@@ -28897,6 +28951,7 @@ var require_main = __commonJS({
     var activeLiveQualityCallout = null;
     var botPickerHideTimer = null;
     var botPickerLockedScrollY = null;
+    var botResponseTimer = null;
     var SMOOTH_MOVE_DURATION_MS = 620;
     var EPIC_MOVE_DURATION_MS = {
       smash: 860,
@@ -28968,10 +29023,11 @@ var require_main = __commonJS({
         this.send("isready");
       }
       /** Gets the best move from the engine for the Bot player */
-      async getBotMove(fen, preset) {
+      async getBotMove(fen, preset, moveTimeOverrideMs) {
         await this.initPromise;
         const botPromise = this.queue.then(async () => {
           await this.applyBotDifficulty(preset);
+          const effectiveMoveTimeMs = clampBotMoveTimeMs(moveTimeOverrideMs ?? preset.moveTimeMs);
           return new Promise((resolve, reject) => {
             this.activeEval = {
               resolve: (res) => resolve(res.bestMove),
@@ -28982,7 +29038,7 @@ var require_main = __commonJS({
               bestMove: ""
             };
             this.send(`position fen ${fen}`);
-            this.send(`go movetime ${preset.moveTimeMs}`);
+            this.send(`go movetime ${effectiveMoveTimeMs}`);
           });
         });
         this.queue = botPromise.then(() => void 0).catch(() => void 0);
@@ -30150,12 +30206,36 @@ var require_main = __commonJS({
       endArrowDrag(event, false);
       endPointerDrag(event, false);
     });
-    async function triggerBotResponse() {
+    function clearScheduledBotResponse() {
+      if (botResponseTimer !== null) {
+        window.clearTimeout(botResponseTimer);
+        botResponseTimer = null;
+      }
+    }
+    function scheduleBotResponse(playerMove) {
+      clearScheduledBotResponse();
+      if (!state.snapshot || state.gameMode !== "bot" || state.snapshot.checkmate || state.snapshot.draw) {
+        return;
+      }
+      const botPreset = getBotDifficultyPreset(state.botLevel);
+      const timing = computeBotResponseTiming(botPreset, playerMove);
+      botResponseTimer = window.setTimeout(() => {
+        botResponseTimer = null;
+        void triggerBotResponse(timing.engineMoveTimeMs);
+      }, timing.preDelayMs);
+    }
+    async function triggerBotResponse(engineMoveTimeMs) {
+      if (state.gameMode !== "bot" || !state.snapshot || state.snapshot.turn !== "b") {
+        return;
+      }
       if (!botAnalyzer) {
         botAnalyzer = new StockfishBridge();
       }
       const botPreset = getBotDifficultyPreset(state.botLevel);
-      const bestMoveUci = await botAnalyzer.getBotMove(chess.fen(), botPreset);
+      const bestMoveUci = await botAnalyzer.getBotMove(chess.fen(), botPreset, engineMoveTimeMs);
+      if (state.gameMode !== "bot" || !state.snapshot || state.snapshot.turn !== "b") {
+        return;
+      }
       const selectedMoveUci = chooseBotMoveByDifficulty(bestMoveUci, botPreset);
       let bMove = null;
       const attemptedMoves = selectedMoveUci === bestMoveUci ? [selectedMoveUci] : [selectedMoveUci, bestMoveUci];
@@ -30210,7 +30290,7 @@ var require_main = __commonJS({
           render();
           playSoundForSnapshot(state.snapshot);
           if (!state.snapshot.checkmate && !state.snapshot.draw) {
-            triggerBotResponse();
+            scheduleBotResponse(moveResult);
           }
         } else {
           requestBoardRefresh(true);
@@ -31729,7 +31809,7 @@ var require_main = __commonJS({
         render(true);
         playSoundForSnapshot(state.snapshot);
         if (!state.snapshot.checkmate && !state.snapshot.draw) {
-          setTimeout(() => triggerBotResponse(), 600);
+          scheduleBotResponse(playerMoveResult);
         }
       }
       if (state.snapshot?.analysis.enabled && playerMoveResult) {
@@ -31745,6 +31825,7 @@ var require_main = __commonJS({
       }
     }
     function startBotGame() {
+      clearScheduledBotResponse();
       accountSidebarController.resetFinishedGameTracking();
       const botPreset = getBotDifficultyPreset(state.botLevel);
       state.gameMode = "bot";
@@ -31956,6 +32037,7 @@ var require_main = __commonJS({
       window.history.replaceState({}, "", url2);
     }
     function clearLocalRoomState() {
+      clearScheduledBotResponse();
       if (botAnalyzer) {
         botAnalyzer.terminate();
         botAnalyzer = null;
