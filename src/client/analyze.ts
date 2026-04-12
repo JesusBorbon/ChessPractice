@@ -1168,7 +1168,7 @@ function showQualityMoveCallout(category: MoveCategory, square: Square): void {
   activeQualityCallout = null;
 
   const center = squareCenter(square);
-  const label = category === "great" ? "Great Move" : "Brilliant Move";
+  const label = category === "great" ? "GREAT" : "BRILLIANT";
   const callout = document.createElement("div");
   callout.className = `move-quality-callout move-quality-callout--${category}`;
   callout.textContent = label;
