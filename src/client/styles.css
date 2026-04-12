@@ -209,6 +209,7 @@ button {
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); 
   gap: 12px;
   margin-bottom: 16px;
+  justify-items: center;
 }
 
 .action,
@@ -231,6 +232,7 @@ button {
   color: #fffdf8;
   box-shadow: 0 12px 24px rgba(25, 63, 48, 0.18);
 }
+
 
 .ghost,
 .chip,

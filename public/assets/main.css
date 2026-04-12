@@ -718,6 +718,7 @@
   border: 1px solid rgba(0, 229, 255, 0.3);
   color: #e4e5e6;
   box-shadow: 0 12px 24px rgba(233, 237, 233, 0.15);
+  width: 50%;
 }
 .action.cta-turquoise:hover {
   background:
@@ -997,6 +998,7 @@ button {
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
+  justify-items: center;
 }
 .action,
 .ghost,
