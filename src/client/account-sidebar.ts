@@ -89,6 +89,7 @@ export function createAccountSidebarController({
   let historyLoading = false;
   let deletingGameId: string | null = null;
   let importSourceDraft = "";
+  let importComposerOpen = false;
   let importBusy = false;
 
   let savingGameSignature: string | null = null;
@@ -435,6 +436,7 @@ export function createAccountSidebarController({
       }
 
       importSourceDraft = "";
+      importComposerOpen = false;
       setSidebarOpen(false);
       openSavedGameInAnalysis(importedPgn);
     } catch (error) {
@@ -446,24 +448,51 @@ export function createAccountSidebarController({
     }
   }
 
+  function autoResizeImportInput(textarea: HTMLTextAreaElement): void {
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }
+
   function appendImportCard(): void {
-    const placeholderCard = document.createElement("article");
-    placeholderCard.className = "saved-game-import-placeholder";
+    const card = document.createElement("article");
+    card.className = "saved-game-import-placeholder";
+
+    const toggleButton = document.createElement("button");
+    toggleButton.type = "button";
+    toggleButton.className = "saved-game-import-toggle";
+
+    const toggleCopy = document.createElement("div");
+    toggleCopy.className = "saved-game-import-toggle-copy";
 
     const title = document.createElement("h3");
-    title.textContent = "Import external PGN";
+    title.textContent = "Import External PGN";
 
     const description = document.createElement("p");
     description.className = "saved-game-import-description";
-    description.textContent = "Paste a PGN or game URL (Chess.com, Lichess, or any valid source).";
+
+    const toggleIndicator = document.createElement("span");
+    toggleIndicator.className = "saved-game-import-toggle-indicator";
+    toggleIndicator.setAttribute("aria-hidden", "true");
+
+    toggleCopy.appendChild(title);
+    toggleCopy.appendChild(description);
+    toggleButton.appendChild(toggleCopy);
+    toggleButton.appendChild(toggleIndicator);
+
+    const composer = document.createElement("div");
+    composer.className = "saved-game-import-composer";
 
     const input = document.createElement("textarea");
     input.className = "saved-game-import-input";
-    input.rows = 4;
+    input.rows = 1;
     input.placeholder = "Example: https://www.chess.com/game/live/123456789 or full PGN text";
     input.value = importSourceDraft;
     input.addEventListener("input", () => {
       importSourceDraft = input.value;
+      autoResizeImportInput(input);
+      if (importComposerOpen) {
+        composer.style.maxHeight = `${composer.scrollHeight}px`;
+      }
     });
 
     const controls = document.createElement("div");
@@ -482,42 +511,90 @@ export function createAccountSidebarController({
     status.className = "saved-game-import-status";
     status.textContent = authenticatedUser
       ? "Imported games are also saved to your cloud history."
-      : "Guest imports open in analysis immediately (not saved to cloud).";
+      : "Guest imports open in analysis immediately and are not saved to cloud.";
 
-    placeholderCard.appendChild(title);
-    placeholderCard.appendChild(description);
-    placeholderCard.appendChild(input);
+    const syncImportComposerUi = (nextOpen: boolean, shouldAnimate = true): void => {
+      importComposerOpen = nextOpen;
+      toggleButton.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+      description.textContent = nextOpen
+        ? "Paste a PGN or game URL for instant analysis."
+        : "Paste a PGN or game URL from Chess.com, Lichess, or any valid source.";
+      toggleIndicator.textContent = nextOpen ? "Hide" : "Open";
+
+      if (!shouldAnimate) {
+        card.classList.toggle("expanded", nextOpen);
+        composer.style.maxHeight = nextOpen ? "none" : "0px";
+        return;
+      }
+
+      if (nextOpen) {
+        card.classList.add("expanded");
+        autoResizeImportInput(input);
+        composer.style.maxHeight = "0px";
+        requestAnimationFrame(() => {
+          composer.style.maxHeight = `${composer.scrollHeight}px`;
+        });
+        setTimeout(() => input.focus(), 160);
+        return;
+      }
+
+      if (composer.style.maxHeight === "none") {
+        composer.style.maxHeight = `${composer.scrollHeight}px`;
+      }
+
+      composer.style.maxHeight = `${composer.scrollHeight}px`;
+      requestAnimationFrame(() => {
+        card.classList.remove("expanded");
+        composer.style.maxHeight = "0px";
+      });
+    };
+
+    composer.addEventListener("transitionend", (event) => {
+      if (event.propertyName !== "max-height" || !importComposerOpen) {
+        return;
+      }
+
+      composer.style.maxHeight = "none";
+    });
+
     controls.appendChild(importButton);
-    placeholderCard.appendChild(controls);
-    placeholderCard.appendChild(status);
-    refs.savedGamesList.appendChild(placeholderCard);
+    composer.appendChild(input);
+    composer.appendChild(controls);
+    composer.appendChild(status);
+
+    card.appendChild(toggleButton);
+    card.appendChild(composer);
+    refs.savedGamesList.appendChild(card);
+
+    syncImportComposerUi(importComposerOpen, false);
+
+    toggleButton.addEventListener("click", () => {
+      syncImportComposerUi(!importComposerOpen);
+    });
   }
 
   function renderSavedHistoryPanel(): void {
     refs.savedGamesList.innerHTML = "";
+    appendImportCard();
 
     if (!authenticatedUser) {
       refs.historyPanelStatus.textContent = "Sign in to view cloud history. You can still import a PGN for analysis.";
-      appendImportCard();
       return;
     }
 
     if (!isFirebaseAuthEnabled()) {
       refs.historyPanelStatus.textContent = "Firebase is unavailable right now.";
-      appendImportCard();
       return;
     }
 
     if (historyLoading) {
       refs.historyPanelStatus.textContent = "Loading saved games...";
-      appendImportCard();
       return;
     }
 
     const sortedGames = getSortedSavedGameHistory();
     if (sortedGames.length === 0) {
       refs.historyPanelStatus.textContent = "No saved games yet. Finished games are saved automatically.";
-      appendImportCard();
       return;
     }
 
@@ -594,8 +671,6 @@ export function createAccountSidebarController({
 
       refs.savedGamesList.appendChild(item);
     });
-
-    appendImportCard();
   }
 
   async function refreshSavedHistoryPanel(): Promise<void> {
