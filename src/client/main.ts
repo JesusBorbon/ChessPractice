@@ -130,6 +130,7 @@ type AppState = {
   bloodFxEnabled: boolean;
   gameMode: "multiplayer" | "bot";
   botLevel: number;
+  botPickerOpen: boolean;
   viewCursor: number | null;
   trailFxEnabled: boolean; 
   legalMovesEnabled: boolean;
@@ -154,16 +155,16 @@ type BotDifficultyPreset = {
 };
 
 const BOT_DIFFICULTY_PRESETS: BotDifficultyPreset[] = [
-  { level: 1, label: "Level 1 - 800 Elo", elo: 800, skillLevel: 2, moveTimeMs: 360, fullStrength: false },
-  { level: 2, label: "Level 2 - 1000 Elo", elo: 1000, skillLevel: 4, moveTimeMs: 440, fullStrength: false },
-  { level: 3, label: "Level 3 - 1200 Elo", elo: 1200, skillLevel: 6, moveTimeMs: 560, fullStrength: false },
-  { level: 4, label: "Level 4 - 1400 Elo", elo: 1400, skillLevel: 8, moveTimeMs: 700, fullStrength: false },
-  { level: 5, label: "Level 5 - 1600 Elo", elo: 1600, skillLevel: 10, moveTimeMs: 860, fullStrength: false },
-  { level: 6, label: "Level 6 - 1800 Elo", elo: 1800, skillLevel: 12, moveTimeMs: 1040, fullStrength: false },
-  { level: 7, label: "Level 7 - 2000 Elo", elo: 2000, skillLevel: 14, moveTimeMs: 1260, fullStrength: false },
-  { level: 8, label: "Level 8 - 2200 Elo", elo: 2200, skillLevel: 16, moveTimeMs: 1520, fullStrength: false },
-  { level: 9, label: "Level 9 - 2400 Elo", elo: 2400, skillLevel: 18, moveTimeMs: 1840, fullStrength: false },
-  { level: 10, label: "Level 10 - Max", elo: null, skillLevel: 20, moveTimeMs: 2400, fullStrength: true },
+  { level: 1, label: "Level 1 - 800 Elo", elo: 800, skillLevel: 0, moveTimeMs: 90, fullStrength: false },
+  { level: 2, label: "Level 2 - 1000 Elo", elo: 1000, skillLevel: 2, moveTimeMs: 120, fullStrength: false },
+  { level: 3, label: "Level 3 - 1200 Elo", elo: 1200, skillLevel: 4, moveTimeMs: 170, fullStrength: false },
+  { level: 4, label: "Level 4 - 1400 Elo", elo: 1400, skillLevel: 6, moveTimeMs: 240, fullStrength: false },
+  { level: 5, label: "Level 5 - 1600 Elo", elo: 1600, skillLevel: 8, moveTimeMs: 330, fullStrength: false },
+  { level: 6, label: "Level 6 - 1800 Elo", elo: 1800, skillLevel: 10, moveTimeMs: 460, fullStrength: false },
+  { level: 7, label: "Level 7 - 2000 Elo", elo: 2000, skillLevel: 12, moveTimeMs: 620, fullStrength: false },
+  { level: 8, label: "Level 8 - 2200 Elo", elo: 2200, skillLevel: 14, moveTimeMs: 820, fullStrength: false },
+  { level: 9, label: "Level 9 - 2400 Elo", elo: 2400, skillLevel: 17, moveTimeMs: 1100, fullStrength: false },
+  { level: 10, label: "Level 10 - Full Strength", elo: null, skillLevel: 20, moveTimeMs: 2200, fullStrength: true },
 ];
 
 function clampBotLevel(level: number): number {
@@ -182,6 +183,71 @@ function botDifficultySummary(preset: BotDifficultyPreset): string {
   return preset.fullStrength
     ? `Level ${preset.level} Max`
     : `Level ${preset.level} ${preset.elo} Elo`;
+}
+
+function moveToUci(move: Move): string {
+  return `${move.from}${move.to}${move.promotion ?? ""}`;
+}
+
+function pickRandomMove(moves: Move[]): Move {
+  return moves[Math.floor(Math.random() * moves.length)]!;
+}
+
+function scoreMoveForHumanizedBot(move: Move): number {
+  const capturedValue = move.captured ? (PIECE_VALUES[move.captured] ?? 0) : 0;
+  const moverValue = PIECE_VALUES[move.piece] ?? 0;
+  const file = move.to.charCodeAt(0) - 97;
+  const rank = Number(move.to[1]) - 1;
+  const centrality = Math.max(0, 3.5 - (Math.abs(file - 3.5) + Math.abs(rank - 3.5)) / 2);
+
+  let score = 0;
+  score += capturedValue - moverValue * 0.15;
+  score += centrality * 12;
+  if (move.promotion) score += 900;
+  if (move.san.includes("+")) score += 85;
+  if (move.flags.includes("k") || move.flags.includes("q")) score += 40;
+
+  return score;
+}
+
+function chooseBotMoveByDifficulty(bestMoveUci: string, preset: BotDifficultyPreset): string {
+  if (preset.fullStrength || preset.level >= 10) {
+    return bestMoveUci;
+  }
+
+  const legalMoves = chess.moves({ verbose: true });
+  if (legalMoves.length <= 1) {
+    return bestMoveUci;
+  }
+
+  const bestMove = bestMoveUci.trim();
+  const alternatives = legalMoves.filter((move) => moveToUci(move) !== bestMove);
+  if (alternatives.length === 0) {
+    return bestMoveUci;
+  }
+
+  const levelGap = 10 - preset.level;
+  const blunderChance = Math.max(0, (levelGap - 1) * 0.03);
+  const inaccuracyChance = Math.max(0, levelGap * 0.045);
+  const roll = Math.random();
+
+  if (roll < blunderChance) {
+    const sorted = [...alternatives].sort((a, b) => scoreMoveForHumanizedBot(a) - scoreMoveForHumanizedBot(b));
+    const worstSlice = sorted.slice(0, Math.max(1, Math.floor(sorted.length / 3)));
+    return moveToUci(pickRandomMove(worstSlice));
+  }
+
+  if (roll < blunderChance + inaccuracyChance) {
+    const sorted = [...alternatives].sort((a, b) => scoreMoveForHumanizedBot(a) - scoreMoveForHumanizedBot(b));
+    const start = Math.floor(sorted.length * 0.2);
+    const end = Math.max(start + 1, Math.floor(sorted.length * 0.7));
+    const candidateSlice = sorted.slice(start, end);
+    if (candidateSlice.length > 0) {
+      return moveToUci(pickRandomMove(candidateSlice));
+    }
+  }
+
+  return bestMoveUci;
 }
 
 const PIECES: Record<`${PlayerRole}${PieceSymbol}`, string> = {
@@ -235,6 +301,7 @@ const state: AppState = {
   bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on",
   gameMode: "multiplayer",
   botLevel: savedBotLevel,
+  botPickerOpen: false,
   viewCursor: null,
   trailFxEnabled: localStorage.getItem("chess-trail-fx") === "on",
   legalMovesEnabled: localStorage.getItem("chess-legal-moves") !== "off",
@@ -260,6 +327,8 @@ let animatingToSquare: Square | null = null;
 let lastRoomStateReceivedAtMs = Date.now();
 let lastLiveQualityCalloutKey: string | null = null;
 let activeLiveQualityCallout: HTMLDivElement | null = null;
+let botPickerHideTimer: number | null = null;
+let botPickerLockedScrollY: number | null = null;
 
 const SMOOTH_MOVE_DURATION_MS = 620;
 const EPIC_MOVE_DURATION_MS = {
@@ -662,12 +731,6 @@ app.innerHTML = `
         <div class="board-toolbar">
           <button class="action cta-turquoise" id="createRoomButton" type="button">Create room</button>
           <button class="action cta-rainbow" id="playBotButton" type="button">Play vs Bot (${botDifficultySummary(getBotDifficultyPreset(savedBotLevel))})</button>
-          <div class="bot-difficulty-picker" id="botDifficultyPicker">
-            <label class="bot-difficulty-label" for="botDifficultySelect">Bot level</label>
-            <select id="botDifficultySelect" class="bot-difficulty-select" aria-label="Choose bot difficulty">
-              ${BOT_DIFFICULTY_PRESETS.map((preset) => `<option value="${preset.level}">${preset.label}</option>`).join("")}
-            </select>
-          </div>
           <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
           <button class="ghost" id="undoRequestButton" type="button" hidden>Request undo</button>
           <button class="ghost" id="undoDeclineButton" type="button" hidden>Decline undo</button>
@@ -797,6 +860,22 @@ app.innerHTML = `
     </main>
   </div>
 
+  <div class="bot-difficulty-overlay" id="botDifficultyOverlay" aria-hidden="true" hidden>
+    <div class="bot-difficulty-backdrop" id="botDifficultyBackdrop" aria-hidden="true"></div>
+    <div class="bot-difficulty-picker" id="botDifficultyPicker" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="botDifficultyTitle">
+      <h2 class="bot-difficulty-title" id="botDifficultyTitle">Choose Bot Strength</h2>
+      <p class="bot-difficulty-subtitle">Pick a level and start your match with a single tap.</p>
+      <label class="bot-difficulty-label" for="botDifficultySelect">Bot level</label>
+      <div class="bot-difficulty-select-wrap">
+        <select id="botDifficultySelect" class="bot-difficulty-select" aria-label="Choose bot difficulty">
+          ${BOT_DIFFICULTY_PRESETS.map((preset) => `<option value="${preset.level}">${preset.label}</option>`).join("")}
+        </select>
+        <span class="bot-difficulty-select-chevron" aria-hidden="true">▾</span>
+      </div>
+      <button class="chip bot-difficulty-start" id="startBotGameButton" type="button">Start Match</button>
+    </div>
+  </div>
+
   <div class="focus-hud" id="focusHud" hidden>
     <span class="focus-chip" id="focusTimer">00:00</span>
 
@@ -882,8 +961,11 @@ const focusTimer = must<HTMLSpanElement>("#focusTimer");
 const focusModeButton = must<HTMLButtonElement>("#focusModeBtn");
 const focusMaterialHud = must<HTMLDivElement>("#focusMaterialHud");
 const playBotButton = must<HTMLButtonElement>("#playBotButton");
+const botDifficultyOverlay = must<HTMLDivElement>("#botDifficultyOverlay");
 const botDifficultyPicker = must<HTMLDivElement>("#botDifficultyPicker");
+const botDifficultyBackdrop = must<HTMLDivElement>("#botDifficultyBackdrop");
 const botDifficultySelect = must<HTMLSelectElement>("#botDifficultySelect");
+const startBotGameButton = must<HTMLButtonElement>("#startBotGameButton");
 const confirmDialog = must<HTMLElement>("#confirmDialog");
 const confirmYesBtn = must<HTMLButtonElement>("#confirmYesBtn");
 const confirmNoBtn = must<HTMLButtonElement>("#confirmNoBtn");
@@ -1080,8 +1162,92 @@ window.addEventListener("beforeunload", () => {
 
 function refreshBotDifficultyUi(): void {
   const preset = getBotDifficultyPreset(state.botLevel);
-  playBotButton.textContent = `Play vs Bot (${botDifficultySummary(preset)})`;
+  playBotButton.textContent = state.botPickerOpen
+    ? "Choose Bot Strength"
+    : `Play vs Bot (${botDifficultySummary(preset)})`;
+  playBotButton.classList.toggle("is-active", state.botPickerOpen);
   botDifficultySelect.value = String(preset.level);
+
+  if (state.botPickerOpen) {
+    botDifficultyOverlay.hidden = false;
+    if (botPickerHideTimer !== null) {
+      window.clearTimeout(botPickerHideTimer);
+      botPickerHideTimer = null;
+    }
+  } else if (botPickerHideTimer === null) {
+    botPickerHideTimer = window.setTimeout(() => {
+      if (!state.botPickerOpen) {
+        botDifficultyOverlay.hidden = true;
+      }
+      botPickerHideTimer = null;
+    }, 430);
+  }
+
+  botDifficultyOverlay.classList.toggle("is-open", state.botPickerOpen);
+  botDifficultyOverlay.setAttribute("aria-hidden", String(!state.botPickerOpen));
+  botDifficultyPicker.classList.toggle("is-open", state.botPickerOpen);
+  botDifficultyPicker.setAttribute("aria-hidden", String(!state.botPickerOpen));
+  botDifficultyBackdrop.classList.toggle("is-open", state.botPickerOpen);
+  botDifficultyBackdrop.setAttribute("aria-hidden", String(!state.botPickerOpen));
+  document.body.classList.toggle("bot-picker-open", state.botPickerOpen);
+  syncBotPickerScrollLock(state.botPickerOpen);
+}
+
+function isBotPickerMobileViewport(): boolean {
+  return window.matchMedia("(max-width: 900px)").matches;
+}
+
+function syncBotPickerScrollLock(shouldLock: boolean): void {
+  if (shouldLock && isBotPickerMobileViewport()) {
+    if (botPickerLockedScrollY !== null) {
+      return;
+    }
+
+    botPickerLockedScrollY = window.scrollY;
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${botPickerLockedScrollY}px`;
+    document.body.style.left = "0";
+    document.body.style.right = "0";
+    document.body.style.width = "100%";
+    return;
+  }
+
+  if (botPickerLockedScrollY === null) {
+    return;
+  }
+
+  const restoreY = botPickerLockedScrollY;
+  botPickerLockedScrollY = null;
+  document.body.style.position = "";
+  document.body.style.top = "";
+  document.body.style.left = "";
+  document.body.style.right = "";
+  document.body.style.width = "";
+  window.scrollTo(0, restoreY);
+}
+
+function openBotDifficultyPicker(): void {
+  botDifficultyOverlay.hidden = false;
+  state.botPickerOpen = true;
+  refreshBotDifficultyUi();
+  window.requestAnimationFrame(() => botDifficultySelect.focus());
+}
+
+function closeBotDifficultyPicker(): void {
+  if (!state.botPickerOpen) {
+    return;
+  }
+  state.botPickerOpen = false;
+  refreshBotDifficultyUi();
+}
+
+function startBotGameWithSelection(): void {
+  closeBotDifficultyPicker();
+  if (state.roomId && state.gameMode === "multiplayer") {
+    toggleConfirmModal(true, "bot");
+  } else {
+    startBotGame();
+  }
 }
 
 botDifficultySelect.addEventListener("change", () => {
@@ -1098,20 +1264,50 @@ botDifficultySelect.addEventListener("change", () => {
 refreshBotDifficultyUi();
 
 playBotButton.addEventListener("click", () => {
-  if (state.roomId && state.gameMode === "multiplayer") {
-    toggleConfirmModal(true, "bot");
+  if (state.botPickerOpen) {
+    closeBotDifficultyPicker();
   } else {
-    startBotGame();
+    openBotDifficultyPicker();
   }
 });
 
+startBotGameButton.addEventListener("click", () => {
+  startBotGameWithSelection();
+});
+
+window.addEventListener("pointerdown", (event) => {
+  if (!state.botPickerOpen) {
+    return;
+  }
+
+  const target = event.target as Node | null;
+  if (target && (botDifficultyPicker.contains(target) || playBotButton.contains(target))) {
+    return;
+  }
+
+  closeBotDifficultyPicker();
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !state.botPickerOpen) {
+    return;
+  }
+  closeBotDifficultyPicker();
+});
+
+window.addEventListener("resize", () => {
+  syncBotPickerScrollLock(state.botPickerOpen);
+});
+
 createRoomButton.addEventListener("click", () => {
+  closeBotDifficultyPicker();
   state.gameMode = "multiplayer"; // forcing the mode to multiplayer to avoid "ghost bot" bugs when switching from bot games
   socket.emit("room:create");
   scrollToInviteJoinCardOnMobile();
 });
 
 joinRoomButton.addEventListener("click", () => {
+  closeBotDifficultyPicker();
   const code = roomInput.value.trim();
   if (!code) {
     showToast("Enter a room code first.");
@@ -1635,12 +1831,29 @@ async function triggerBotResponse() {
   }
 
   const botPreset = getBotDifficultyPreset(state.botLevel);
-  const botMoveUci = await botAnalyzer.getBotMove(chess.fen(), botPreset);
-  const bFrom = botMoveUci.substring(0, 2) as Square;
-  const bTo = botMoveUci.substring(2, 4) as Square;
-  const bPromo = botMoveUci.length === 5 ? botMoveUci[4] as any : "q";
+  const bestMoveUci = await botAnalyzer.getBotMove(chess.fen(), botPreset);
+  const selectedMoveUci = chooseBotMoveByDifficulty(bestMoveUci, botPreset);
 
-  const bMove = chess.move({ from: bFrom, to: bTo, promotion: bPromo });
+  let bMove: Move | null = null;
+  const attemptedMoves = selectedMoveUci === bestMoveUci
+    ? [selectedMoveUci]
+    : [selectedMoveUci, bestMoveUci];
+
+  for (const moveUci of attemptedMoves) {
+    const bFrom = moveUci.substring(0, 2) as Square;
+    const bTo = moveUci.substring(2, 4) as Square;
+    const bPromo = moveUci.length === 5 ? moveUci[4] as any : "q";
+
+    try {
+      bMove = chess.move({ from: bFrom, to: bTo, promotion: bPromo });
+    } catch {
+      bMove = null;
+    }
+
+    if (bMove) {
+      break;
+    }
+  }
   
   if (bMove && state.snapshot) {
     updateManualSnapshot(bMove);
@@ -1986,6 +2199,10 @@ function renderSession(): void {
     (isMultiplayer && bothConnected && snapshot?.isStarted) || 
     (state.gameMode === "bot" && snapshot !== null)
   );
+
+  if (isGameActive && state.botPickerOpen) {
+    closeBotDifficultyPicker();
+  }
   
   const canVote = state.role === "w" || state.role === "b";
   const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
@@ -2005,7 +2222,7 @@ function renderSession(): void {
   inviteJoinCard.hidden = isGameActive;
   createRoomButton.hidden = isGameActive;
   playBotButton.hidden = isGameActive;
-  botDifficultyPicker.hidden = isGameActive;
+  botDifficultyOverlay.hidden = isGameActive;
 
   leaveRoomButton.hidden = !hasRoom;
   // Join controls are main-menu only to avoid room-switch conflicts while already in a room.

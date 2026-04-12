@@ -3990,11 +3990,14 @@ var require_analyze = __commonJS({
     var lastQualityCalloutCursor = -1;
     var activeQualityCallout = null;
     var analysisSummaryAcknowledged = false;
+    var summaryDragPointer = null;
+    var analysisSummaryLockedScrollY = null;
     var focusMode = false;
     var legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
     var animationStyle = localStorage.getItem("chess-animation-style") || "smooth";
     var bloodFxEnabled = localStorage.getItem("chess-blood-fx") === "on";
     var lastCheckFlashKey = null;
+    var SUMMARY_DRAG_CONTINUE_THRESHOLD_PX = 8;
     var SMOOTH_MOVE_DURATION_MS = 620;
     var EPIC_MOVE_DURATION_MS = {
       smash: 860,
@@ -4150,11 +4153,42 @@ var require_analyze = __commonJS({
     analysisLoadingOverlay.addEventListener("touchmove", (event) => {
       event.preventDefault();
     }, { passive: false });
+    analysisSummaryOverlay.addEventListener("wheel", (event) => {
+      event.preventDefault();
+    }, { passive: false });
+    analysisSummaryOverlay.addEventListener("touchmove", (event) => {
+      event.preventDefault();
+    }, { passive: false });
     analysisSummaryOverlay.addEventListener("click", () => {
       hideAnalysisSummaryOverlay(true);
     });
+    analysisSummaryOverlay.addEventListener("pointerdown", (event) => {
+      if (analysisSummaryOverlay.hidden) {
+        return;
+      }
+      summaryDragPointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    });
+    analysisSummaryOverlay.addEventListener("pointermove", (event) => {
+      if (!summaryDragPointer || summaryDragPointer.id !== event.pointerId || analysisSummaryOverlay.hidden) {
+        return;
+      }
+      const dragDistance = Math.hypot(event.clientX - summaryDragPointer.x, event.clientY - summaryDragPointer.y);
+      if (dragDistance < SUMMARY_DRAG_CONTINUE_THRESHOLD_PX) {
+        return;
+      }
+      event.preventDefault();
+      summaryDragPointer = null;
+      hideAnalysisSummaryOverlay(true);
+    });
+    analysisSummaryOverlay.addEventListener("pointerup", () => {
+      summaryDragPointer = null;
+    });
+    analysisSummaryOverlay.addEventListener("pointercancel", () => {
+      summaryDragPointer = null;
+    });
     analysisSummaryContinue.addEventListener("click", (event) => {
       event.preventDefault();
+      event.stopPropagation();
       hideAnalysisSummaryOverlay(true);
     });
     function resetBoardStateToStart() {
@@ -4792,10 +4826,37 @@ var require_analyze = __commonJS({
       analysisLoadingOverlay.hidden = !fullAnalysisInProgress;
       document.body.classList.toggle("analysis-loading-active", fullAnalysisInProgress);
     }
+    function syncAnalysisSummaryScrollLock(shouldLock) {
+      if (shouldLock) {
+        if (analysisSummaryLockedScrollY !== null) {
+          return;
+        }
+        analysisSummaryLockedScrollY = window.scrollY;
+        document.body.style.position = "fixed";
+        document.body.style.top = `-${analysisSummaryLockedScrollY}px`;
+        document.body.style.left = "0";
+        document.body.style.right = "0";
+        document.body.style.width = "100%";
+        return;
+      }
+      if (analysisSummaryLockedScrollY === null) {
+        return;
+      }
+      const restoreY = analysisSummaryLockedScrollY;
+      analysisSummaryLockedScrollY = null;
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.left = "";
+      document.body.style.right = "";
+      document.body.style.width = "";
+      window.scrollTo(0, restoreY);
+    }
     function hideAnalysisSummaryOverlay(acknowledged = false) {
       analysisSummaryAcknowledged = acknowledged;
+      summaryDragPointer = null;
       analysisSummaryOverlay.hidden = true;
       document.body.classList.remove("analysis-summary-active");
+      syncAnalysisSummaryScrollLock(false);
       renderSide();
     }
     function showAnalysisSummaryOverlay(summary) {
@@ -4819,6 +4880,7 @@ var require_analyze = __commonJS({
       }
       analysisSummaryOverlay.hidden = false;
       document.body.classList.add("analysis-summary-active");
+      syncAnalysisSummaryScrollLock(true);
     }
     function stopActiveMoveAnimation() {
       if (activeGhostAnimation) {

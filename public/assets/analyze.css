@@ -78,9 +78,13 @@ body.analysis-loading-active .piece {
   padding: 20px;
   background: rgba(9, 14, 13, 0.46);
   backdrop-filter: blur(6px);
+  touch-action: none;
+  overscroll-behavior: none;
 }
 body.analysis-summary-active {
   overflow: hidden;
+  touch-action: none;
+  overscroll-behavior: none;
 }
 .analysis-summary-card {
   width: min(560px, 100%);
