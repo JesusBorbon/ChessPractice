@@ -2736,7 +2736,8 @@ body.focus-mode.focus-analyze .nav-row button:hover {
   background: rgba(25, 35, 32, 0.05);
   padding: 8px 14px;
   border-radius: 12px;
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
 }
 .captures-label {
   font-size: 0.75rem;
@@ -2749,12 +2750,16 @@ body.focus-mode.focus-analyze .nav-row button:hover {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 2px;
+  row-gap: 4px;
 }
 .captured-icon {
   width: 20px;
   height: 20px;
-  margin-right: -8px;
+  flex: 0 0 auto;
+  margin-right: -6px;
   filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.3));
   position: relative;
 }
@@ -2765,6 +2770,7 @@ body.focus-mode.focus-analyze .nav-row button:hover {
   font-size: 1rem;
   font-weight: 800;
   margin-left: auto;
+  white-space: nowrap;
 }
 .material-score.plus {
   color: var(--accent);
@@ -2777,6 +2783,15 @@ body.focus-mode.focus-analyze .nav-row button:hover {
     flex-direction: column;
     align-items: stretch;
     gap: 8px;
+  }
+  .captures-row {
+    padding: 8px 10px;
+  }
+  .captures-icons {
+    gap: 4px;
+  }
+  .captured-icon {
+    margin-right: 0;
   }
 }
 .focus-capture-row {
@@ -2838,7 +2853,8 @@ body.focus-mode.focus-analyze .nav-row button:hover {
 }
 @media (max-width: 640px) {
   body.focus-mode .focus-hud {
-    top: max(16px, env(safe-area-inset-top)) !important;
+    position: absolute !important;
+    top: 0 !important;
     left: 50% !important;
     right: auto !important;
     bottom: auto !important;
@@ -2847,6 +2863,7 @@ body.focus-mode.focus-analyze .nav-row button:hover {
     gap: 10px !important;
     border-radius: 24px !important;
     width: max-content !important;
+    z-index: 1000 !important;
   }
 }
 @media (min-width: 641px) {
@@ -2857,11 +2874,6 @@ body.focus-mode.focus-analyze .nav-row button:hover {
     left: 28px !important;
     flex-direction: row !important;
     gap: 16px !important;
-  }
-}
-@media (max-width: 640px) {
-  body.focus-mode .focus-hud {
-    top: -150px !important;
   }
 }
 @media (min-width: 641px) {

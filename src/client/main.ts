@@ -1527,11 +1527,8 @@ async function triggerBotResponse() {
       checkAndExecutePremove(); 
     }
 
-    requestBoardRefresh(true); 
-
-    if (state.snapshot.analysis.enabled) {
-      void maybeRunLiveAnalysis(state.snapshot);
-    }
+    // Keep board, moves, and material captures in sync on all devices.
+    render(true);
   }
 }
 promotionDialog.addEventListener("click", (event) => {

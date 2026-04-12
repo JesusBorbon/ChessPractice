@@ -29910,10 +29910,7 @@ var require_main = __commonJS({
         if (state.premoves.length > 0) {
           checkAndExecutePremove();
         }
-        requestBoardRefresh(true);
-        if (state.snapshot.analysis.enabled) {
-          void maybeRunLiveAnalysis(state.snapshot);
-        }
+        render(true);
       }
     }
     promotionDialog.addEventListener("click", (event) => {
