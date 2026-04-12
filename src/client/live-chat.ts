@@ -87,6 +87,15 @@ export type VoiceChatController = {
 };
 
 const MAX_RECORDING_MS = 20_000;
+const RECORDER_AUDIO_BITS_PER_SECOND = 96_000;
+const AUDIO_CAPTURE_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  channelCount: 1,
+  sampleRate: 48_000,
+  sampleSize: 16,
+};
 
 export function createVoiceChatController({ socket, refs, showToast }: CreateVoiceChatControllerOptions): VoiceChatController {
   let roomId: string | null = null;
@@ -377,7 +386,7 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
     const mediaDevices = navigator.mediaDevices;
     if (mediaDevices?.getUserMedia) {
       try {
-        recorderStream = await mediaDevices.getUserMedia({ audio: true });
+        recorderStream = await mediaDevices.getUserMedia({ audio: AUDIO_CAPTURE_CONSTRAINTS });
         return recorderStream;
       } catch (error) {
         const isInsecureContext = typeof window !== "undefined" && !window.isSecureContext;
@@ -417,7 +426,7 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
       recorderStream = await new Promise<MediaStream>((resolve, reject) => {
         legacyGetUserMedia.call(
           navigator,
-          { audio: true },
+          { audio: AUDIO_CAPTURE_CONSTRAINTS },
           (stream) => resolve(stream),
           (error) => reject(error),
         );
@@ -456,18 +465,29 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
     recorderChunks = [];
     recorderMimeType = chooseRecorderMimeType();
 
-    try {
-      recorder = new MediaRecorder(stream, { mimeType: recorderMimeType });
-    } catch {
+    const recorderOptionsCandidates: MediaRecorderOptions[] = [
+      { mimeType: recorderMimeType, audioBitsPerSecond: RECORDER_AUDIO_BITS_PER_SECOND },
+      { mimeType: recorderMimeType },
+      { audioBitsPerSecond: RECORDER_AUDIO_BITS_PER_SECOND },
+      {},
+    ];
+
+    recorder = null;
+    for (const options of recorderOptionsCandidates) {
       try {
-        recorder = new MediaRecorder(stream);
-        recorderMimeType = recorder.mimeType || "audio/webm";
+        recorder = new MediaRecorder(stream, options);
+        break;
       } catch {
-        recorder = null;
-        showToast("Could not initialize voice recording.");
-        return;
+        // Try next options fallback.
       }
     }
+
+    if (!recorder) {
+      showToast("Could not initialize voice recording.");
+      return;
+    }
+
+    recorderMimeType = recorder.mimeType || recorderMimeType || "audio/webm";
 
     recorder.ondataavailable = (event: BlobEvent) => {
       if (event.data && event.data.size > 0) {

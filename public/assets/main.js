@@ -28815,7 +28815,7 @@ function createVoiceChatController({ socket, refs, showToast }) {
     const mediaDevices = navigator.mediaDevices;
     if (mediaDevices?.getUserMedia) {
       try {
-        recorderStream = await mediaDevices.getUserMedia({ audio: true });
+        recorderStream = await mediaDevices.getUserMedia({ audio: AUDIO_CAPTURE_CONSTRAINTS });
         return recorderStream;
       } catch (error) {
         const isInsecureContext = typeof window !== "undefined" && !window.isSecureContext;
@@ -28845,7 +28845,7 @@ function createVoiceChatController({ socket, refs, showToast }) {
       recorderStream = await new Promise((resolve, reject) => {
         legacyGetUserMedia.call(
           navigator,
-          { audio: true },
+          { audio: AUDIO_CAPTURE_CONSTRAINTS },
           (stream) => resolve(stream),
           (error) => reject(error)
         );
@@ -28877,18 +28877,25 @@ function createVoiceChatController({ socket, refs, showToast }) {
     }
     recorderChunks = [];
     recorderMimeType = chooseRecorderMimeType();
-    try {
-      recorder = new MediaRecorder(stream, { mimeType: recorderMimeType });
-    } catch {
+    const recorderOptionsCandidates = [
+      { mimeType: recorderMimeType, audioBitsPerSecond: RECORDER_AUDIO_BITS_PER_SECOND },
+      { mimeType: recorderMimeType },
+      { audioBitsPerSecond: RECORDER_AUDIO_BITS_PER_SECOND },
+      {}
+    ];
+    recorder = null;
+    for (const options of recorderOptionsCandidates) {
       try {
-        recorder = new MediaRecorder(stream);
-        recorderMimeType = recorder.mimeType || "audio/webm";
+        recorder = new MediaRecorder(stream, options);
+        break;
       } catch {
-        recorder = null;
-        showToast("Could not initialize voice recording.");
-        return;
       }
     }
+    if (!recorder) {
+      showToast("Could not initialize voice recording.");
+      return;
+    }
+    recorderMimeType = recorder.mimeType || recorderMimeType || "audio/webm";
     recorder.ondataavailable = (event) => {
       if (event.data && event.data.size > 0) {
         recorderChunks.push(event.data);
@@ -29136,11 +29143,20 @@ function createVoiceChatController({ socket, refs, showToast }) {
     dispose
   };
 }
-var MAX_RECORDING_MS;
+var MAX_RECORDING_MS, RECORDER_AUDIO_BITS_PER_SECOND, AUDIO_CAPTURE_CONSTRAINTS;
 var init_live_chat = __esm({
   "src/client/live-chat.ts"() {
     "use strict";
     MAX_RECORDING_MS = 2e4;
+    RECORDER_AUDIO_BITS_PER_SECOND = 96e3;
+    AUDIO_CAPTURE_CONSTRAINTS = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      channelCount: 1,
+      sampleRate: 48e3,
+      sampleSize: 16
+    };
   }
 });
 
