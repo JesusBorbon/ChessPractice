@@ -28591,6 +28591,7 @@ function createVoiceChatController({ socket, refs, showToast }) {
   let chatPanelOpen = false;
   let unreadCount = 0;
   let lastSyncKey = null;
+  let lastRenderedMessagesKey = null;
   let chatState = {
     wAcceptsB: false,
     bAcceptsW: false,
@@ -28758,6 +28759,7 @@ function createVoiceChatController({ socket, refs, showToast }) {
     chatPanelOpen = false;
     unreadCount = 0;
     lastSyncKey = null;
+    lastRenderedMessagesKey = null;
     messages = [];
     readMessageIds.clear();
     refs.chatInput.value = "";
@@ -28810,12 +28812,44 @@ function createVoiceChatController({ socket, refs, showToast }) {
     if (recorderStream && recorderStream.active) {
       return recorderStream;
     }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      showToast("Your browser does not support microphone capture.");
+    const mediaDevices = navigator.mediaDevices;
+    if (mediaDevices?.getUserMedia) {
+      try {
+        recorderStream = await mediaDevices.getUserMedia({ audio: true });
+        return recorderStream;
+      } catch (error) {
+        const isInsecureContext = typeof window !== "undefined" && !window.isSecureContext;
+        if (isInsecureContext) {
+          showToast("Microphone capture requires HTTPS (or localhost).");
+          return null;
+        }
+        const name4 = error instanceof DOMException ? error.name : "";
+        if (name4 === "NotAllowedError" || name4 === "SecurityError") {
+          showToast("Microphone permission was denied.");
+          return null;
+        }
+        showToast("Could not access microphone input.");
+        return null;
+      }
+    }
+    const legacyNavigator = navigator;
+    const legacyGetUserMedia = legacyNavigator.webkitGetUserMedia ?? legacyNavigator.mozGetUserMedia ?? legacyNavigator.msGetUserMedia;
+    if (!legacyGetUserMedia) {
+      const isInsecureContext = typeof window !== "undefined" && !window.isSecureContext;
+      showToast(
+        isInsecureContext ? "Microphone capture requires HTTPS (or localhost)." : "Your browser does not support microphone capture."
+      );
       return null;
     }
     try {
-      recorderStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recorderStream = await new Promise((resolve, reject) => {
+        legacyGetUserMedia.call(
+          navigator,
+          { audio: true },
+          (stream) => resolve(stream),
+          (error) => reject(error)
+        );
+      });
       return recorderStream;
     } catch {
       showToast("Microphone permission was denied.");
@@ -28893,6 +28927,8 @@ function createVoiceChatController({ socket, refs, showToast }) {
   async function finalizeRecording() {
     const activeRecorder = recorder;
     const durationMs = Math.round(performance.now() - recordingStartedAt);
+    const chunks = recorderChunks.slice();
+    const mimeType = activeRecorder?.mimeType || recorderMimeType || "audio/webm";
     recorder = null;
     resetRecordingState();
     if (!activeRecorder || !canUseChat() || !chatState.mutualConsent) {
@@ -28901,8 +28937,8 @@ function createVoiceChatController({ socket, refs, showToast }) {
     if (durationMs < 250) {
       return;
     }
-    const blob = new Blob(recorderChunks, {
-      type: activeRecorder.mimeType || recorderMimeType || "audio/webm"
+    const blob = new Blob(chunks, {
+      type: mimeType
     });
     if (blob.size < 600) {
       return;
@@ -28947,8 +28983,18 @@ function createVoiceChatController({ socket, refs, showToast }) {
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
   }
   function renderMessages() {
+    const messagesRenderKey = `${role ?? "spectator"}:${messages.map((message) => message.id).join("|")}`;
+    if (messagesRenderKey === lastRenderedMessagesKey) {
+      return;
+    }
+    const previousScrollTop = refs.chatMessages.scrollTop;
+    const previousClientHeight = refs.chatMessages.clientHeight;
+    const previousScrollHeight = refs.chatMessages.scrollHeight;
+    const wasNearBottom = previousScrollHeight - (previousScrollTop + previousClientHeight) <= 28;
     if (messages.length === 0) {
       refs.chatMessages.innerHTML = '<div class="empty-state">No messages yet.</div>';
+      refs.chatMessages.scrollTop = 0;
+      lastRenderedMessagesKey = messagesRenderKey;
       return;
     }
     refs.chatMessages.innerHTML = messages.map((message) => {
@@ -28968,11 +29014,19 @@ function createVoiceChatController({ socket, refs, showToast }) {
       return `
         <article class="${bubbleClass}">
           <header class="chat-bubble-meta">${sender} \u2022 ${time} \u2022 ${formatDuration(message.durationMs)}</header>
-          <audio controls preload="none" src="${src}"></audio>
+          <audio controls preload="none">
+            <source src="${src}" type="${message.mimeType}" />
+            Your browser cannot play this voice note format.
+          </audio>
         </article>
       `;
     }).join("");
-    refs.chatMessages.scrollTop = refs.chatMessages.scrollHeight;
+    if (wasNearBottom) {
+      refs.chatMessages.scrollTop = refs.chatMessages.scrollHeight;
+    } else {
+      refs.chatMessages.scrollTop = previousScrollTop;
+    }
+    lastRenderedMessagesKey = messagesRenderKey;
   }
   function renderStatus() {
     if (!canUseChat()) {
@@ -29016,6 +29070,8 @@ function createVoiceChatController({ socket, refs, showToast }) {
   }
   function syncSession(context) {
     const previousRoomId = roomId;
+    const sessionChanged = roomId !== context.roomId || role !== context.role || gameMode !== context.gameMode || isGameActive !== context.isGameActive;
+    let shouldRender = sessionChanged;
     roomId = context.roomId;
     role = context.role;
     gameMode = context.gameMode;
@@ -29027,12 +29083,21 @@ function createVoiceChatController({ socket, refs, showToast }) {
     if (syncKey && syncKey !== lastSyncKey) {
       socket.emit("chat:sync");
       lastSyncKey = syncKey;
+      shouldRender = true;
     }
     if (!syncKey) {
+      if (chatPanelOpen) {
+        shouldRender = true;
+      }
       chatPanelOpen = false;
+      if (lastSyncKey !== null) {
+        shouldRender = true;
+      }
       lastSyncKey = null;
     }
-    render();
+    if (shouldRender) {
+      render();
+    }
   }
   function dispose() {
     socket.off("chat:state", onChatState);

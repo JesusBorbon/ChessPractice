@@ -58,6 +58,24 @@ type CreateVoiceChatControllerOptions = {
   showToast: (message: string) => void;
 };
 
+type LegacyNavigatorMedia = Navigator & {
+  webkitGetUserMedia?: (
+    constraints: MediaStreamConstraints,
+    onSuccess: (stream: MediaStream) => void,
+    onError: (error: unknown) => void,
+  ) => void;
+  mozGetUserMedia?: (
+    constraints: MediaStreamConstraints,
+    onSuccess: (stream: MediaStream) => void,
+    onError: (error: unknown) => void,
+  ) => void;
+  msGetUserMedia?: (
+    constraints: MediaStreamConstraints,
+    onSuccess: (stream: MediaStream) => void,
+    onError: (error: unknown) => void,
+  ) => void;
+};
+
 export type VoiceChatController = {
   syncSession: (context: {
     roomId: string | null;
@@ -79,6 +97,7 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
   let chatPanelOpen = false;
   let unreadCount = 0;
   let lastSyncKey: string | null = null;
+  let lastRenderedMessagesKey: string | null = null;
 
   let chatState: ChatStatePayload = {
     wAcceptsB: false,
@@ -290,6 +309,7 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
     chatPanelOpen = false;
     unreadCount = 0;
     lastSyncKey = null;
+    lastRenderedMessagesKey = null;
     messages = [];
     readMessageIds.clear();
     refs.chatInput.value = "";
@@ -354,13 +374,54 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
       return recorderStream;
     }
 
-    if (!navigator.mediaDevices?.getUserMedia) {
-      showToast("Your browser does not support microphone capture.");
+    const mediaDevices = navigator.mediaDevices;
+    if (mediaDevices?.getUserMedia) {
+      try {
+        recorderStream = await mediaDevices.getUserMedia({ audio: true });
+        return recorderStream;
+      } catch (error) {
+        const isInsecureContext = typeof window !== "undefined" && !window.isSecureContext;
+        if (isInsecureContext) {
+          showToast("Microphone capture requires HTTPS (or localhost).");
+          return null;
+        }
+
+        const name = error instanceof DOMException ? error.name : "";
+        if (name === "NotAllowedError" || name === "SecurityError") {
+          showToast("Microphone permission was denied.");
+          return null;
+        }
+
+        showToast("Could not access microphone input.");
+        return null;
+      }
+    }
+
+    const legacyNavigator = navigator as LegacyNavigatorMedia;
+    const legacyGetUserMedia =
+      legacyNavigator.webkitGetUserMedia
+      ?? legacyNavigator.mozGetUserMedia
+      ?? legacyNavigator.msGetUserMedia;
+
+    if (!legacyGetUserMedia) {
+      const isInsecureContext = typeof window !== "undefined" && !window.isSecureContext;
+      showToast(
+        isInsecureContext
+          ? "Microphone capture requires HTTPS (or localhost)."
+          : "Your browser does not support microphone capture.",
+      );
       return null;
     }
 
     try {
-      recorderStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recorderStream = await new Promise<MediaStream>((resolve, reject) => {
+        legacyGetUserMedia.call(
+          navigator,
+          { audio: true },
+          (stream) => resolve(stream),
+          (error) => reject(error),
+        );
+      });
       return recorderStream;
     } catch {
       showToast("Microphone permission was denied.");
@@ -452,6 +513,8 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
   async function finalizeRecording(): Promise<void> {
     const activeRecorder = recorder;
     const durationMs = Math.round(performance.now() - recordingStartedAt);
+    const chunks = recorderChunks.slice();
+    const mimeType = activeRecorder?.mimeType || recorderMimeType || "audio/webm";
 
     recorder = null;
     resetRecordingState();
@@ -464,8 +527,8 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
       return;
     }
 
-    const blob = new Blob(recorderChunks, {
-      type: activeRecorder.mimeType || recorderMimeType || "audio/webm",
+    const blob = new Blob(chunks, {
+      type: mimeType,
     });
 
     if (blob.size < 600) {
@@ -524,8 +587,20 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
   }
 
   function renderMessages(): void {
+    const messagesRenderKey = `${role ?? "spectator"}:${messages.map((message) => message.id).join("|")}`;
+    if (messagesRenderKey === lastRenderedMessagesKey) {
+      return;
+    }
+
+    const previousScrollTop = refs.chatMessages.scrollTop;
+    const previousClientHeight = refs.chatMessages.clientHeight;
+    const previousScrollHeight = refs.chatMessages.scrollHeight;
+    const wasNearBottom = previousScrollHeight - (previousScrollTop + previousClientHeight) <= 28;
+
     if (messages.length === 0) {
       refs.chatMessages.innerHTML = '<div class="empty-state">No messages yet.</div>';
+      refs.chatMessages.scrollTop = 0;
+      lastRenderedMessagesKey = messagesRenderKey;
       return;
     }
 
@@ -550,12 +625,21 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
       return `
         <article class="${bubbleClass}">
           <header class="chat-bubble-meta">${sender} • ${time} • ${formatDuration(message.durationMs)}</header>
-          <audio controls preload="none" src="${src}"></audio>
+          <audio controls preload="none">
+            <source src="${src}" type="${message.mimeType}" />
+            Your browser cannot play this voice note format.
+          </audio>
         </article>
       `;
     }).join("");
 
-    refs.chatMessages.scrollTop = refs.chatMessages.scrollHeight;
+    if (wasNearBottom) {
+      refs.chatMessages.scrollTop = refs.chatMessages.scrollHeight;
+    } else {
+      refs.chatMessages.scrollTop = previousScrollTop;
+    }
+
+    lastRenderedMessagesKey = messagesRenderKey;
   }
 
   function renderStatus(): string {
@@ -620,6 +704,12 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
     isGameActive: boolean;
   }): void {
     const previousRoomId = roomId;
+    const sessionChanged =
+      roomId !== context.roomId
+      || role !== context.role
+      || gameMode !== context.gameMode
+      || isGameActive !== context.isGameActive;
+    let shouldRender = sessionChanged;
 
     roomId = context.roomId;
     role = context.role;
@@ -634,14 +724,24 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
     if (syncKey && syncKey !== lastSyncKey) {
       socket.emit("chat:sync");
       lastSyncKey = syncKey;
+      shouldRender = true;
     }
 
     if (!syncKey) {
+      if (chatPanelOpen) {
+        shouldRender = true;
+      }
       chatPanelOpen = false;
+
+      if (lastSyncKey !== null) {
+        shouldRender = true;
+      }
       lastSyncKey = null;
     }
 
-    render();
+    if (shouldRender) {
+      render();
+    }
   }
 
   function dispose(): void {
