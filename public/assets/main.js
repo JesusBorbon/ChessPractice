@@ -7126,6 +7126,12 @@ var init_account_sidebar = __esm({
   }
 });
 
+// src/client/notifications.css
+var init_notifications = __esm({
+  "src/client/notifications.css"() {
+  }
+});
+
 // src/client/account-sidebar-import.css
 var init_account_sidebar_import = __esm({
   "src/client/account-sidebar-import.css"() {
@@ -27881,6 +27887,82 @@ function serializeFriendList(friends) {
     email: friend.email
   }));
 }
+function normalizeIsoDate(value2) {
+  if (typeof value2 === "string") {
+    const parsed = new Date(value2);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+  return (/* @__PURE__ */ new Date()).toISOString();
+}
+function normalizeFriendRequestList(value2) {
+  if (!Array.isArray(value2)) {
+    return [];
+  }
+  const seenIds = /* @__PURE__ */ new Set();
+  const normalized = [];
+  for (const entry of value2) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const record = entry;
+    const requestId = normalizeUserId(record.requestId);
+    const fromUserId = normalizeUserId(record.fromUserId);
+    const toUserId = normalizeUserId(record.toUserId);
+    if (!requestId || !fromUserId || !toUserId || seenIds.has(requestId)) {
+      continue;
+    }
+    seenIds.add(requestId);
+    normalized.push({
+      requestId,
+      fromUserId,
+      fromFriendId: normalizeFriendId(record.fromFriendId),
+      fromDisplayName: normalizeDisplayName(record.fromDisplayName) || "Player",
+      fromEmail: normalizeEmail(record.fromEmail),
+      toUserId,
+      toFriendId: normalizeFriendId(record.toFriendId),
+      toDisplayName: normalizeDisplayName(record.toDisplayName) || "Player",
+      toEmail: normalizeEmail(record.toEmail),
+      createdAt: normalizeIsoDate(record.createdAt)
+    });
+  }
+  return normalized.sort((left, right) => {
+    const leftTime = Date.parse(left.createdAt);
+    const rightTime = Date.parse(right.createdAt);
+    if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) {
+      return 0;
+    }
+    return rightTime - leftTime;
+  }).slice(0, MAX_FRIEND_REQUESTS);
+}
+function serializeFriendRequestList(requests) {
+  return requests.map((request) => ({
+    requestId: request.requestId,
+    fromUserId: request.fromUserId,
+    fromFriendId: request.fromFriendId,
+    fromDisplayName: request.fromDisplayName,
+    fromEmail: request.fromEmail,
+    toUserId: request.toUserId,
+    toFriendId: request.toFriendId,
+    toDisplayName: request.toDisplayName,
+    toEmail: request.toEmail,
+    createdAt: request.createdAt
+  }));
+}
+function buildRequestId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `req_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+}
+function removeRequestsBetweenUsers(requests, leftUserId, rightUserId) {
+  return requests.filter((request) => {
+    const forward = request.fromUserId === leftUserId && request.toUserId === rightUserId;
+    const backward = request.fromUserId === rightUserId && request.toUserId === leftUserId;
+    return !forward && !backward;
+  });
+}
 function normalizePublicUserProfile(userId, value2) {
   if (!value2 || typeof value2 !== "object") {
     return null;
@@ -28241,64 +28323,278 @@ async function getFriendListForUser(userId) {
   }
   return normalizeFriendList(snapshot.data().friends);
 }
-async function addFriendForUserByLookup(userId, friendLookup) {
-  const ownerId = normalizeUserId(userId);
+async function getIncomingFriendRequestsForUser(userId) {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    return [];
+  }
+  const database = requireDb();
+  const requestsRef = doc(database, "userFriendRequests", normalizedUserId);
+  const snapshot = await getDoc(requestsRef);
+  if (!snapshot.exists()) {
+    return [];
+  }
+  return normalizeFriendRequestList(snapshot.data().incoming).filter((request) => request.toUserId === normalizedUserId);
+}
+async function getOutgoingFriendRequestsForUser(userId) {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    return [];
+  }
+  const database = requireDb();
+  const requestsRef = doc(database, "userFriendRequests", normalizedUserId);
+  const snapshot = await getDoc(requestsRef);
+  if (!snapshot.exists()) {
+    return [];
+  }
+  return normalizeFriendRequestList(snapshot.data().outgoing).filter((request) => request.fromUserId === normalizedUserId);
+}
+async function sendFriendRequestToUserId(userId, toUserId) {
+  const senderId = normalizeUserId(userId);
+  const recipientId = normalizeUserId(toUserId);
+  if (!senderId || !recipientId) {
+    throw new Error("Invalid sender or recipient account.");
+  }
+  if (senderId === recipientId) {
+    throw new Error("You cannot send a friend request to yourself.");
+  }
+  const database = requireDb();
+  const senderProfileRef = doc(database, "userProfiles", senderId);
+  const recipientProfileRef = doc(database, "userProfiles", recipientId);
+  const senderFriendsRef = doc(database, "userFriends", senderId);
+  const senderRequestsRef = doc(database, "userFriendRequests", senderId);
+  const recipientRequestsRef = doc(database, "userFriendRequests", recipientId);
+  const [
+    senderProfileSnapshot,
+    recipientProfileSnapshot,
+    senderFriendsSnapshot,
+    senderRequestsSnapshot,
+    recipientRequestsSnapshot
+  ] = await Promise.all([
+    getDoc(senderProfileRef),
+    getDoc(recipientProfileRef),
+    getDoc(senderFriendsRef),
+    getDoc(senderRequestsRef),
+    getDoc(recipientRequestsRef)
+  ]);
+  if (!senderProfileSnapshot.exists()) {
+    throw new Error("Your profile is not ready yet. Please sign out and sign in again.");
+  }
+  if (!recipientProfileSnapshot.exists()) {
+    throw new Error("No player found with that username or Friend ID.");
+  }
+  const senderProfile = normalizePublicUserProfile(senderId, senderProfileSnapshot.data());
+  const recipientProfile = normalizePublicUserProfile(recipientId, recipientProfileSnapshot.data());
+  if (!senderProfile || !recipientProfile) {
+    throw new Error("Could not read player profile data.");
+  }
+  const senderFriends = senderFriendsSnapshot.exists() ? normalizeFriendList(senderFriendsSnapshot.data().friends) : [];
+  if (senderFriends.some((friend) => friend.userId === recipientId)) {
+    throw new Error("This player is already in your friends list.");
+  }
+  const senderOutgoing = senderRequestsSnapshot.exists() ? normalizeFriendRequestList(senderRequestsSnapshot.data().outgoing) : [];
+  const senderIncoming = senderRequestsSnapshot.exists() ? normalizeFriendRequestList(senderRequestsSnapshot.data().incoming) : [];
+  const recipientIncoming = recipientRequestsSnapshot.exists() ? normalizeFriendRequestList(recipientRequestsSnapshot.data().incoming) : [];
+  if (senderOutgoing.some((request2) => request2.toUserId === recipientId)) {
+    throw new Error("Friend request already sent.");
+  }
+  if (senderIncoming.some((request2) => request2.fromUserId === recipientId)) {
+    throw new Error("This player already sent you a friend request. Check your notifications.");
+  }
+  if (recipientIncoming.some((request2) => request2.fromUserId === senderId)) {
+    throw new Error("Friend request already sent.");
+  }
+  const request = {
+    requestId: buildRequestId(),
+    fromUserId: senderProfile.userId,
+    fromFriendId: senderProfile.friendId,
+    fromDisplayName: senderProfile.displayName,
+    fromEmail: senderProfile.email,
+    toUserId: recipientProfile.userId,
+    toFriendId: recipientProfile.friendId,
+    toDisplayName: recipientProfile.displayName,
+    toEmail: recipientProfile.email,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  const nextSenderOutgoing = [request, ...senderOutgoing].slice(0, MAX_FRIEND_REQUESTS);
+  const nextRecipientIncoming = [request, ...recipientIncoming].slice(0, MAX_FRIEND_REQUESTS);
+  await Promise.all([
+    setDoc(
+      senderRequestsRef,
+      {
+        userId: senderId,
+        outgoing: serializeFriendRequestList(nextSenderOutgoing),
+        updatedAt: serverTimestamp()
+      },
+      { merge: true }
+    ),
+    setDoc(
+      recipientRequestsRef,
+      {
+        userId: recipientId,
+        incoming: serializeFriendRequestList(nextRecipientIncoming),
+        updatedAt: serverTimestamp()
+      },
+      { merge: true }
+    )
+  ]);
+  return request;
+}
+async function sendFriendRequestByLookup(userId, friendLookup) {
+  const senderId = normalizeUserId(userId);
   const normalizedLookup = friendLookup.trim();
-  if (!ownerId || !normalizedLookup) {
+  if (!senderId || !normalizedLookup) {
     throw new Error("Enter a username or Friend ID.");
   }
   const database = requireDb();
-  const targetProfileFromLookup = await resolveUserProfileByLookup(database, normalizedLookup);
-  if (!targetProfileFromLookup) {
+  const targetProfile = await resolveUserProfileByLookup(database, normalizedLookup);
+  if (!targetProfile) {
     throw new Error("No player found with that username or Friend ID.");
   }
-  const targetId = targetProfileFromLookup.userId;
-  if (ownerId === targetId) {
-    throw new Error("You cannot add yourself as a friend.");
+  return sendFriendRequestToUserId(senderId, targetProfile.userId);
+}
+async function respondToFriendRequest(userId, requestId, accepted) {
+  const receiverId = normalizeUserId(userId);
+  const normalizedRequestId = normalizeUserId(requestId);
+  if (!receiverId || !normalizedRequestId) {
+    throw new Error("Invalid friend request response.");
   }
-  const ownerProfileRef = doc(database, "userProfiles", ownerId);
-  const targetProfileRef = doc(database, "userProfiles", targetId);
+  const database = requireDb();
+  const receiverRequestsRef = doc(database, "userFriendRequests", receiverId);
+  const receiverRequestsSnapshot = await getDoc(receiverRequestsRef);
+  const receiverIncoming = receiverRequestsSnapshot.exists() ? normalizeFriendRequestList(receiverRequestsSnapshot.data().incoming) : [];
+  const request = receiverIncoming.find((entry) => entry.requestId === normalizedRequestId);
+  if (!request) {
+    throw new Error("Friend request has expired.");
+  }
+  if (request.toUserId !== receiverId) {
+    throw new Error("Friend request does not match this account.");
+  }
+  const senderId = request.fromUserId;
+  const senderRequestsRef = doc(database, "userFriendRequests", senderId);
+  const senderProfileRef = doc(database, "userProfiles", senderId);
+  const receiverProfileRef = doc(database, "userProfiles", receiverId);
+  const senderFriendsRef = doc(database, "userFriends", senderId);
+  const receiverFriendsRef = doc(database, "userFriends", receiverId);
+  const [
+    senderRequestsSnapshot,
+    senderProfileSnapshot,
+    receiverProfileSnapshot,
+    senderFriendsSnapshot,
+    receiverFriendsSnapshot
+  ] = await Promise.all([
+    getDoc(senderRequestsRef),
+    getDoc(senderProfileRef),
+    getDoc(receiverProfileRef),
+    getDoc(senderFriendsRef),
+    getDoc(receiverFriendsRef)
+  ]);
+  const senderOutgoing = senderRequestsSnapshot.exists() ? normalizeFriendRequestList(senderRequestsSnapshot.data().outgoing) : [];
+  const nextReceiverIncoming = receiverIncoming.filter((entry) => entry.requestId !== normalizedRequestId);
+  const nextSenderOutgoing = senderOutgoing.filter((entry) => entry.requestId !== normalizedRequestId);
+  const updates = [
+    setDoc(
+      receiverRequestsRef,
+      {
+        userId: receiverId,
+        incoming: serializeFriendRequestList(nextReceiverIncoming),
+        updatedAt: serverTimestamp()
+      },
+      { merge: true }
+    ),
+    setDoc(
+      senderRequestsRef,
+      {
+        userId: senderId,
+        outgoing: serializeFriendRequestList(nextSenderOutgoing),
+        updatedAt: serverTimestamp()
+      },
+      { merge: true }
+    )
+  ];
+  if (accepted) {
+    const senderProfile = senderProfileSnapshot.exists() ? normalizePublicUserProfile(senderId, senderProfileSnapshot.data()) : null;
+    const receiverProfile = receiverProfileSnapshot.exists() ? normalizePublicUserProfile(receiverId, receiverProfileSnapshot.data()) : null;
+    if (!senderProfile || !receiverProfile) {
+      throw new Error("Could not read player profile data.");
+    }
+    const senderFriends = senderFriendsSnapshot.exists() ? normalizeFriendList(senderFriendsSnapshot.data().friends) : [];
+    const receiverFriends = receiverFriendsSnapshot.exists() ? normalizeFriendList(receiverFriendsSnapshot.data().friends) : [];
+    const senderEntry = {
+      userId: receiverProfile.userId,
+      friendId: receiverProfile.friendId,
+      displayName: receiverProfile.displayName,
+      email: receiverProfile.email
+    };
+    const receiverEntry = {
+      userId: senderProfile.userId,
+      friendId: senderProfile.friendId,
+      displayName: senderProfile.displayName,
+      email: senderProfile.email
+    };
+    const nextSenderFriends = upsertFriendEntry(senderFriends, senderEntry);
+    const nextReceiverFriends = upsertFriendEntry(receiverFriends, receiverEntry);
+    updates.push(
+      setDoc(
+        senderFriendsRef,
+        {
+          userId: senderId,
+          friends: serializeFriendList(nextSenderFriends),
+          updatedAt: serverTimestamp()
+        },
+        { merge: true }
+      )
+    );
+    updates.push(
+      setDoc(
+        receiverFriendsRef,
+        {
+          userId: receiverId,
+          friends: serializeFriendList(nextReceiverFriends),
+          updatedAt: serverTimestamp()
+        },
+        { merge: true }
+      )
+    );
+  }
+  await Promise.all(updates);
+  return request;
+}
+async function removeFriendForUser(userId, friendUserId) {
+  const ownerId = normalizeUserId(userId);
+  const targetId = normalizeUserId(friendUserId);
+  if (!ownerId || !targetId || ownerId === targetId) {
+    return;
+  }
+  const database = requireDb();
   const ownerFriendsRef = doc(database, "userFriends", ownerId);
   const targetFriendsRef = doc(database, "userFriends", targetId);
-  const [ownerProfileSnapshot, targetProfileSnapshot, ownerFriendsSnapshot, targetFriendsSnapshot] = await Promise.all([
-    getDoc(ownerProfileRef),
-    getDoc(targetProfileRef),
+  const ownerRequestsRef = doc(database, "userFriendRequests", ownerId);
+  const targetRequestsRef = doc(database, "userFriendRequests", targetId);
+  const [ownerFriendsSnapshot, targetFriendsSnapshot, ownerRequestsSnapshot, targetRequestsSnapshot] = await Promise.all([
     getDoc(ownerFriendsRef),
-    getDoc(targetFriendsRef)
+    getDoc(targetFriendsRef),
+    getDoc(ownerRequestsRef),
+    getDoc(targetRequestsRef)
   ]);
-  if (!ownerProfileSnapshot.exists()) {
-    throw new Error("Your profile is not ready yet. Please sign out and sign in again.");
-  }
-  if (!targetProfileSnapshot.exists() || !targetProfileFromLookup) {
-    throw new Error("No player found with that username or Friend ID.");
-  }
-  const ownerProfile = normalizePublicUserProfile(ownerId, ownerProfileSnapshot.data());
-  const targetProfile = normalizePublicUserProfile(targetId, targetProfileSnapshot.data()) ?? targetProfileFromLookup;
-  if (!ownerProfile || !targetProfile) {
-    throw new Error("Could not read player profile data.");
-  }
-  const ownerEntry = {
-    userId: targetProfile.userId,
-    friendId: targetProfile.friendId,
-    displayName: targetProfile.displayName,
-    email: targetProfile.email
-  };
-  const reciprocalEntry = {
-    userId: ownerProfile.userId,
-    friendId: ownerProfile.friendId,
-    displayName: ownerProfile.displayName,
-    email: ownerProfile.email
-  };
   const ownerFriends = ownerFriendsSnapshot.exists() ? normalizeFriendList(ownerFriendsSnapshot.data().friends) : [];
   const targetFriends = targetFriendsSnapshot.exists() ? normalizeFriendList(targetFriendsSnapshot.data().friends) : [];
-  const updatedOwnerFriends = upsertFriendEntry(ownerFriends, ownerEntry);
-  const updatedTargetFriends = upsertFriendEntry(targetFriends, reciprocalEntry);
+  const nextOwnerFriends = ownerFriends.filter((entry) => entry.userId !== targetId);
+  const nextTargetFriends = targetFriends.filter((entry) => entry.userId !== ownerId);
+  const ownerIncoming = ownerRequestsSnapshot.exists() ? normalizeFriendRequestList(ownerRequestsSnapshot.data().incoming) : [];
+  const ownerOutgoing = ownerRequestsSnapshot.exists() ? normalizeFriendRequestList(ownerRequestsSnapshot.data().outgoing) : [];
+  const targetIncoming = targetRequestsSnapshot.exists() ? normalizeFriendRequestList(targetRequestsSnapshot.data().incoming) : [];
+  const targetOutgoing = targetRequestsSnapshot.exists() ? normalizeFriendRequestList(targetRequestsSnapshot.data().outgoing) : [];
+  const nextOwnerIncoming = removeRequestsBetweenUsers(ownerIncoming, ownerId, targetId);
+  const nextOwnerOutgoing = removeRequestsBetweenUsers(ownerOutgoing, ownerId, targetId);
+  const nextTargetIncoming = removeRequestsBetweenUsers(targetIncoming, ownerId, targetId);
+  const nextTargetOutgoing = removeRequestsBetweenUsers(targetOutgoing, ownerId, targetId);
   await Promise.all([
     setDoc(
       ownerFriendsRef,
       {
         userId: ownerId,
-        friends: serializeFriendList(updatedOwnerFriends),
+        friends: serializeFriendList(nextOwnerFriends),
         updatedAt: serverTimestamp()
       },
       { merge: true }
@@ -28307,15 +28603,34 @@ async function addFriendForUserByLookup(userId, friendLookup) {
       targetFriendsRef,
       {
         userId: targetId,
-        friends: serializeFriendList(updatedTargetFriends),
+        friends: serializeFriendList(nextTargetFriends),
+        updatedAt: serverTimestamp()
+      },
+      { merge: true }
+    ),
+    setDoc(
+      ownerRequestsRef,
+      {
+        userId: ownerId,
+        incoming: serializeFriendRequestList(nextOwnerIncoming),
+        outgoing: serializeFriendRequestList(nextOwnerOutgoing),
+        updatedAt: serverTimestamp()
+      },
+      { merge: true }
+    ),
+    setDoc(
+      targetRequestsRef,
+      {
+        userId: targetId,
+        incoming: serializeFriendRequestList(nextTargetIncoming),
+        outgoing: serializeFriendRequestList(nextTargetOutgoing),
         updatedAt: serverTimestamp()
       },
       { merge: true }
     )
   ]);
-  return ownerEntry;
 }
-var REQUIRED_CONFIG_KEYS, GOOGLE_PROVIDER, POPUP_RECOVERY_CODES, MAX_FRIENDS, FRIEND_ID_DIGITS, FRIEND_ID_MIN, FRIEND_ID_MAX, auth, db, disabledReason, initPromise;
+var REQUIRED_CONFIG_KEYS, GOOGLE_PROVIDER, POPUP_RECOVERY_CODES, MAX_FRIENDS, MAX_FRIEND_REQUESTS, FRIEND_ID_DIGITS, FRIEND_ID_MIN, FRIEND_ID_MAX, auth, db, disabledReason, initPromise;
 var init_firebase = __esm({
   "src/client/firebase.ts"() {
     "use strict";
@@ -28337,6 +28652,7 @@ var init_firebase = __esm({
       "auth/operation-not-supported-in-this-environment"
     ]);
     MAX_FRIENDS = 200;
+    MAX_FRIEND_REQUESTS = 300;
     FRIEND_ID_DIGITS = 5;
     FRIEND_ID_MIN = 1e4;
     FRIEND_ID_MAX = 99999;
@@ -28344,6 +28660,220 @@ var init_firebase = __esm({
     db = null;
     disabledReason = null;
     initPromise = null;
+  }
+});
+
+// src/client/friend-system.ts
+function normalizeLookup(value2) {
+  return value2.trim().replace(/\s+/g, " ");
+}
+function normalizeLookupKey(value2) {
+  return normalizeLookup(value2).toLowerCase();
+}
+function isNumericLookup(value2) {
+  return /^\d+$/.test(value2);
+}
+async function loadFriendSystemSnapshot(userId) {
+  const [friends, incomingRequests, outgoingRequests] = await Promise.all([
+    getFriendListForUser(userId),
+    getIncomingFriendRequestsForUser(userId),
+    getOutgoingFriendRequestsForUser(userId)
+  ]);
+  return { friends, incomingRequests, outgoingRequests };
+}
+function getLookupRequestState(lookup3, friends, incomingRequests, outgoingRequests) {
+  const normalizedLookup = normalizeLookup(lookup3);
+  const lookupKey = normalizeLookupKey(normalizedLookup);
+  if (!normalizedLookup) {
+    return "ready";
+  }
+  const numeric = isNumericLookup(normalizedLookup);
+  const isExistingFriend = friends.some((friend) => {
+    if (numeric) {
+      return friend.friendId === normalizedLookup;
+    }
+    return normalizeLookupKey(friend.displayName) === lookupKey;
+  });
+  if (isExistingFriend) {
+    return "friend";
+  }
+  const hasOutgoing = outgoingRequests.some((request) => {
+    if (numeric) {
+      return request.toFriendId === normalizedLookup;
+    }
+    return normalizeLookupKey(request.toDisplayName) === lookupKey;
+  });
+  if (hasOutgoing) {
+    return "outgoing";
+  }
+  const hasIncoming = incomingRequests.some((request) => {
+    if (numeric) {
+      return request.fromFriendId === normalizedLookup;
+    }
+    return normalizeLookupKey(request.fromDisplayName) === lookupKey;
+  });
+  if (hasIncoming) {
+    return "incoming";
+  }
+  return "ready";
+}
+async function submitFriendRequestByLookup(userId, lookup3) {
+  return sendFriendRequestByLookup(userId, lookup3);
+}
+async function replyToFriendRequest(userId, requestId, accepted) {
+  return respondToFriendRequest(userId, requestId, accepted);
+}
+async function removeFriendConnection(userId, friendUserId) {
+  await removeFriendForUser(userId, friendUserId);
+}
+var init_friend_system = __esm({
+  "src/client/friend-system.ts"() {
+    "use strict";
+    init_firebase();
+  }
+});
+
+// src/client/friend-activity-realtime.ts
+function normalizeUserId2(value2) {
+  if (typeof value2 !== "string") {
+    return "";
+  }
+  return value2.trim();
+}
+function normalizeStatus(value2) {
+  if (value2 === "online" || value2 === "in-room") {
+    return value2;
+  }
+  return "offline";
+}
+function normalizeRoomId(value2) {
+  if (typeof value2 !== "string") {
+    return null;
+  }
+  const normalized = value2.trim();
+  return ROOM_ID_PATTERN.test(normalized) ? normalized : null;
+}
+function getOfflineState() {
+  return {
+    status: "offline",
+    roomId: null,
+    canSpectate: false
+  };
+}
+function buildStateSignature(snapshot) {
+  const chunks = [];
+  for (const [userId, state] of snapshot.entries()) {
+    chunks.push(`${userId}:${state.status}:${state.roomId ?? "-"}:${state.canSpectate ? "1" : "0"}`);
+  }
+  return chunks.join("|");
+}
+function createFriendActivityRealtimeController({
+  socket
+}) {
+  let initialized = false;
+  let watchedFriendIds = [];
+  let presenceByUserId = /* @__PURE__ */ new Map();
+  let lastSignature = "";
+  const listeners = /* @__PURE__ */ new Set();
+  const emitWatchRequest = () => {
+    if (!socket.connected) {
+      return;
+    }
+    socket.emit("friends:watch", { friendIds: watchedFriendIds });
+  };
+  const emitSnapshot = () => {
+    const signature = buildStateSignature(presenceByUserId);
+    if (signature === lastSignature) {
+      return;
+    }
+    lastSignature = signature;
+    const snapshot = new Map(presenceByUserId);
+    for (const listener of listeners) {
+      listener(snapshot);
+    }
+  };
+  const onSocketConnect = () => {
+    emitWatchRequest();
+  };
+  const onFriendsPresence = (payload) => {
+    const nextPresenceByUserId = /* @__PURE__ */ new Map();
+    const friendRecords = payload && typeof payload === "object" ? payload.friends : null;
+    if (Array.isArray(friendRecords)) {
+      for (const record of friendRecords) {
+        if (!record || typeof record !== "object") {
+          continue;
+        }
+        const item = record;
+        const userId = normalizeUserId2(item.userId);
+        if (!userId) {
+          continue;
+        }
+        nextPresenceByUserId.set(userId, {
+          status: normalizeStatus(item.status),
+          roomId: normalizeRoomId(item.roomId),
+          canSpectate: item.canSpectate === true
+        });
+      }
+    }
+    const watchedSet = new Set(watchedFriendIds);
+    const merged = /* @__PURE__ */ new Map();
+    for (const friendId of watchedSet) {
+      merged.set(friendId, nextPresenceByUserId.get(friendId) ?? getOfflineState());
+    }
+    presenceByUserId = merged;
+    emitSnapshot();
+  };
+  function initialize() {
+    if (initialized) {
+      return;
+    }
+    initialized = true;
+    socket.on("connect", onSocketConnect);
+    socket.on("friends:presence", onFriendsPresence);
+    emitWatchRequest();
+  }
+  function dispose() {
+    if (!initialized) {
+      return;
+    }
+    initialized = false;
+    socket.off("connect", onSocketConnect);
+    socket.off("friends:presence", onFriendsPresence);
+    listeners.clear();
+    watchedFriendIds = [];
+    presenceByUserId.clear();
+    lastSignature = "";
+  }
+  function subscribe(listener) {
+    listeners.add(listener);
+    listener(new Map(presenceByUserId));
+    return () => {
+      listeners.delete(listener);
+    };
+  }
+  function updateWatchedFriendIds(friendIds) {
+    const normalized = [...new Set(friendIds.map((id) => normalizeUserId2(id)).filter(Boolean))];
+    watchedFriendIds = normalized;
+    const nextPresenceByUserId = /* @__PURE__ */ new Map();
+    for (const friendId of watchedFriendIds) {
+      nextPresenceByUserId.set(friendId, presenceByUserId.get(friendId) ?? getOfflineState());
+    }
+    presenceByUserId = nextPresenceByUserId;
+    emitSnapshot();
+    emitWatchRequest();
+  }
+  return {
+    initialize,
+    dispose,
+    subscribe,
+    updateWatchedFriendIds
+  };
+}
+var ROOM_ID_PATTERN;
+var init_friend_activity_realtime = __esm({
+  "src/client/friend-activity-realtime.ts"() {
+    "use strict";
+    ROOM_ID_PATTERN = /^\d{4}$/;
   }
 });
 
@@ -28374,12 +28904,19 @@ function createAccountSidebarController({
   let friendsLoading = false;
   let addFriendBusy = false;
   let friendsComposerOpen = false;
+  let incomingFriendRequests = [];
+  let outgoingFriendRequests = [];
+  const pendingFriendRemovals = /* @__PURE__ */ new Set();
   let currentFriendId = null;
   let currentRoomId = null;
   let savingGameSignature = null;
   let savedGameSignature = null;
   let failedGameSignature = null;
   let listenersWired = false;
+  const friendActivityRealtime = createFriendActivityRealtimeController({ socket });
+  const unsubscribeFriendActivity = friendActivityRealtime.subscribe((snapshot) => {
+    applyRealtimeFriendActivity(snapshot);
+  });
   const onAccountMenuClick = () => {
     const nextOpen = !sidebarOpen;
     setSidebarOpen(nextOpen);
@@ -28480,7 +29017,7 @@ function createAccountSidebarController({
   };
   const onAddFriendClick = async () => {
     if (!authenticatedUser || !isFirebaseAuthEnabled()) {
-      showToast("Sign in to add friends.");
+      showToast("Sign in to send friend requests.");
       return;
     }
     const lookupQuery = normalizeFriendLookupQuery(refs.friendIdInput.value);
@@ -28492,15 +29029,15 @@ function createAccountSidebarController({
       showToast("Friend ID must be exactly 5 digits.");
       return;
     }
-    const added = await addFriendByLookup(lookupQuery);
-    if (added) {
+    const sent = await sendFriendRequestByLookup2(lookupQuery);
+    if (sent) {
       refs.friendIdInput.value = "";
       renderFriendsPanel();
     }
   };
-  async function addFriendByLookup(lookup3) {
+  async function sendFriendRequestByLookup2(lookup3) {
     if (!authenticatedUser || !isFirebaseAuthEnabled()) {
-      showToast("Sign in to add friends.");
+      showToast("Sign in to send friend requests.");
       return false;
     }
     if (addFriendBusy) {
@@ -28513,12 +29050,19 @@ function createAccountSidebarController({
     addFriendBusy = true;
     renderFriendsPanel();
     try {
-      await addFriendForUserByLookup(authenticatedUser.uid, lookupQuery);
-      showToast("Friend added.");
+      const request = await submitFriendRequestByLookup(authenticatedUser.uid, lookupQuery);
+      if (socket.connected) {
+        socket.emit("friends:notification:request", {
+          toUserId: request.toUserId,
+          requestId: request.requestId,
+          fromDisplayName: request.fromDisplayName
+        });
+      }
+      showToast(`Request sent to ${request.toDisplayName}.`);
       await refreshFriendsPanel();
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not find that friend by username or ID.";
+      const message = error instanceof Error ? error.message : "Could not send friend request right now.";
       showToast(message);
       return false;
     } finally {
@@ -28526,45 +29070,33 @@ function createAccountSidebarController({
       renderFriendsPanel();
     }
   }
-  const onFriendsPresence = (payload) => {
-    if (!payload || typeof payload !== "object") {
+  async function handleRemoveFriend(entry) {
+    if (!authenticatedUser || !isFirebaseAuthEnabled()) {
+      showToast("Sign in to manage friends.");
       return;
     }
-    const records = payload.friends;
-    if (!Array.isArray(records)) {
+    if (pendingFriendRemovals.has(entry.userId)) {
       return;
     }
-    const presenceById = /* @__PURE__ */ new Map();
-    for (const item of records) {
-      if (!item || typeof item !== "object") {
-        continue;
-      }
-      const record = item;
-      const userId = normalizeSocketUserId(record.userId);
-      const status = normalizePresenceStatus(record.status);
-      const roomId = normalizeRoomId(record.roomId);
-      const canSpectate = record.canSpectate === true;
-      if (!userId) {
-        continue;
-      }
-      presenceById.set(userId, { status, roomId, canSpectate });
-    }
-    friends = friends.map((entry) => {
-      const presence = presenceById.get(entry.userId);
-      return {
-        ...entry,
-        status: presence?.status ?? "offline",
-        presenceRoomId: presence?.roomId ?? null,
-        canSpectate: presence?.canSpectate ?? false
-      };
-    });
+    pendingFriendRemovals.add(entry.userId);
     renderFriendsPanel();
-  };
+    try {
+      await removeFriendConnection(authenticatedUser.uid, entry.userId);
+      showToast(`${entry.displayName} removed from friends.`);
+      await refreshFriendsPanel();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not remove friend right now.";
+      showToast(message);
+    } finally {
+      pendingFriendRemovals.delete(entry.userId);
+      renderFriendsPanel();
+    }
+  }
   const onSessionJoined = (payload) => {
     if (!payload || typeof payload !== "object") {
       return;
     }
-    const roomId = normalizeRoomId(payload.roomId);
+    const roomId = normalizeRoomId2(payload.roomId);
     currentRoomId = roomId;
     renderFriendsPanel();
   };
@@ -28648,18 +29180,12 @@ function createAccountSidebarController({
   function isNumericFriendLookup2(value2) {
     return /^\d+$/.test(value2.trim());
   }
-  function normalizePresenceStatus(value2) {
-    if (value2 === "online" || value2 === "in-room") {
-      return value2;
-    }
-    return "offline";
-  }
-  function normalizeRoomId(value2) {
+  function normalizeRoomId2(value2) {
     if (typeof value2 !== "string") {
       return null;
     }
     const normalized = value2.trim();
-    return ROOM_ID_PATTERN.test(normalized) ? normalized : null;
+    return ROOM_ID_PATTERN2.test(normalized) ? normalized : null;
   }
   function setFriendsComposerOpen(nextOpen, shouldAnimate = true) {
     friendsComposerOpen = nextOpen;
@@ -28708,13 +29234,33 @@ function createAccountSidebarController({
     renderFriendsPanel();
     emitCurrentProfileName();
   }
-  function syncFriendPresenceWatch() {
-    if (!authenticatedUser || !socket.connected) {
-      socket.emit("friends:watch", { friendIds: [] });
+  function applyRealtimeFriendActivity(presenceByUserId) {
+    if (friends.length === 0) {
       return;
     }
-    const friendIds = friends.map((entry) => entry.userId);
-    socket.emit("friends:watch", { friendIds });
+    let changed = false;
+    friends = friends.map((entry) => {
+      const presence = presenceByUserId.get(entry.userId);
+      const nextStatus = presence?.status ?? "offline";
+      const nextRoomId = presence?.roomId ?? null;
+      const nextCanSpectate = presence?.canSpectate ?? false;
+      if (entry.status === nextStatus && entry.presenceRoomId === nextRoomId && entry.canSpectate === nextCanSpectate) {
+        return entry;
+      }
+      changed = true;
+      return {
+        ...entry,
+        status: nextStatus,
+        presenceRoomId: nextRoomId,
+        canSpectate: nextCanSpectate
+      };
+    });
+    if (changed) {
+      renderFriendsPanel();
+    }
+  }
+  function syncFriendActivitySubscription() {
+    friendActivityRealtime.updateWatchedFriendIds(friends.map((entry) => entry.userId));
   }
   function getCurrentPlayerName() {
     if (!authenticatedUser) {
@@ -28740,7 +29286,6 @@ function createAccountSidebarController({
       email: authenticatedUser?.email ?? null,
       friendId: currentFriendId
     });
-    syncFriendPresenceWatch();
   }
   function getPresenceLabel(status) {
     if (status === "in-room") {
@@ -28801,8 +29346,9 @@ function createAccountSidebarController({
   function openSidebarToFriends() {
     setActiveSidebarTab("profile");
     setSidebarOpen(true);
+    const scrollAnchor = refs.friendsList.hidden ? refs.friendsToggleButton : refs.friendsList;
     window.requestAnimationFrame(() => {
-      refs.friendsList.scrollIntoView({
+      scrollAnchor.scrollIntoView({
         behavior: "smooth",
         block: "start",
         inline: "nearest"
@@ -28855,6 +29401,16 @@ function createAccountSidebarController({
       });
       actions.appendChild(spectateButton);
     }
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "chip friend-remove-button";
+    const removing = pendingFriendRemovals.has(entry.userId);
+    removeButton.disabled = removing;
+    removeButton.textContent = removing ? "Removing..." : "Remove";
+    removeButton.addEventListener("click", () => {
+      void handleRemoveFriend(entry);
+    });
+    actions.appendChild(removeButton);
     if (actions.childElementCount > 0) {
       item.appendChild(actions);
     }
@@ -28864,13 +29420,21 @@ function createAccountSidebarController({
     const canUseFriends = Boolean(authenticatedUser && isFirebaseAuthEnabled());
     const lookupValue = normalizeFriendLookupQuery(refs.friendIdInput.value);
     const numericLookup = isNumericFriendLookup2(lookupValue);
+    const lookupState = getLookupRequestState(
+      lookupValue,
+      friends,
+      incomingFriendRequests,
+      outgoingFriendRequests
+    );
     refs.friendPlayerId.textContent = currentFriendId ?? (authenticatedUser ? "Generating..." : "Sign in to reveal your Friend ID");
     refs.copyPlayerIdButton.disabled = !authenticatedUser || !currentFriendId;
     refs.friendIdInput.disabled = !canUseFriends || addFriendBusy;
     const hasValidLookup = lookupValue.length >= 2 && (!numericLookup || lookupValue.length === FRIEND_NUMERIC_ID_LENGTH);
-    refs.addFriendButton.disabled = !canUseFriends || addFriendBusy || !hasValidLookup;
-    refs.addFriendButton.textContent = addFriendBusy ? "Adding..." : "Add";
+    const canSubmitRequest = hasValidLookup && lookupState === "ready";
+    refs.addFriendButton.disabled = !canUseFriends || addFriendBusy || !canSubmitRequest;
+    refs.addFriendButton.textContent = addFriendBusy ? "Sending..." : lookupState === "outgoing" ? "Request Sent" : lookupState === "friend" ? "Friend Added" : lookupState === "incoming" ? "Check Requests" : "Send";
     refs.friendsList.innerHTML = "";
+    refs.friendsList.hidden = true;
     if (!authenticatedUser) {
       refs.friendsStatus.textContent = "Sign in to add friends by username or 5-digit Friend ID.";
       return;
@@ -28887,6 +29451,7 @@ function createAccountSidebarController({
       refs.friendsStatus.textContent = "No friends yet. Add one using username or Friend ID.";
       return;
     }
+    refs.friendsList.hidden = false;
     refs.friendsStatus.textContent = `Friends: ${friends.length}`;
     for (const friend of friends) {
       refs.friendsList.appendChild(renderFriendItem(friend));
@@ -28898,15 +29463,22 @@ function createAccountSidebarController({
   async function refreshFriendsPanel() {
     if (!authenticatedUser || !isFirebaseAuthEnabled()) {
       friends = [];
+      incomingFriendRequests = [];
+      outgoingFriendRequests = [];
       friendsLoading = false;
       renderFriendsPanel();
-      syncFriendPresenceWatch();
+      syncFriendActivitySubscription();
       return;
     }
     friendsLoading = true;
     renderFriendsPanel();
     try {
-      const loadedFriends = await getFriendListForUser(authenticatedUser.uid);
+      const snapshot = await loadFriendSystemSnapshot(authenticatedUser.uid);
+      const loadedFriends = snapshot.friends;
+      const nextIncoming = snapshot.incomingRequests;
+      const nextOutgoing = snapshot.outgoingRequests;
+      incomingFriendRequests = nextIncoming;
+      outgoingFriendRequests = nextOutgoing;
       friends = loadedFriends.map((entry) => ({
         ...entry,
         status: "offline",
@@ -28915,11 +29487,13 @@ function createAccountSidebarController({
       }));
     } catch {
       friends = [];
+      incomingFriendRequests = [];
+      outgoingFriendRequests = [];
       showToast("Could not load friends list.");
     } finally {
       friendsLoading = false;
       renderFriendsPanel();
-      syncFriendPresenceWatch();
+      syncFriendActivitySubscription();
     }
   }
   function setSidebarOpen(nextOpen) {
@@ -29440,7 +30014,6 @@ function createAccountSidebarController({
     refs.addFriendButton.addEventListener("click", onAddFriendClick);
     refs.guestModeButton.addEventListener("click", onGuestModeClick);
     refs.signOutButton.addEventListener("click", onSignOutClick);
-    socket.on("friends:presence", onFriendsPresence);
     socket.on("friends:invite:sent", onFriendInviteSent);
     socket.on("session:joined", onSessionJoined);
     socket.on("session:left", onSessionLeft);
@@ -29469,7 +30042,6 @@ function createAccountSidebarController({
     refs.addFriendButton.removeEventListener("click", onAddFriendClick);
     refs.guestModeButton.removeEventListener("click", onGuestModeClick);
     refs.signOutButton.removeEventListener("click", onSignOutClick);
-    socket.off("friends:presence", onFriendsPresence);
     socket.off("friends:invite:sent", onFriendInviteSent);
     socket.off("session:joined", onSessionJoined);
     socket.off("session:left", onSessionLeft);
@@ -29481,6 +30053,7 @@ function createAccountSidebarController({
     setFriendsComposerOpen(false, false);
     renderSavedHistoryPanel();
     wireEventListeners();
+    friendActivityRealtime.initialize();
     renderAuthPanel();
     await initializeFirebaseClient();
     authInitFinished = true;
@@ -29496,9 +30069,13 @@ function createAccountSidebarController({
       historyLoading = false;
       deletingGameId = null;
       friends = [];
+      incomingFriendRequests = [];
+      outgoingFriendRequests = [];
+      pendingFriendRemovals.clear();
       friendsLoading = false;
       addFriendBusy = false;
       currentFriendId = null;
+      friendActivityRealtime.updateWatchedFriendIds([]);
       editableUsername = getCurrentPlayerName();
       renderAuthPanel();
       renderSavedHistoryPanel();
@@ -29523,6 +30100,8 @@ function createAccountSidebarController({
   function dispose() {
     authUnsubscribe?.();
     authUnsubscribe = null;
+    unsubscribeFriendActivity();
+    friendActivityRealtime.dispose();
     unWireEventListeners();
     document.body.classList.remove(MOBILE_SCROLL_LOCK_CLASS);
   }
@@ -29535,23 +30114,25 @@ function createAccountSidebarController({
     getInviteCandidates,
     canSendRoomInvites,
     sendInviteToFriend,
-    addFriendByLookup,
+    addFriendByLookup: sendFriendRequestByLookup2,
     normalizeUsername,
     resetFinishedGameTracking,
     handleFinishedGamePersist
   };
 }
-var USERNAME_STORAGE_PREFIX, MOBILE_BREAKPOINT_PX, MOBILE_SCROLL_LOCK_CLASS, FRIEND_NUMERIC_ID_LENGTH, ROOM_ID_PATTERN;
+var USERNAME_STORAGE_PREFIX, MOBILE_BREAKPOINT_PX, MOBILE_SCROLL_LOCK_CLASS, FRIEND_NUMERIC_ID_LENGTH, ROOM_ID_PATTERN2;
 var init_account_sidebar2 = __esm({
   "src/client/account-sidebar.ts"() {
     "use strict";
     init_chess();
     init_firebase();
+    init_friend_system();
+    init_friend_activity_realtime();
     USERNAME_STORAGE_PREFIX = "chess-custom-username:";
     MOBILE_BREAKPOINT_PX = 640;
     MOBILE_SCROLL_LOCK_CLASS = "sidebar-open-mobile";
     FRIEND_NUMERIC_ID_LENGTH = 5;
-    ROOM_ID_PATTERN = /^\d{4}$/;
+    ROOM_ID_PATTERN2 = /^\d{4}$/;
   }
 });
 
@@ -30133,6 +30714,406 @@ var init_live_chat = __esm({
   }
 });
 
+// src/client/notifications/friend-request-notification-actions.ts
+function createFriendRequestNotificationActions({
+  socket,
+  getResponderDisplayName
+}) {
+  async function resolve(input) {
+    const resolved = await replyToFriendRequest(input.userId, input.requestId, input.accepted);
+    if (socket.connected) {
+      socket.emit("friends:notification:response", {
+        toUserId: input.fromUserId,
+        requestId: input.requestId,
+        accepted: input.accepted,
+        fromDisplayName: getResponderDisplayName()
+      });
+    }
+    return resolved;
+  }
+  return { resolve };
+}
+var init_friend_request_notification_actions = __esm({
+  "src/client/notifications/friend-request-notification-actions.ts"() {
+    "use strict";
+    init_friend_system();
+  }
+});
+
+// src/client/notifications/notification-state.ts
+function mapFriendRequestToNotification(request) {
+  return {
+    id: request.requestId,
+    type: "friend-request",
+    requestId: request.requestId,
+    fromUserId: request.fromUserId,
+    fromDisplayName: request.fromDisplayName,
+    fromFriendId: request.fromFriendId,
+    createdAt: request.createdAt
+  };
+}
+function sortNotificationsByDate(items) {
+  return [...items].sort((left, right) => {
+    const leftTime = Date.parse(left.createdAt);
+    const rightTime = Date.parse(right.createdAt);
+    if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) {
+      return 0;
+    }
+    return rightTime - leftTime;
+  });
+}
+function createNotificationsStateController({
+  socket,
+  getResponderDisplayName,
+  showToast,
+  pollIntervalMs = DEFAULT_POLL_INTERVAL_MS
+}) {
+  let currentUser = null;
+  let authUnsubscribe = null;
+  let pollTimer = null;
+  let loading = false;
+  let enabled = false;
+  let disposed = false;
+  let notifications = [];
+  const listeners = /* @__PURE__ */ new Set();
+  const actions = createFriendRequestNotificationActions({
+    socket,
+    getResponderDisplayName
+  });
+  const onIncomingNotification = () => {
+    if (!currentUser || !enabled) {
+      return;
+    }
+    void refresh();
+  };
+  const onResponseNotification = () => {
+    if (!currentUser || !enabled) {
+      return;
+    }
+    void refresh();
+  };
+  function emitSnapshot() {
+    if (disposed) {
+      return;
+    }
+    const snapshot = getSnapshot();
+    for (const listener of listeners) {
+      listener(snapshot);
+    }
+  }
+  function setPollEnabled(nextEnabled) {
+    if (!nextEnabled) {
+      if (pollTimer !== null) {
+        window.clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      return;
+    }
+    if (pollTimer !== null) {
+      return;
+    }
+    pollTimer = window.setInterval(() => {
+      void refresh();
+    }, pollIntervalMs);
+  }
+  async function refresh() {
+    if (disposed || !enabled || !currentUser) {
+      notifications = [];
+      loading = false;
+      emitSnapshot();
+      return;
+    }
+    loading = true;
+    emitSnapshot();
+    try {
+      const snapshot = await loadFriendSystemSnapshot(currentUser.uid);
+      notifications = sortNotificationsByDate(snapshot.incomingRequests.map(mapFriendRequestToNotification));
+    } catch {
+      notifications = [];
+      showToast("Could not load notifications.");
+    } finally {
+      loading = false;
+      emitSnapshot();
+    }
+  }
+  function removeNotificationByRequestId(requestId) {
+    const index = notifications.findIndex((item) => item.requestId === requestId);
+    if (index < 0) {
+      return null;
+    }
+    const [removed] = notifications.splice(index, 1);
+    return removed ?? null;
+  }
+  async function resolveRequest(requestId, accepted) {
+    if (!enabled || !currentUser) {
+      return false;
+    }
+    const target = notifications.find((item) => item.requestId === requestId);
+    if (!target) {
+      return false;
+    }
+    const removed = removeNotificationByRequestId(requestId);
+    emitSnapshot();
+    try {
+      await actions.resolve({
+        userId: currentUser.uid,
+        requestId,
+        accepted,
+        fromUserId: target.fromUserId
+      });
+      showToast(accepted ? `${target.fromDisplayName} added to your friends.` : `Declined request from ${target.fromDisplayName}.`);
+      return true;
+    } catch (error) {
+      if (removed) {
+        notifications = sortNotificationsByDate([...notifications, removed]);
+      }
+      emitSnapshot();
+      const message = error instanceof Error ? error.message : "Could not process request.";
+      showToast(message);
+      return false;
+    }
+  }
+  async function initialize() {
+    if (disposed) {
+      return;
+    }
+    await initializeFirebaseClient();
+    enabled = isFirebaseAuthEnabled();
+    if (!enabled) {
+      currentUser = null;
+      notifications = [];
+      loading = false;
+      emitSnapshot();
+      return;
+    }
+    socket.on("friends:notification:request", onIncomingNotification);
+    socket.on("friends:notification:response", onResponseNotification);
+    authUnsubscribe?.();
+    authUnsubscribe = listenToAuthState((user) => {
+      currentUser = user;
+      notifications = [];
+      loading = false;
+      setPollEnabled(Boolean(user));
+      emitSnapshot();
+      if (user) {
+        void refresh();
+      }
+    });
+  }
+  function dispose() {
+    disposed = true;
+    authUnsubscribe?.();
+    authUnsubscribe = null;
+    setPollEnabled(false);
+    socket.off("friends:notification:request", onIncomingNotification);
+    socket.off("friends:notification:response", onResponseNotification);
+    listeners.clear();
+  }
+  function subscribe(listener) {
+    listeners.add(listener);
+    listener(getSnapshot());
+    return () => {
+      listeners.delete(listener);
+    };
+  }
+  function getSnapshot() {
+    return {
+      items: notifications,
+      pendingCount: notifications.length,
+      loading,
+      enabled,
+      signedIn: Boolean(currentUser)
+    };
+  }
+  return {
+    initialize,
+    dispose,
+    subscribe,
+    getSnapshot,
+    refresh,
+    accept: (requestId) => resolveRequest(requestId, true),
+    decline: (requestId) => resolveRequest(requestId, false)
+  };
+}
+var DEFAULT_POLL_INTERVAL_MS;
+var init_notification_state = __esm({
+  "src/client/notifications/notification-state.ts"() {
+    "use strict";
+    init_firebase();
+    init_friend_system();
+    init_friend_request_notification_actions();
+    DEFAULT_POLL_INTERVAL_MS = 15e3;
+  }
+});
+
+// src/client/notifications/notification-ui.ts
+function formatNotificationTime(createdAt) {
+  const parsed = new Date(createdAt);
+  if (Number.isNaN(parsed.getTime())) {
+    return "Just now";
+  }
+  const minutesAgo = Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 6e4));
+  if (minutesAgo < 1) {
+    return "Just now";
+  }
+  if (minutesAgo < 60) {
+    return `${minutesAgo}m ago`;
+  }
+  const hoursAgo = Math.floor(minutesAgo / 60);
+  if (hoursAgo < 24) {
+    return `${hoursAgo}h ago`;
+  }
+  const daysAgo = Math.floor(hoursAgo / 24);
+  return `${daysAgo}d ago`;
+}
+function createNotificationsUiController({
+  refs,
+  onAccept,
+  onDecline
+}) {
+  let isOpen = false;
+  let latestSnapshot = {
+    items: [],
+    pendingCount: 0,
+    loading: false,
+    enabled: true,
+    signedIn: false
+  };
+  const busyRequestIds = /* @__PURE__ */ new Set();
+  const onToggleOpen = () => {
+    if (refs.button.disabled) {
+      return;
+    }
+    isOpen = !isOpen;
+    syncPopoverVisibility();
+  };
+  const onDocumentClick = (event) => {
+    if (!isOpen) {
+      return;
+    }
+    const target = event.target;
+    if (!(target instanceof Node)) {
+      return;
+    }
+    if (refs.button.contains(target) || refs.popover.contains(target)) {
+      return;
+    }
+    isOpen = false;
+    syncPopoverVisibility();
+  };
+  const onEscapeKey = (event) => {
+    if (event.key !== "Escape" || !isOpen) {
+      return;
+    }
+    isOpen = false;
+    syncPopoverVisibility();
+  };
+  function syncPopoverVisibility() {
+    const canShow = isOpen && !refs.button.disabled;
+    refs.popover.hidden = !canShow;
+    refs.button.setAttribute("aria-expanded", canShow ? "true" : "false");
+  }
+  function createFriendRequestItem(item) {
+    const card = document.createElement("article");
+    card.className = "notifications-item";
+    const title = document.createElement("strong");
+    title.className = "notifications-item-title";
+    title.textContent = item.fromDisplayName;
+    const subtitle = document.createElement("p");
+    subtitle.className = "notifications-item-subtitle";
+    subtitle.textContent = `Friend request \u2022 ID ${item.fromFriendId || "Unknown"} \u2022 ${formatNotificationTime(item.createdAt)}`;
+    const actions = document.createElement("div");
+    actions.className = "notifications-item-actions";
+    const busy = busyRequestIds.has(item.requestId);
+    const declineButton = document.createElement("button");
+    declineButton.type = "button";
+    declineButton.className = "chip notifications-decline";
+    declineButton.disabled = busy;
+    declineButton.textContent = busy ? "Working..." : "Decline";
+    declineButton.addEventListener("click", () => {
+      void runAction(item.requestId, false);
+    });
+    const acceptButton = document.createElement("button");
+    acceptButton.type = "button";
+    acceptButton.className = "action notifications-accept";
+    acceptButton.disabled = busy;
+    acceptButton.textContent = busy ? "Working..." : "Accept";
+    acceptButton.addEventListener("click", () => {
+      void runAction(item.requestId, true);
+    });
+    actions.appendChild(declineButton);
+    actions.appendChild(acceptButton);
+    card.appendChild(title);
+    card.appendChild(subtitle);
+    card.appendChild(actions);
+    return card;
+  }
+  async function runAction(requestId, accepted) {
+    if (busyRequestIds.has(requestId)) {
+      return;
+    }
+    busyRequestIds.add(requestId);
+    render(latestSnapshot);
+    try {
+      if (accepted) {
+        await onAccept(requestId);
+      } else {
+        await onDecline(requestId);
+      }
+    } finally {
+      busyRequestIds.delete(requestId);
+      render(latestSnapshot);
+    }
+  }
+  function render(snapshot) {
+    latestSnapshot = snapshot;
+    refs.badge.hidden = snapshot.pendingCount <= 0;
+    refs.badge.textContent = String(snapshot.pendingCount);
+    const disabled = !snapshot.enabled || !snapshot.signedIn;
+    refs.button.disabled = disabled;
+    if (disabled) {
+      isOpen = false;
+      refs.status.textContent = snapshot.enabled ? "Sign in to view notifications." : "Notifications unavailable while Firebase is disabled.";
+      refs.list.innerHTML = "";
+      syncPopoverVisibility();
+      return;
+    }
+    if (snapshot.loading) {
+      refs.status.textContent = "Loading notifications...";
+      refs.list.innerHTML = "";
+      syncPopoverVisibility();
+      return;
+    }
+    refs.list.innerHTML = "";
+    if (snapshot.items.length === 0) {
+      refs.status.textContent = "No notifications right now.";
+      syncPopoverVisibility();
+      return;
+    }
+    refs.status.textContent = `Pending requests: ${snapshot.pendingCount}`;
+    for (const item of snapshot.items) {
+      refs.list.appendChild(createFriendRequestItem(item));
+    }
+    syncPopoverVisibility();
+  }
+  refs.button.addEventListener("click", onToggleOpen);
+  document.addEventListener("click", onDocumentClick);
+  document.addEventListener("keydown", onEscapeKey);
+  return {
+    render,
+    dispose: () => {
+      refs.button.removeEventListener("click", onToggleOpen);
+      document.removeEventListener("click", onDocumentClick);
+      document.removeEventListener("keydown", onEscapeKey);
+    }
+  };
+}
+var init_notification_ui = __esm({
+  "src/client/notifications/notification-ui.ts"() {
+    "use strict";
+  }
+});
+
 // src/client/theme.ts
 function setTheme(theme) {
   if (theme === "forest") {
@@ -30293,12 +31274,15 @@ var require_main = __commonJS({
     init_arrows();
     init_styles();
     init_account_sidebar();
+    init_notifications();
     init_account_sidebar_import();
     init_badge_icon_colors();
     init_arrow_render();
     init_best_move_arrow();
     init_account_sidebar2();
     init_live_chat();
+    init_notification_state();
+    init_notification_ui();
     init_theme();
     var BOT_DIFFICULTY_PRESETS = [
       { level: 1, label: "Level 1 - 800 Elo", elo: 800, skillLevel: 0, moveTimeMs: 90, fullStrength: false },
@@ -30614,7 +31598,7 @@ var require_main = __commonJS({
     };
     var LIVE_BRILLIANT_VERIFICATION_DEPTH = 16;
     var ROOM_CODE_LENGTH = 4;
-    var ROOM_ID_PATTERN2 = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
+    var ROOM_ID_PATTERN3 = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
     function applyAnimationTiming(style) {
       const cssDuration = style === "epic" ? 760 : SMOOTH_MOVE_DURATION_MS;
       document.documentElement.style.setProperty("--move-duration", `${cssDuration}ms`);
@@ -30837,9 +31821,21 @@ var require_main = __commonJS({
   <div class="app-shell">
     <section class="top-utility">
       <p class="muted quick-identity" id="quickIdentity">Guest</p>
-      <button class="chip account-menu-button" id="accountMenuButton" type="button" aria-haspopup="dialog" aria-expanded="false">
-        Account Menu
-      </button>
+      <div class="top-utility-actions">
+        <div class="notifications-shell" id="notificationsShell">
+          <button class="chip notifications-button" id="notificationsButton" type="button" aria-haspopup="dialog" aria-expanded="false">
+            Notifications
+            <span class="notifications-badge" id="notificationsBadge" hidden>0</span>
+          </button>
+          <section class="notifications-popover" id="notificationsPopover" hidden aria-live="polite" aria-label="Friend request notifications">
+            <p class="muted notifications-status" id="notificationsStatus">No notifications right now.</p>
+            <div class="notifications-list" id="notificationsList"></div>
+          </section>
+        </div>
+        <button class="chip account-menu-button" id="accountMenuButton" type="button" aria-haspopup="dialog" aria-expanded="false">
+          Account Menu
+        </button>
+      </div>
     </section>
 
     <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
@@ -31164,6 +32160,11 @@ var require_main = __commonJS({
     var inviteJoinCard = must("#inviteJoinCard");
     var analysisBoardLink = must("#analysisBoardLink");
     var quickIdentity = must("#quickIdentity");
+    var notificationsButton = must("#notificationsButton");
+    var notificationsBadge = must("#notificationsBadge");
+    var notificationsPopover = must("#notificationsPopover");
+    var notificationsStatus = must("#notificationsStatus");
+    var notificationsList = must("#notificationsList");
     var accountMenuButton = must("#accountMenuButton");
     var sidebarBackdrop = must("#sidebarBackdrop");
     var accountSidebar = must("#accountSidebar");
@@ -31401,6 +32402,25 @@ var require_main = __commonJS({
       },
       showToast
     });
+    var notificationsStateController = createNotificationsStateController({
+      socket,
+      getResponderDisplayName: () => accountSidebarController.getCurrentPlayerName(),
+      showToast
+    });
+    var notificationsUiController = createNotificationsUiController({
+      refs: {
+        button: notificationsButton,
+        badge: notificationsBadge,
+        popover: notificationsPopover,
+        status: notificationsStatus,
+        list: notificationsList
+      },
+      onAccept: (requestId) => notificationsStateController.accept(requestId),
+      onDecline: (requestId) => notificationsStateController.decline(requestId)
+    });
+    var unsubscribeNotificationsState = notificationsStateController.subscribe((snapshot) => {
+      notificationsUiController.render(snapshot);
+    });
     function normalizeUsername(value2) {
       return accountSidebarController.normalizeUsername(value2);
     }
@@ -31428,7 +32448,11 @@ var require_main = __commonJS({
       await accountSidebarController.handleFinishedGamePersist({ signature, pgn: pgn2 });
     }
     void accountSidebarController.initialize();
+    void notificationsStateController.initialize();
     window.addEventListener("beforeunload", () => {
+      unsubscribeNotificationsState();
+      notificationsUiController.dispose();
+      notificationsStateController.dispose();
       accountSidebarController.dispose();
       voiceChatController.dispose();
     });
@@ -31571,7 +32595,7 @@ var require_main = __commonJS({
         showToast("Enter a room code first.");
         return;
       }
-      if (!ROOM_ID_PATTERN2.test(code)) {
+      if (!ROOM_ID_PATTERN3.test(code)) {
         showToast("Room code must be exactly 4 digits.");
         return;
       }
@@ -32244,7 +33268,7 @@ var require_main = __commonJS({
       state.connected = true;
       emitCurrentProfileName();
       if (state.autoJoinCode) {
-        if (ROOM_ID_PATTERN2.test(state.autoJoinCode)) {
+        if (ROOM_ID_PATTERN3.test(state.autoJoinCode)) {
           socket.emit("room:join", { roomId: state.autoJoinCode });
         }
         state.autoJoinCode = null;
@@ -32262,7 +33286,7 @@ var require_main = __commonJS({
       const inviteId = typeof payload?.inviteId === "string" ? payload.inviteId : "";
       const fromUserId = typeof payload?.fromUserId === "string" ? payload.fromUserId : "";
       const roomId = typeof payload?.roomId === "string" ? payload.roomId : "";
-      if (!inviteId || !fromUserId || !ROOM_ID_PATTERN2.test(roomId)) {
+      if (!inviteId || !fromUserId || !ROOM_ID_PATTERN3.test(roomId)) {
         return;
       }
       const fromName2 = typeof payload?.fromName === "string" && payload.fromName.trim() ? payload.fromName.trim().slice(0, 24) : "A friend";

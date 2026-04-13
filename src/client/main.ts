@@ -7,12 +7,15 @@ import "./button-animations.css";
 import "./arrows.css";
 import "./styles.css";
 import "./account-sidebar.css";
+import "./notifications.css";
 import "./account-sidebar-import.css";
 import "./badge-icon-colors.css";
 import { buildArrowLayerMarkup } from "./arrow-render";
 import { BestMoveArrow, canShowBestMoveArrow, parseBestMoveArrow } from "./best-move-arrow";
 import { createAccountSidebarController } from "./account-sidebar";
 import { createVoiceChatController } from "./live-chat";
+import { createNotificationsStateController } from "./notifications/notification-state";
+import { createNotificationsUiController } from "./notifications/notification-ui";
 import { mountThemeSwitcher } from "./theme";
 
 type PlayerRole = "w" | "b";
@@ -838,9 +841,21 @@ app.innerHTML = `
   <div class="app-shell">
     <section class="top-utility">
       <p class="muted quick-identity" id="quickIdentity">Guest</p>
-      <button class="chip account-menu-button" id="accountMenuButton" type="button" aria-haspopup="dialog" aria-expanded="false">
-        Account Menu
-      </button>
+      <div class="top-utility-actions">
+        <div class="notifications-shell" id="notificationsShell">
+          <button class="chip notifications-button" id="notificationsButton" type="button" aria-haspopup="dialog" aria-expanded="false">
+            Notifications
+            <span class="notifications-badge" id="notificationsBadge" hidden>0</span>
+          </button>
+          <section class="notifications-popover" id="notificationsPopover" hidden aria-live="polite" aria-label="Friend request notifications">
+            <p class="muted notifications-status" id="notificationsStatus">No notifications right now.</p>
+            <div class="notifications-list" id="notificationsList"></div>
+          </section>
+        </div>
+        <button class="chip account-menu-button" id="accountMenuButton" type="button" aria-haspopup="dialog" aria-expanded="false">
+          Account Menu
+        </button>
+      </div>
     </section>
 
     <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
@@ -1168,6 +1183,11 @@ const pregamePlaceholder = must<HTMLDivElement>("#pregamePlaceholder");
 const inviteJoinCard = must<HTMLElement>("#inviteJoinCard");
 const analysisBoardLink = must<HTMLAnchorElement>("#analysisBoardLink");
 const quickIdentity = must<HTMLParagraphElement>("#quickIdentity");
+const notificationsButton = must<HTMLButtonElement>("#notificationsButton");
+const notificationsBadge = must<HTMLSpanElement>("#notificationsBadge");
+const notificationsPopover = must<HTMLElement>("#notificationsPopover");
+const notificationsStatus = must<HTMLParagraphElement>("#notificationsStatus");
+const notificationsList = must<HTMLDivElement>("#notificationsList");
 const accountMenuButton = must<HTMLButtonElement>("#accountMenuButton");
 const sidebarBackdrop = must<HTMLDivElement>("#sidebarBackdrop");
 const accountSidebar = must<HTMLElement>("#accountSidebar");
@@ -1423,6 +1443,28 @@ const voiceChatController = createVoiceChatController({
   showToast,
 });
 
+const notificationsStateController = createNotificationsStateController({
+  socket,
+  getResponderDisplayName: () => accountSidebarController.getCurrentPlayerName(),
+  showToast,
+});
+
+const notificationsUiController = createNotificationsUiController({
+  refs: {
+    button: notificationsButton,
+    badge: notificationsBadge,
+    popover: notificationsPopover,
+    status: notificationsStatus,
+    list: notificationsList,
+  },
+  onAccept: (requestId: string) => notificationsStateController.accept(requestId),
+  onDecline: (requestId: string) => notificationsStateController.decline(requestId),
+});
+
+const unsubscribeNotificationsState = notificationsStateController.subscribe((snapshot) => {
+  notificationsUiController.render(snapshot);
+});
+
 function normalizeUsername(value: string): string {
   return accountSidebarController.normalizeUsername(value);
 }
@@ -1463,8 +1505,12 @@ async function maybePersistFinishedGame(snapshot: RoomSnapshot | null): Promise<
 }
 
 void accountSidebarController.initialize();
+void notificationsStateController.initialize();
 
 window.addEventListener("beforeunload", () => {
+  unsubscribeNotificationsState();
+  notificationsUiController.dispose();
+  notificationsStateController.dispose();
   accountSidebarController.dispose();
   voiceChatController.dispose();
 });

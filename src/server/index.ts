@@ -171,6 +171,7 @@ const activeUserSockets = new Map<string, Set<string>>();
 const socketUserIds = new Map<string, string>();
 const watchedFriendIdsBySocket = new Map<string, Set<string>>();
 const friendWatchersByUserId = new Map<string, Set<string>>();
+const cachedFriendPresenceByUserId = new Map<string, string>();
 const pendingFriendInvites = new Map<string, PendingFriendInvite>();
 const pendingFriendRequests = new Map<string, PendingFriendRequest>();
 const ROOM_ALPHABET = "0123456789";
@@ -835,14 +836,48 @@ function emitFriendPresenceToSocket(socketId: string): void {
   io.to(socketId).emit("friends:presence", { friends });
 }
 
+function buildFriendPresenceSignature(presence: FriendPresenceInfo): string {
+  return `${presence.status}:${presence.roomId ?? "-"}:${presence.canSpectate ? "1" : "0"}`;
+}
+
 function notifyFriendWatchers(userId: string): void {
   const watchers = friendWatchersByUserId.get(userId);
   if (!watchers || watchers.size === 0) {
     return;
   }
 
+  const currentPresence = getFriendPresenceInfo(userId);
+  const nextSignature = buildFriendPresenceSignature(currentPresence);
+  const previousSignature = cachedFriendPresenceByUserId.get(userId);
+  if (previousSignature === nextSignature) {
+    return;
+  }
+
+  cachedFriendPresenceByUserId.set(userId, nextSignature);
+
   for (const watcherSocketId of watchers) {
     emitFriendPresenceToSocket(watcherSocketId);
+  }
+}
+
+function notifyRoomParticipantPresence(room: GameRoom): void {
+  const participantUserIds = new Set<string>();
+  if (room.white) {
+    const whiteUserId = getSocketUserId(room.white);
+    if (whiteUserId) {
+      participantUserIds.add(whiteUserId);
+    }
+  }
+
+  if (room.black) {
+    const blackUserId = getSocketUserId(room.black);
+    if (blackUserId) {
+      participantUserIds.add(blackUserId);
+    }
+  }
+
+  for (const userId of participantUserIds) {
+    notifyFriendWatchers(userId);
   }
 }
 
@@ -1188,6 +1223,7 @@ function emitRoomState(room: GameRoom): void {
 
   room.updatedAt = Date.now();
   io.to(room.id).emit("room:state", buildSnapshot(room));
+  notifyRoomParticipantPresence(room);
 }
 
 function closeRoom(room: GameRoom, reason: "abandoned" | "room-closed" = "room-closed"): void {
@@ -1506,6 +1542,68 @@ io.on("connection", (socket) => {
   socket.on("friends:watch", (payload?: { friendIds?: string[] }) => {
     const friendIds = Array.isArray(payload?.friendIds) ? payload.friendIds : [];
     setFriendWatchForSocket(socket.id, friendIds);
+  });
+
+  socket.on("friends:notification:request", (payload?: {
+    toUserId?: string;
+    requestId?: string;
+    fromDisplayName?: string;
+  }) => {
+    const senderUserId = getSocketUserId(socket.id);
+    if (!senderUserId) {
+      return;
+    }
+
+    const toUserId = normalizeUserId(payload?.toUserId);
+    const requestId = normalizeUserId(payload?.requestId);
+    const fromDisplayName = typeof payload?.fromDisplayName === "string"
+      ? payload.fromDisplayName.trim().slice(0, 24)
+      : "";
+
+    if (!toUserId || !requestId || toUserId === senderUserId) {
+      return;
+    }
+
+    const recipientSockets = getConnectedUserSocketIds(toUserId);
+    for (const recipientSocketId of recipientSockets) {
+      io.to(recipientSocketId).emit("friends:notification:request", {
+        requestId,
+        fromUserId: senderUserId,
+        fromDisplayName: fromDisplayName || getSocketDisplayName(socket.id),
+      });
+    }
+  });
+
+  socket.on("friends:notification:response", (payload?: {
+    toUserId?: string;
+    requestId?: string;
+    accepted?: boolean;
+    fromDisplayName?: string;
+  }) => {
+    const senderUserId = getSocketUserId(socket.id);
+    if (!senderUserId) {
+      return;
+    }
+
+    const toUserId = normalizeUserId(payload?.toUserId);
+    const requestId = normalizeUserId(payload?.requestId);
+    const fromDisplayName = typeof payload?.fromDisplayName === "string"
+      ? payload.fromDisplayName.trim().slice(0, 24)
+      : "";
+
+    if (!toUserId || !requestId || toUserId === senderUserId || typeof payload?.accepted !== "boolean") {
+      return;
+    }
+
+    const recipientSockets = getConnectedUserSocketIds(toUserId);
+    for (const recipientSocketId of recipientSockets) {
+      io.to(recipientSocketId).emit("friends:notification:response", {
+        requestId,
+        accepted: payload.accepted,
+        fromUserId: senderUserId,
+        fromDisplayName: fromDisplayName || getSocketDisplayName(socket.id),
+      });
+    }
   });
 
   socket.on("friends:invite:send", async (payload?: { toUserId?: string; toEmail?: string | null }) => {

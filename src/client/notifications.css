@@ -1,0 +1,119 @@
+.top-utility-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.notifications-shell {
+  position: relative;
+}
+
+.notifications-button {
+  min-width: 144px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.notifications-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #fff;
+  background: linear-gradient(140deg, #cf3f3f, #d9622e);
+  box-shadow: 0 6px 14px rgba(160, 53, 33, 0.35);
+}
+
+.notifications-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: min(360px, 92vw);
+  max-height: min(68vh, 520px);
+  overflow: auto;
+  border-radius: 16px;
+  border: 1px solid rgba(25, 35, 32, 0.15);
+  background: color-mix(in srgb, var(--paper) 92%, white 8%);
+  box-shadow: 0 18px 40px rgba(11, 20, 18, 0.24);
+  backdrop-filter: blur(12px);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  z-index: 1200;
+}
+
+.notifications-status {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.notifications-list {
+  display: grid;
+  gap: 8px;
+}
+
+.notifications-item {
+  border: 1px solid rgba(25, 35, 32, 0.11);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--paper);
+  display: grid;
+  gap: 6px;
+}
+
+.notifications-item-title {
+  font-size: 0.92rem;
+}
+
+.notifications-item-subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.notifications-item-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.notifications-accept,
+.notifications-decline {
+  min-width: 108px;
+}
+
+@media (max-width: 640px) {
+  .top-utility-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .notifications-button,
+  .account-menu-button {
+    min-width: 124px;
+  }
+
+  .notifications-popover {
+    right: 0;
+    width: min(320px, calc(100vw - 22px));
+    max-height: min(58vh, 430px);
+  }
+
+  .notifications-item-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .notifications-accept,
+  .notifications-decline {
+    width: 100%;
+    min-width: 0;
+  }
+}

@@ -55,6 +55,19 @@ export type FriendListEntry = {
   email: string | null;
 };
 
+export type FriendRequestEntry = {
+  requestId: string;
+  fromUserId: string;
+  fromFriendId: string;
+  fromDisplayName: string;
+  fromEmail: string | null;
+  toUserId: string;
+  toFriendId: string;
+  toDisplayName: string;
+  toEmail: string | null;
+  createdAt: string;
+};
+
 const REQUIRED_CONFIG_KEYS: Array<keyof FirebaseClientConfig> = [
   "apiKey",
   "authDomain",
@@ -73,6 +86,7 @@ const POPUP_RECOVERY_CODES = new Set([
 ]);
 
 const MAX_FRIENDS = 200;
+const MAX_FRIEND_REQUESTS = 300;
 const FRIEND_ID_DIGITS = 5;
 const FRIEND_ID_MIN = 10_000;
 const FRIEND_ID_MAX = 99_999;
@@ -215,6 +229,109 @@ function serializeFriendList(friends: FriendListEntry[]): Array<{
     displayName: friend.displayName,
     email: friend.email,
   }));
+}
+
+function normalizeIsoDate(value: unknown): string {
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+
+  return new Date().toISOString();
+}
+
+function normalizeFriendRequestList(value: unknown): FriendRequestEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seenIds = new Set<string>();
+  const normalized: FriendRequestEntry[] = [];
+
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
+    const record = entry as Record<string, unknown>;
+    const requestId = normalizeUserId(record.requestId);
+    const fromUserId = normalizeUserId(record.fromUserId);
+    const toUserId = normalizeUserId(record.toUserId);
+
+    if (!requestId || !fromUserId || !toUserId || seenIds.has(requestId)) {
+      continue;
+    }
+
+    seenIds.add(requestId);
+    normalized.push({
+      requestId,
+      fromUserId,
+      fromFriendId: normalizeFriendId(record.fromFriendId),
+      fromDisplayName: normalizeDisplayName(record.fromDisplayName) || "Player",
+      fromEmail: normalizeEmail(record.fromEmail),
+      toUserId,
+      toFriendId: normalizeFriendId(record.toFriendId),
+      toDisplayName: normalizeDisplayName(record.toDisplayName) || "Player",
+      toEmail: normalizeEmail(record.toEmail),
+      createdAt: normalizeIsoDate(record.createdAt),
+    });
+  }
+
+  return normalized
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.createdAt);
+      const rightTime = Date.parse(right.createdAt);
+      if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) {
+        return 0;
+      }
+
+      return rightTime - leftTime;
+    })
+    .slice(0, MAX_FRIEND_REQUESTS);
+}
+
+function serializeFriendRequestList(requests: FriendRequestEntry[]): Array<{
+  requestId: string;
+  fromUserId: string;
+  fromFriendId: string;
+  fromDisplayName: string;
+  fromEmail: string | null;
+  toUserId: string;
+  toFriendId: string;
+  toDisplayName: string;
+  toEmail: string | null;
+  createdAt: string;
+}> {
+  return requests.map((request) => ({
+    requestId: request.requestId,
+    fromUserId: request.fromUserId,
+    fromFriendId: request.fromFriendId,
+    fromDisplayName: request.fromDisplayName,
+    fromEmail: request.fromEmail,
+    toUserId: request.toUserId,
+    toFriendId: request.toFriendId,
+    toDisplayName: request.toDisplayName,
+    toEmail: request.toEmail,
+    createdAt: request.createdAt,
+  }));
+}
+
+function buildRequestId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `req_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+}
+
+function removeRequestsBetweenUsers(requests: FriendRequestEntry[], leftUserId: string, rightUserId: string): FriendRequestEntry[] {
+  return requests.filter((request) => {
+    const forward = request.fromUserId === leftUserId && request.toUserId === rightUserId;
+    const backward = request.fromUserId === rightUserId && request.toUserId === leftUserId;
+    return !forward && !backward;
+  });
 }
 
 function normalizePublicUserProfile(userId: string, value: unknown): PublicUserProfile | null {
@@ -665,6 +782,461 @@ export async function getFriendListForUser(userId: string): Promise<FriendListEn
   return normalizeFriendList(snapshot.data().friends);
 }
 
+async function addFriendshipBetweenUsers(
+  database: Firestore,
+  ownerProfile: PublicUserProfile,
+  targetProfile: PublicUserProfile,
+): Promise<FriendListEntry> {
+  const ownerFriendsRef = doc(database, "userFriends", ownerProfile.userId);
+  const targetFriendsRef = doc(database, "userFriends", targetProfile.userId);
+
+  const [ownerFriendsSnapshot, targetFriendsSnapshot] = await Promise.all([
+    getDoc(ownerFriendsRef),
+    getDoc(targetFriendsRef),
+  ]);
+
+  const ownerFriends = ownerFriendsSnapshot.exists()
+    ? normalizeFriendList(ownerFriendsSnapshot.data().friends)
+    : [];
+  const targetFriends = targetFriendsSnapshot.exists()
+    ? normalizeFriendList(targetFriendsSnapshot.data().friends)
+    : [];
+
+  const ownerEntry: FriendListEntry = {
+    userId: targetProfile.userId,
+    friendId: targetProfile.friendId,
+    displayName: targetProfile.displayName,
+    email: targetProfile.email,
+  };
+
+  const reciprocalEntry: FriendListEntry = {
+    userId: ownerProfile.userId,
+    friendId: ownerProfile.friendId,
+    displayName: ownerProfile.displayName,
+    email: ownerProfile.email,
+  };
+
+  const updatedOwnerFriends = upsertFriendEntry(ownerFriends, ownerEntry);
+  const updatedTargetFriends = upsertFriendEntry(targetFriends, reciprocalEntry);
+
+  await Promise.all([
+    setDoc(
+      ownerFriendsRef,
+      {
+        userId: ownerProfile.userId,
+        friends: serializeFriendList(updatedOwnerFriends),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    ),
+    setDoc(
+      targetFriendsRef,
+      {
+        userId: targetProfile.userId,
+        friends: serializeFriendList(updatedTargetFriends),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    ),
+  ]);
+
+  return ownerEntry;
+}
+
+export async function getIncomingFriendRequestsForUser(userId: string): Promise<FriendRequestEntry[]> {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    return [];
+  }
+
+  const database = requireDb();
+  const requestsRef = doc(database, "userFriendRequests", normalizedUserId);
+  const snapshot = await getDoc(requestsRef);
+  if (!snapshot.exists()) {
+    return [];
+  }
+
+  return normalizeFriendRequestList(snapshot.data().incoming)
+    .filter((request) => request.toUserId === normalizedUserId);
+}
+
+export async function getOutgoingFriendRequestsForUser(userId: string): Promise<FriendRequestEntry[]> {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    return [];
+  }
+
+  const database = requireDb();
+  const requestsRef = doc(database, "userFriendRequests", normalizedUserId);
+  const snapshot = await getDoc(requestsRef);
+  if (!snapshot.exists()) {
+    return [];
+  }
+
+  return normalizeFriendRequestList(snapshot.data().outgoing)
+    .filter((request) => request.fromUserId === normalizedUserId);
+}
+
+export async function sendFriendRequestToUserId(userId: string, toUserId: string): Promise<FriendRequestEntry> {
+  const senderId = normalizeUserId(userId);
+  const recipientId = normalizeUserId(toUserId);
+
+  if (!senderId || !recipientId) {
+    throw new Error("Invalid sender or recipient account.");
+  }
+
+  if (senderId === recipientId) {
+    throw new Error("You cannot send a friend request to yourself.");
+  }
+
+  const database = requireDb();
+  const senderProfileRef = doc(database, "userProfiles", senderId);
+  const recipientProfileRef = doc(database, "userProfiles", recipientId);
+  const senderFriendsRef = doc(database, "userFriends", senderId);
+  const senderRequestsRef = doc(database, "userFriendRequests", senderId);
+  const recipientRequestsRef = doc(database, "userFriendRequests", recipientId);
+
+  const [
+    senderProfileSnapshot,
+    recipientProfileSnapshot,
+    senderFriendsSnapshot,
+    senderRequestsSnapshot,
+    recipientRequestsSnapshot,
+  ] = await Promise.all([
+    getDoc(senderProfileRef),
+    getDoc(recipientProfileRef),
+    getDoc(senderFriendsRef),
+    getDoc(senderRequestsRef),
+    getDoc(recipientRequestsRef),
+  ]);
+
+  if (!senderProfileSnapshot.exists()) {
+    throw new Error("Your profile is not ready yet. Please sign out and sign in again.");
+  }
+
+  if (!recipientProfileSnapshot.exists()) {
+    throw new Error("No player found with that username or Friend ID.");
+  }
+
+  const senderProfile = normalizePublicUserProfile(senderId, senderProfileSnapshot.data());
+  const recipientProfile = normalizePublicUserProfile(recipientId, recipientProfileSnapshot.data());
+  if (!senderProfile || !recipientProfile) {
+    throw new Error("Could not read player profile data.");
+  }
+
+  const senderFriends = senderFriendsSnapshot.exists()
+    ? normalizeFriendList(senderFriendsSnapshot.data().friends)
+    : [];
+  if (senderFriends.some((friend) => friend.userId === recipientId)) {
+    throw new Error("This player is already in your friends list.");
+  }
+
+  const senderOutgoing = senderRequestsSnapshot.exists()
+    ? normalizeFriendRequestList(senderRequestsSnapshot.data().outgoing)
+    : [];
+  const senderIncoming = senderRequestsSnapshot.exists()
+    ? normalizeFriendRequestList(senderRequestsSnapshot.data().incoming)
+    : [];
+  const recipientIncoming = recipientRequestsSnapshot.exists()
+    ? normalizeFriendRequestList(recipientRequestsSnapshot.data().incoming)
+    : [];
+
+  if (senderOutgoing.some((request) => request.toUserId === recipientId)) {
+    throw new Error("Friend request already sent.");
+  }
+
+  if (senderIncoming.some((request) => request.fromUserId === recipientId)) {
+    throw new Error("This player already sent you a friend request. Check your notifications.");
+  }
+
+  if (recipientIncoming.some((request) => request.fromUserId === senderId)) {
+    throw new Error("Friend request already sent.");
+  }
+
+  const request: FriendRequestEntry = {
+    requestId: buildRequestId(),
+    fromUserId: senderProfile.userId,
+    fromFriendId: senderProfile.friendId,
+    fromDisplayName: senderProfile.displayName,
+    fromEmail: senderProfile.email,
+    toUserId: recipientProfile.userId,
+    toFriendId: recipientProfile.friendId,
+    toDisplayName: recipientProfile.displayName,
+    toEmail: recipientProfile.email,
+    createdAt: new Date().toISOString(),
+  };
+
+  const nextSenderOutgoing = [request, ...senderOutgoing].slice(0, MAX_FRIEND_REQUESTS);
+  const nextRecipientIncoming = [request, ...recipientIncoming].slice(0, MAX_FRIEND_REQUESTS);
+
+  await Promise.all([
+    setDoc(
+      senderRequestsRef,
+      {
+        userId: senderId,
+        outgoing: serializeFriendRequestList(nextSenderOutgoing),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    ),
+    setDoc(
+      recipientRequestsRef,
+      {
+        userId: recipientId,
+        incoming: serializeFriendRequestList(nextRecipientIncoming),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    ),
+  ]);
+
+  return request;
+}
+
+export async function sendFriendRequestByLookup(userId: string, friendLookup: string): Promise<FriendRequestEntry> {
+  const senderId = normalizeUserId(userId);
+  const normalizedLookup = friendLookup.trim();
+
+  if (!senderId || !normalizedLookup) {
+    throw new Error("Enter a username or Friend ID.");
+  }
+
+  const database = requireDb();
+  const targetProfile = await resolveUserProfileByLookup(database, normalizedLookup);
+  if (!targetProfile) {
+    throw new Error("No player found with that username or Friend ID.");
+  }
+
+  return sendFriendRequestToUserId(senderId, targetProfile.userId);
+}
+
+export async function respondToFriendRequest(userId: string, requestId: string, accepted: boolean): Promise<FriendRequestEntry> {
+  const receiverId = normalizeUserId(userId);
+  const normalizedRequestId = normalizeUserId(requestId);
+
+  if (!receiverId || !normalizedRequestId) {
+    throw new Error("Invalid friend request response.");
+  }
+
+  const database = requireDb();
+  const receiverRequestsRef = doc(database, "userFriendRequests", receiverId);
+  const receiverRequestsSnapshot = await getDoc(receiverRequestsRef);
+  const receiverIncoming = receiverRequestsSnapshot.exists()
+    ? normalizeFriendRequestList(receiverRequestsSnapshot.data().incoming)
+    : [];
+
+  const request = receiverIncoming.find((entry) => entry.requestId === normalizedRequestId);
+  if (!request) {
+    throw new Error("Friend request has expired.");
+  }
+
+  if (request.toUserId !== receiverId) {
+    throw new Error("Friend request does not match this account.");
+  }
+
+  const senderId = request.fromUserId;
+  const senderRequestsRef = doc(database, "userFriendRequests", senderId);
+  const senderProfileRef = doc(database, "userProfiles", senderId);
+  const receiverProfileRef = doc(database, "userProfiles", receiverId);
+  const senderFriendsRef = doc(database, "userFriends", senderId);
+  const receiverFriendsRef = doc(database, "userFriends", receiverId);
+
+  const [
+    senderRequestsSnapshot,
+    senderProfileSnapshot,
+    receiverProfileSnapshot,
+    senderFriendsSnapshot,
+    receiverFriendsSnapshot,
+  ] = await Promise.all([
+    getDoc(senderRequestsRef),
+    getDoc(senderProfileRef),
+    getDoc(receiverProfileRef),
+    getDoc(senderFriendsRef),
+    getDoc(receiverFriendsRef),
+  ]);
+
+  const senderOutgoing = senderRequestsSnapshot.exists()
+    ? normalizeFriendRequestList(senderRequestsSnapshot.data().outgoing)
+    : [];
+
+  const nextReceiverIncoming = receiverIncoming.filter((entry) => entry.requestId !== normalizedRequestId);
+  const nextSenderOutgoing = senderOutgoing.filter((entry) => entry.requestId !== normalizedRequestId);
+
+  const updates: Array<Promise<unknown>> = [
+    setDoc(
+      receiverRequestsRef,
+      {
+        userId: receiverId,
+        incoming: serializeFriendRequestList(nextReceiverIncoming),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    ),
+    setDoc(
+      senderRequestsRef,
+      {
+        userId: senderId,
+        outgoing: serializeFriendRequestList(nextSenderOutgoing),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    ),
+  ];
+
+  if (accepted) {
+    const senderProfile = senderProfileSnapshot.exists()
+      ? normalizePublicUserProfile(senderId, senderProfileSnapshot.data())
+      : null;
+    const receiverProfile = receiverProfileSnapshot.exists()
+      ? normalizePublicUserProfile(receiverId, receiverProfileSnapshot.data())
+      : null;
+
+    if (!senderProfile || !receiverProfile) {
+      throw new Error("Could not read player profile data.");
+    }
+
+    const senderFriends = senderFriendsSnapshot.exists()
+      ? normalizeFriendList(senderFriendsSnapshot.data().friends)
+      : [];
+    const receiverFriends = receiverFriendsSnapshot.exists()
+      ? normalizeFriendList(receiverFriendsSnapshot.data().friends)
+      : [];
+
+    const senderEntry: FriendListEntry = {
+      userId: receiverProfile.userId,
+      friendId: receiverProfile.friendId,
+      displayName: receiverProfile.displayName,
+      email: receiverProfile.email,
+    };
+
+    const receiverEntry: FriendListEntry = {
+      userId: senderProfile.userId,
+      friendId: senderProfile.friendId,
+      displayName: senderProfile.displayName,
+      email: senderProfile.email,
+    };
+
+    const nextSenderFriends = upsertFriendEntry(senderFriends, senderEntry);
+    const nextReceiverFriends = upsertFriendEntry(receiverFriends, receiverEntry);
+
+    updates.push(
+      setDoc(
+        senderFriendsRef,
+        {
+          userId: senderId,
+          friends: serializeFriendList(nextSenderFriends),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      ),
+    );
+    updates.push(
+      setDoc(
+        receiverFriendsRef,
+        {
+          userId: receiverId,
+          friends: serializeFriendList(nextReceiverFriends),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      ),
+    );
+  }
+
+  await Promise.all(updates);
+  return request;
+}
+
+export async function removeFriendForUser(userId: string, friendUserId: string): Promise<void> {
+  const ownerId = normalizeUserId(userId);
+  const targetId = normalizeUserId(friendUserId);
+  if (!ownerId || !targetId || ownerId === targetId) {
+    return;
+  }
+
+  const database = requireDb();
+  const ownerFriendsRef = doc(database, "userFriends", ownerId);
+  const targetFriendsRef = doc(database, "userFriends", targetId);
+  const ownerRequestsRef = doc(database, "userFriendRequests", ownerId);
+  const targetRequestsRef = doc(database, "userFriendRequests", targetId);
+
+  const [ownerFriendsSnapshot, targetFriendsSnapshot, ownerRequestsSnapshot, targetRequestsSnapshot] = await Promise.all([
+    getDoc(ownerFriendsRef),
+    getDoc(targetFriendsRef),
+    getDoc(ownerRequestsRef),
+    getDoc(targetRequestsRef),
+  ]);
+
+  const ownerFriends = ownerFriendsSnapshot.exists()
+    ? normalizeFriendList(ownerFriendsSnapshot.data().friends)
+    : [];
+  const targetFriends = targetFriendsSnapshot.exists()
+    ? normalizeFriendList(targetFriendsSnapshot.data().friends)
+    : [];
+
+  const nextOwnerFriends = ownerFriends.filter((entry) => entry.userId !== targetId);
+  const nextTargetFriends = targetFriends.filter((entry) => entry.userId !== ownerId);
+
+  const ownerIncoming = ownerRequestsSnapshot.exists()
+    ? normalizeFriendRequestList(ownerRequestsSnapshot.data().incoming)
+    : [];
+  const ownerOutgoing = ownerRequestsSnapshot.exists()
+    ? normalizeFriendRequestList(ownerRequestsSnapshot.data().outgoing)
+    : [];
+  const targetIncoming = targetRequestsSnapshot.exists()
+    ? normalizeFriendRequestList(targetRequestsSnapshot.data().incoming)
+    : [];
+  const targetOutgoing = targetRequestsSnapshot.exists()
+    ? normalizeFriendRequestList(targetRequestsSnapshot.data().outgoing)
+    : [];
+
+  const nextOwnerIncoming = removeRequestsBetweenUsers(ownerIncoming, ownerId, targetId);
+  const nextOwnerOutgoing = removeRequestsBetweenUsers(ownerOutgoing, ownerId, targetId);
+  const nextTargetIncoming = removeRequestsBetweenUsers(targetIncoming, ownerId, targetId);
+  const nextTargetOutgoing = removeRequestsBetweenUsers(targetOutgoing, ownerId, targetId);
+
+  await Promise.all([
+    setDoc(
+      ownerFriendsRef,
+      {
+        userId: ownerId,
+        friends: serializeFriendList(nextOwnerFriends),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    ),
+    setDoc(
+      targetFriendsRef,
+      {
+        userId: targetId,
+        friends: serializeFriendList(nextTargetFriends),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    ),
+    setDoc(
+      ownerRequestsRef,
+      {
+        userId: ownerId,
+        incoming: serializeFriendRequestList(nextOwnerIncoming),
+        outgoing: serializeFriendRequestList(nextOwnerOutgoing),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    ),
+    setDoc(
+      targetRequestsRef,
+      {
+        userId: targetId,
+        incoming: serializeFriendRequestList(nextTargetIncoming),
+        outgoing: serializeFriendRequestList(nextTargetOutgoing),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    ),
+  ]);
+}
+
 export async function addFriendForUserByLookup(userId: string, friendLookup: string): Promise<FriendListEntry> {
   const ownerId = normalizeUserId(userId);
   const normalizedLookup = friendLookup.trim();
@@ -686,14 +1258,10 @@ export async function addFriendForUserByLookup(userId: string, friendLookup: str
 
   const ownerProfileRef = doc(database, "userProfiles", ownerId);
   const targetProfileRef = doc(database, "userProfiles", targetId);
-  const ownerFriendsRef = doc(database, "userFriends", ownerId);
-  const targetFriendsRef = doc(database, "userFriends", targetId);
 
-  const [ownerProfileSnapshot, targetProfileSnapshot, ownerFriendsSnapshot, targetFriendsSnapshot] = await Promise.all([
+  const [ownerProfileSnapshot, targetProfileSnapshot] = await Promise.all([
     getDoc(ownerProfileRef),
     getDoc(targetProfileRef),
-    getDoc(ownerFriendsRef),
-    getDoc(targetFriendsRef),
   ]);
 
   if (!ownerProfileSnapshot.exists()) {
@@ -711,50 +1279,5 @@ export async function addFriendForUserByLookup(userId: string, friendLookup: str
     throw new Error("Could not read player profile data.");
   }
 
-  const ownerEntry: FriendListEntry = {
-    userId: targetProfile.userId,
-    friendId: targetProfile.friendId,
-    displayName: targetProfile.displayName,
-    email: targetProfile.email,
-  };
-
-  const reciprocalEntry: FriendListEntry = {
-    userId: ownerProfile.userId,
-    friendId: ownerProfile.friendId,
-    displayName: ownerProfile.displayName,
-    email: ownerProfile.email,
-  };
-
-  const ownerFriends = ownerFriendsSnapshot.exists()
-    ? normalizeFriendList(ownerFriendsSnapshot.data().friends)
-    : [];
-  const targetFriends = targetFriendsSnapshot.exists()
-    ? normalizeFriendList(targetFriendsSnapshot.data().friends)
-    : [];
-
-  const updatedOwnerFriends = upsertFriendEntry(ownerFriends, ownerEntry);
-  const updatedTargetFriends = upsertFriendEntry(targetFriends, reciprocalEntry);
-
-  await Promise.all([
-    setDoc(
-      ownerFriendsRef,
-      {
-        userId: ownerId,
-        friends: serializeFriendList(updatedOwnerFriends),
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true },
-    ),
-    setDoc(
-      targetFriendsRef,
-      {
-        userId: targetId,
-        friends: serializeFriendList(updatedTargetFriends),
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true },
-    ),
-  ]);
-
-  return ownerEntry;
+  return addFriendshipBetweenUsers(database, ownerProfile, targetProfile);
 }

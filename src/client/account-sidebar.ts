@@ -2,12 +2,11 @@ import type { User } from "firebase/auth";
 import { Chess } from "chess.js";
 
 import {
-  addFriendForUserByLookup,
   deleteStoredGameForUser,
   FriendListEntry,
+  FriendRequestEntry,
   formatGoogleAuthError,
   getFirebaseAuthDisabledReason,
-  getFriendListForUser,
   getPublicUserProfile,
   getStoredGameCount,
   getStoredGameHistory,
@@ -20,6 +19,16 @@ import {
   signOutCurrentUser,
   syncUserProfile,
 } from "./firebase";
+import {
+  getLookupRequestState,
+  loadFriendSystemSnapshot,
+  removeFriendConnection,
+  submitFriendRequestByLookup,
+} from "./friend-system";
+import {
+  createFriendActivityRealtimeController,
+  FriendActivityState,
+} from "./friend-activity-realtime";
 
 type SocketLike = {
   connected: boolean;
@@ -134,6 +143,9 @@ export function createAccountSidebarController({
   let friendsLoading = false;
   let addFriendBusy = false;
   let friendsComposerOpen = false;
+  let incomingFriendRequests: FriendRequestEntry[] = [];
+  let outgoingFriendRequests: FriendRequestEntry[] = [];
+  const pendingFriendRemovals = new Set<string>();
   let currentFriendId: string | null = null;
   let currentRoomId: string | null = null;
 
@@ -142,6 +154,10 @@ export function createAccountSidebarController({
   let failedGameSignature: string | null = null;
 
   let listenersWired = false;
+  const friendActivityRealtime = createFriendActivityRealtimeController({ socket });
+  const unsubscribeFriendActivity = friendActivityRealtime.subscribe((snapshot) => {
+    applyRealtimeFriendActivity(snapshot);
+  });
 
   const onAccountMenuClick = (): void => {
     const nextOpen = !sidebarOpen;
@@ -264,7 +280,7 @@ export function createAccountSidebarController({
 
   const onAddFriendClick = async (): Promise<void> => {
     if (!authenticatedUser || !isFirebaseAuthEnabled()) {
-      showToast("Sign in to add friends.");
+      showToast("Sign in to send friend requests.");
       return;
     }
 
@@ -279,16 +295,16 @@ export function createAccountSidebarController({
       return;
     }
 
-    const added = await addFriendByLookup(lookupQuery);
-    if (added) {
+    const sent = await sendFriendRequestByLookup(lookupQuery);
+    if (sent) {
       refs.friendIdInput.value = "";
       renderFriendsPanel();
     }
   };
 
-  async function addFriendByLookup(lookup: string): Promise<boolean> {
+  async function sendFriendRequestByLookup(lookup: string): Promise<boolean> {
     if (!authenticatedUser || !isFirebaseAuthEnabled()) {
-      showToast("Sign in to add friends.");
+      showToast("Sign in to send friend requests.");
       return false;
     }
 
@@ -305,12 +321,19 @@ export function createAccountSidebarController({
     renderFriendsPanel();
 
     try {
-      await addFriendForUserByLookup(authenticatedUser.uid, lookupQuery);
-      showToast("Friend added.");
+      const request = await submitFriendRequestByLookup(authenticatedUser.uid, lookupQuery);
+      if (socket.connected) {
+        socket.emit("friends:notification:request", {
+          toUserId: request.toUserId,
+          requestId: request.requestId,
+          fromDisplayName: request.fromDisplayName,
+        });
+      }
+      showToast(`Request sent to ${request.toDisplayName}.`);
       await refreshFriendsPanel();
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not find that friend by username or ID.";
+      const message = error instanceof Error ? error.message : "Could not send friend request right now.";
       showToast(message);
       return false;
     } finally {
@@ -319,49 +342,31 @@ export function createAccountSidebarController({
     }
   }
 
-  const onFriendsPresence = (payload?: unknown): void => {
-    if (!payload || typeof payload !== "object") {
+  async function handleRemoveFriend(entry: SidebarFriendEntry): Promise<void> {
+    if (!authenticatedUser || !isFirebaseAuthEnabled()) {
+      showToast("Sign in to manage friends.");
       return;
     }
 
-    const records = (payload as { friends?: unknown }).friends;
-    if (!Array.isArray(records)) {
+    if (pendingFriendRemovals.has(entry.userId)) {
       return;
     }
 
-    const presenceById = new Map<string, {
-      status: FriendPresenceStatus;
-      roomId: string | null;
-      canSpectate: boolean;
-    }>();
-    for (const item of records) {
-      if (!item || typeof item !== "object") {
-        continue;
-      }
-
-      const record = item as { userId?: unknown; status?: unknown; roomId?: unknown; canSpectate?: unknown };
-      const userId = normalizeSocketUserId(record.userId);
-      const status = normalizePresenceStatus(record.status);
-      const roomId = normalizeRoomId(record.roomId);
-      const canSpectate = record.canSpectate === true;
-      if (!userId) {
-        continue;
-      }
-
-      presenceById.set(userId, { status, roomId, canSpectate });
-    }
-
-    friends = friends.map((entry) => {
-      const presence = presenceById.get(entry.userId);
-      return {
-        ...entry,
-        status: presence?.status ?? "offline",
-        presenceRoomId: presence?.roomId ?? null,
-        canSpectate: presence?.canSpectate ?? false,
-      };
-    });
+    pendingFriendRemovals.add(entry.userId);
     renderFriendsPanel();
-  };
+
+    try {
+      await removeFriendConnection(authenticatedUser.uid, entry.userId);
+      showToast(`${entry.displayName} removed from friends.`);
+      await refreshFriendsPanel();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not remove friend right now.";
+      showToast(message);
+    } finally {
+      pendingFriendRemovals.delete(entry.userId);
+      renderFriendsPanel();
+    }
+  }
 
   const onSessionJoined = (payload?: unknown): void => {
     if (!payload || typeof payload !== "object") {
@@ -473,14 +478,6 @@ export function createAccountSidebarController({
     return /^\d+$/.test(value.trim());
   }
 
-  function normalizePresenceStatus(value: unknown): FriendPresenceStatus {
-    if (value === "online" || value === "in-room") {
-      return value;
-    }
-
-    return "offline";
-  }
-
   function normalizeRoomId(value: unknown): string | null {
     if (typeof value !== "string") {
       return null;
@@ -550,14 +547,41 @@ export function createAccountSidebarController({
     emitCurrentProfileName();
   }
 
-  function syncFriendPresenceWatch(): void {
-    if (!authenticatedUser || !socket.connected) {
-      socket.emit("friends:watch", { friendIds: [] });
+  function applyRealtimeFriendActivity(presenceByUserId: Map<string, FriendActivityState>): void {
+    if (friends.length === 0) {
       return;
     }
 
-    const friendIds = friends.map((entry) => entry.userId);
-    socket.emit("friends:watch", { friendIds });
+    let changed = false;
+    friends = friends.map((entry) => {
+      const presence = presenceByUserId.get(entry.userId);
+      const nextStatus = presence?.status ?? "offline";
+      const nextRoomId = presence?.roomId ?? null;
+      const nextCanSpectate = presence?.canSpectate ?? false;
+      if (
+        entry.status === nextStatus
+        && entry.presenceRoomId === nextRoomId
+        && entry.canSpectate === nextCanSpectate
+      ) {
+        return entry;
+      }
+
+      changed = true;
+      return {
+        ...entry,
+        status: nextStatus,
+        presenceRoomId: nextRoomId,
+        canSpectate: nextCanSpectate,
+      };
+    });
+
+    if (changed) {
+      renderFriendsPanel();
+    }
+  }
+
+  function syncFriendActivitySubscription(): void {
+    friendActivityRealtime.updateWatchedFriendIds(friends.map((entry) => entry.userId));
   }
 
   function getCurrentPlayerName(): string {
@@ -589,8 +613,6 @@ export function createAccountSidebarController({
       email: authenticatedUser?.email ?? null,
       friendId: currentFriendId,
     });
-
-    syncFriendPresenceWatch();
   }
 
   function getPresenceLabel(status: FriendPresenceStatus): string {
@@ -667,9 +689,10 @@ export function createAccountSidebarController({
   function openSidebarToFriends(): void {
     setActiveSidebarTab("profile");
     setSidebarOpen(true);
+    const scrollAnchor = refs.friendsList.hidden ? refs.friendsToggleButton : refs.friendsList;
 
     window.requestAnimationFrame(() => {
-      refs.friendsList.scrollIntoView({
+      scrollAnchor.scrollIntoView({
         behavior: "smooth",
         block: "start",
         inline: "nearest",
@@ -734,6 +757,17 @@ export function createAccountSidebarController({
       actions.appendChild(spectateButton);
     }
 
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "chip friend-remove-button";
+    const removing = pendingFriendRemovals.has(entry.userId);
+    removeButton.disabled = removing;
+    removeButton.textContent = removing ? "Removing..." : "Remove";
+    removeButton.addEventListener("click", () => {
+      void handleRemoveFriend(entry);
+    });
+    actions.appendChild(removeButton);
+
     if (actions.childElementCount > 0) {
       item.appendChild(actions);
     }
@@ -745,6 +779,12 @@ export function createAccountSidebarController({
     const canUseFriends = Boolean(authenticatedUser && isFirebaseAuthEnabled());
     const lookupValue = normalizeFriendLookupQuery(refs.friendIdInput.value);
     const numericLookup = isNumericFriendLookup(lookupValue);
+    const lookupState = getLookupRequestState(
+      lookupValue,
+      friends,
+      incomingFriendRequests,
+      outgoingFriendRequests,
+    );
 
     refs.friendPlayerId.textContent = currentFriendId ?? (authenticatedUser ? "Generating..." : "Sign in to reveal your Friend ID");
     refs.copyPlayerIdButton.disabled = !authenticatedUser || !currentFriendId;
@@ -754,9 +794,19 @@ export function createAccountSidebarController({
       lookupValue.length >= 2
       && (!numericLookup || lookupValue.length === FRIEND_NUMERIC_ID_LENGTH);
 
-    refs.addFriendButton.disabled = !canUseFriends || addFriendBusy || !hasValidLookup;
-    refs.addFriendButton.textContent = addFriendBusy ? "Adding..." : "Add";
+    const canSubmitRequest = hasValidLookup && lookupState === "ready";
+    refs.addFriendButton.disabled = !canUseFriends || addFriendBusy || !canSubmitRequest;
+    refs.addFriendButton.textContent = addFriendBusy
+      ? "Sending..."
+      : lookupState === "outgoing"
+        ? "Request Sent"
+        : lookupState === "friend"
+          ? "Friend Added"
+          : lookupState === "incoming"
+            ? "Check Requests"
+            : "Send";
     refs.friendsList.innerHTML = "";
+    refs.friendsList.hidden = true;
 
     if (!authenticatedUser) {
       refs.friendsStatus.textContent = "Sign in to add friends by username or 5-digit Friend ID.";
@@ -778,6 +828,7 @@ export function createAccountSidebarController({
       return;
     }
 
+    refs.friendsList.hidden = false;
     refs.friendsStatus.textContent = `Friends: ${friends.length}`;
     for (const friend of friends) {
       refs.friendsList.appendChild(renderFriendItem(friend));
@@ -791,9 +842,11 @@ export function createAccountSidebarController({
   async function refreshFriendsPanel(): Promise<void> {
     if (!authenticatedUser || !isFirebaseAuthEnabled()) {
       friends = [];
+      incomingFriendRequests = [];
+      outgoingFriendRequests = [];
       friendsLoading = false;
       renderFriendsPanel();
-      syncFriendPresenceWatch();
+      syncFriendActivitySubscription();
       return;
     }
 
@@ -801,7 +854,13 @@ export function createAccountSidebarController({
     renderFriendsPanel();
 
     try {
-      const loadedFriends = await getFriendListForUser(authenticatedUser.uid);
+      const snapshot = await loadFriendSystemSnapshot(authenticatedUser.uid);
+      const loadedFriends = snapshot.friends;
+      const nextIncoming = snapshot.incomingRequests;
+      const nextOutgoing = snapshot.outgoingRequests;
+
+      incomingFriendRequests = nextIncoming;
+      outgoingFriendRequests = nextOutgoing;
       friends = loadedFriends.map((entry) => ({
         ...entry,
         status: "offline",
@@ -810,11 +869,13 @@ export function createAccountSidebarController({
       }));
     } catch {
       friends = [];
+      incomingFriendRequests = [];
+      outgoingFriendRequests = [];
       showToast("Could not load friends list.");
     } finally {
       friendsLoading = false;
       renderFriendsPanel();
-      syncFriendPresenceWatch();
+      syncFriendActivitySubscription();
     }
   }
 
@@ -1452,7 +1513,6 @@ export function createAccountSidebarController({
     refs.addFriendButton.addEventListener("click", onAddFriendClick);
     refs.guestModeButton.addEventListener("click", onGuestModeClick);
     refs.signOutButton.addEventListener("click", onSignOutClick);
-    socket.on("friends:presence", onFriendsPresence);
     socket.on("friends:invite:sent", onFriendInviteSent);
     socket.on("session:joined", onSessionJoined);
     socket.on("session:left", onSessionLeft);
@@ -1485,7 +1545,6 @@ export function createAccountSidebarController({
     refs.addFriendButton.removeEventListener("click", onAddFriendClick);
     refs.guestModeButton.removeEventListener("click", onGuestModeClick);
     refs.signOutButton.removeEventListener("click", onSignOutClick);
-    socket.off("friends:presence", onFriendsPresence);
     socket.off("friends:invite:sent", onFriendInviteSent);
     socket.off("session:joined", onSessionJoined);
     socket.off("session:left", onSessionLeft);
@@ -1499,6 +1558,7 @@ export function createAccountSidebarController({
     setFriendsComposerOpen(false, false);
     renderSavedHistoryPanel();
     wireEventListeners();
+    friendActivityRealtime.initialize();
 
     renderAuthPanel();
     await initializeFirebaseClient();
@@ -1517,9 +1577,13 @@ export function createAccountSidebarController({
       historyLoading = false;
       deletingGameId = null;
       friends = [];
+      incomingFriendRequests = [];
+      outgoingFriendRequests = [];
+      pendingFriendRemovals.clear();
       friendsLoading = false;
       addFriendBusy = false;
       currentFriendId = null;
+      friendActivityRealtime.updateWatchedFriendIds([]);
 
       editableUsername = getCurrentPlayerName();
 
@@ -1548,6 +1612,8 @@ export function createAccountSidebarController({
   function dispose(): void {
     authUnsubscribe?.();
     authUnsubscribe = null;
+    unsubscribeFriendActivity();
+    friendActivityRealtime.dispose();
     unWireEventListeners();
     document.body.classList.remove(MOBILE_SCROLL_LOCK_CLASS);
   }
@@ -1561,7 +1627,7 @@ export function createAccountSidebarController({
     getInviteCandidates,
     canSendRoomInvites,
     sendInviteToFriend,
-    addFriendByLookup,
+    addFriendByLookup: sendFriendRequestByLookup,
     normalizeUsername,
     resetFinishedGameTracking,
     handleFinishedGamePersist,

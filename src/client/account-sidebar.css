@@ -1,7 +1,7 @@
 .top-utility {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -301,6 +301,11 @@
   justify-items: end;
 }
 
+.friend-remove-button {
+  min-width: 122px;
+  font-size: 0.75rem;
+}
+
 .friend-invite-button {
   min-width: 122px;
   font-size: 0.75rem;
@@ -485,7 +490,8 @@ body.focus-mode .sidebar-backdrop {
   }
 
   .friend-invite-button,
-  .friend-spectate-button {
+  .friend-spectate-button,
+  .friend-remove-button {
     width: 100%;
   }
 
