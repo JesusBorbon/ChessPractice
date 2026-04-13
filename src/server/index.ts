@@ -1610,12 +1610,12 @@ io.on("connection", (socket) => {
 
     const toEmail = normalizeEmail(payload?.toEmail);
     if (!toEmail) {
-      socket.emit("room:error", { message: "Friend is offline and has no Gmail available for email invites." });
+      socket.emit("room:error", { message: "Friend is offline and has no email on file for Gmail invites." });
       return;
     }
 
     if (!canSendFriendInviteEmail()) {
-      socket.emit("room:error", { message: "Gmail invite delivery is not configured on the server." });
+      socket.emit("room:error", { message: "Gmail invites are not configured on the server (missing GMAIL_SMTP_USER / GMAIL_SMTP_PASS)." });
       return;
     }
 
@@ -1627,8 +1627,9 @@ io.on("connection", (socket) => {
         shareUrl,
       });
       socket.emit("friends:invite:sent", { toUserId, delivery: "email" });
-    } catch {
-      socket.emit("room:error", { message: "Could not send Gmail invite right now." });
+    } catch (error) {
+      const details = error instanceof Error ? error.message.trim() : "";
+      socket.emit("room:error", { message: details ? `Could not send Gmail invite: ${details}` : "Could not send Gmail invite right now." });
     }
   });
 

@@ -1009,8 +1009,7 @@ app.innerHTML = `
             <button class="action" id="joinRoomButton" type="button">Join</button>
           </div>
           <div class="link-row">
-            <span class="muted">Share URL</span>
-            <span class="room-link" id="shareLink">Create or join a room to get a live invite link.</span>
+            <button class="chip" id="roomInviteButton" type="button" hidden>Invite</button>
           </div>
         </section>
 
@@ -1199,7 +1198,7 @@ const roomBadge = must<HTMLDivElement>("#roomBadge");
 const roleBadge = must<HTMLDivElement>("#roleBadge");
 const matchStatus = must<HTMLDivElement>("#matchStatus");
 const boardCaption = must<HTMLDivElement>("#boardCaption");
-const shareLink = must<HTMLSpanElement>("#shareLink");
+const roomInviteButton = must<HTMLButtonElement>("#roomInviteButton");
 const seatCard = must<HTMLElement>("#seatCard");
 const summaryCard = must<HTMLElement>("#summaryCard");
 const movesCard = must<HTMLElement>("#movesCard");
@@ -1654,6 +1653,15 @@ copyLinkButton.addEventListener("click", async () => {
   } catch {
     showToast("Clipboard access failed. Copy the link manually.");
   }
+});
+
+roomInviteButton.addEventListener("click", () => {
+  if (!accountSidebarController.canSendRoomInvites()) {
+    showToast("Create or join a room before inviting friends.");
+    return;
+  }
+
+  accountSidebarController.openSidebarToFriends();
 });
 
 liveNavFirst.addEventListener("click", () => {
@@ -2829,6 +2837,7 @@ function renderSession(): void {
   // 1. Core State Calculations
   const isMultiplayer = state.gameMode === "multiplayer";
   const bothConnected = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
+  const canSendRoomInvites = hasRoom && isMultiplayer && accountSidebarController.canSendRoomInvites();
   
   const isGameActive = Boolean(
     (isMultiplayer && bothConnected && snapshot?.isStarted) || 
@@ -2862,7 +2871,7 @@ function renderSession(): void {
 
   roomBadge.textContent = state.roomId ? `Room ${state.roomId}` : "No active room";
   roleBadge.textContent = humanRole(state.role);
-  shareLink.textContent = state.shareUrl || "Create or join a room to get a live invite link.";
+  roomInviteButton.hidden = !canSendRoomInvites;
 
   const heroCopy = document.querySelector<HTMLElement>(".hero-copy");
   if (heroCopy) heroCopy.hidden = isGameActive;

@@ -36,6 +36,13 @@ type SidebarFriendEntry = FriendListEntry & {
   canSpectate: boolean;
 };
 
+export type FriendInviteCandidate = {
+  userId: string;
+  displayName: string;
+  email: string | null;
+  status: FriendPresenceStatus;
+};
+
 export type AccountSidebarDomRefs = { // this is for the sake of better readability and maintainability, grouping all DOM refs related to the account sidebar in a single typez
   quickIdentity: HTMLParagraphElement;
   accountMenuButton: HTMLButtonElement;
@@ -83,6 +90,10 @@ export type AccountSidebarController = {
   dispose: () => void;
   emitCurrentProfileName: () => void;
   getCurrentPlayerName: () => string;
+  openSidebarToFriends: () => void;
+  getInviteCandidates: () => FriendInviteCandidate[];
+  canSendRoomInvites: () => boolean;
+  sendInviteToFriend: (userId: string) => boolean;
   addFriendByLookup: (lookup: string) => Promise<boolean>;
   normalizeUsername: (value: string) => string;
   resetFinishedGameTracking: () => void;
@@ -594,6 +605,78 @@ export function createAccountSidebarController({
     return "Offline";
   }
 
+  function getInviteCandidates(): FriendInviteCandidate[] {
+    const byStatusPriority: Record<FriendPresenceStatus, number> = {
+      "in-room": 0,
+      online: 1,
+      offline: 2,
+    };
+
+    return [...friends]
+      .sort((left, right) => {
+        const priorityDiff = byStatusPriority[left.status] - byStatusPriority[right.status];
+        if (priorityDiff !== 0) {
+          return priorityDiff;
+        }
+
+        return left.displayName.localeCompare(right.displayName);
+      })
+      .map((entry) => ({
+        userId: entry.userId,
+        displayName: entry.displayName,
+        email: entry.email,
+        status: entry.status,
+      }));
+  }
+
+  function canSendRoomInvites(): boolean {
+    return Boolean(currentRoomId);
+  }
+
+  function sendInviteToFriend(userId: string): boolean {
+    const normalizedUserId = normalizeSocketUserId(userId);
+    if (!normalizedUserId) {
+      showToast("Select a valid friend first.");
+      return false;
+    }
+
+    const friend = friends.find((entry) => entry.userId === normalizedUserId);
+    if (!friend) {
+      showToast("Friend not found in your list.");
+      return false;
+    }
+
+    if (!socket.connected) {
+      showToast("Reconnect before sending invites.");
+      return false;
+    }
+
+    if (!currentRoomId) {
+      showToast("Create or join a room before sending invites.");
+      return false;
+    }
+
+    socket.emit("friends:invite:send", {
+      toUserId: friend.userId,
+      toEmail: friend.email,
+    });
+
+    return true;
+  }
+
+  function openSidebarToFriends(): void {
+    setActiveSidebarTab("profile");
+    setSidebarOpen(true);
+
+    window.requestAnimationFrame(() => {
+      refs.friendsList.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+        inline: "nearest",
+      });
+    });
+  }
+
   function renderFriendItem(entry: SidebarFriendEntry): HTMLElement {
     const item = document.createElement("article");
     item.className = "friend-item";
@@ -628,10 +711,7 @@ export function createAccountSidebarController({
       inviteButton.disabled = !socket.connected;
       inviteButton.textContent = entry.status === "offline" ? "Send Gmail Invite" : "Invite";
       inviteButton.addEventListener("click", () => {
-        socket.emit("friends:invite:send", {
-          toUserId: entry.userId,
-          toEmail: entry.email,
-        });
+        sendInviteToFriend(entry.userId);
       });
       actions.appendChild(inviteButton);
     }
@@ -1477,6 +1557,10 @@ export function createAccountSidebarController({
     dispose,
     emitCurrentProfileName,
     getCurrentPlayerName,
+    openSidebarToFriends,
+    getInviteCandidates,
+    canSendRoomInvites,
+    sendInviteToFriend,
     addFriendByLookup,
     normalizeUsername,
     resetFinishedGameTracking,

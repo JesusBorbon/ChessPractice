@@ -28751,6 +28751,64 @@ function createAccountSidebarController({
     }
     return "Offline";
   }
+  function getInviteCandidates() {
+    const byStatusPriority = {
+      "in-room": 0,
+      online: 1,
+      offline: 2
+    };
+    return [...friends].sort((left, right) => {
+      const priorityDiff = byStatusPriority[left.status] - byStatusPriority[right.status];
+      if (priorityDiff !== 0) {
+        return priorityDiff;
+      }
+      return left.displayName.localeCompare(right.displayName);
+    }).map((entry) => ({
+      userId: entry.userId,
+      displayName: entry.displayName,
+      email: entry.email,
+      status: entry.status
+    }));
+  }
+  function canSendRoomInvites() {
+    return Boolean(currentRoomId);
+  }
+  function sendInviteToFriend(userId) {
+    const normalizedUserId = normalizeSocketUserId(userId);
+    if (!normalizedUserId) {
+      showToast("Select a valid friend first.");
+      return false;
+    }
+    const friend = friends.find((entry) => entry.userId === normalizedUserId);
+    if (!friend) {
+      showToast("Friend not found in your list.");
+      return false;
+    }
+    if (!socket.connected) {
+      showToast("Reconnect before sending invites.");
+      return false;
+    }
+    if (!currentRoomId) {
+      showToast("Create or join a room before sending invites.");
+      return false;
+    }
+    socket.emit("friends:invite:send", {
+      toUserId: friend.userId,
+      toEmail: friend.email
+    });
+    return true;
+  }
+  function openSidebarToFriends() {
+    setActiveSidebarTab("profile");
+    setSidebarOpen(true);
+    window.requestAnimationFrame(() => {
+      refs.friendsList.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+        inline: "nearest"
+      });
+    });
+  }
   function renderFriendItem(entry) {
     const item = document.createElement("article");
     item.className = "friend-item";
@@ -28777,10 +28835,7 @@ function createAccountSidebarController({
       inviteButton.disabled = !socket.connected;
       inviteButton.textContent = entry.status === "offline" ? "Send Gmail Invite" : "Invite";
       inviteButton.addEventListener("click", () => {
-        socket.emit("friends:invite:send", {
-          toUserId: entry.userId,
-          toEmail: entry.email
-        });
+        sendInviteToFriend(entry.userId);
       });
       actions.appendChild(inviteButton);
     }
@@ -29476,6 +29531,10 @@ function createAccountSidebarController({
     dispose,
     emitCurrentProfileName,
     getCurrentPlayerName,
+    openSidebarToFriends,
+    getInviteCandidates,
+    canSendRoomInvites,
+    sendInviteToFriend,
     addFriendByLookup,
     normalizeUsername,
     resetFinishedGameTracking,
@@ -30949,8 +31008,7 @@ var require_main = __commonJS({
             <button class="action" id="joinRoomButton" type="button">Join</button>
           </div>
           <div class="link-row">
-            <span class="muted">Share URL</span>
-            <span class="room-link" id="shareLink">Create or join a room to get a live invite link.</span>
+            <button class="chip" id="roomInviteButton" type="button" hidden>Invite</button>
           </div>
         </section>
 
@@ -31136,7 +31194,7 @@ var require_main = __commonJS({
     var roleBadge = must("#roleBadge");
     var matchStatus = must("#matchStatus");
     var boardCaption = must("#boardCaption");
-    var shareLink = must("#shareLink");
+    var roomInviteButton = must("#roomInviteButton");
     var seatCard = must("#seatCard");
     var summaryCard = must("#summaryCard");
     var movesCard = must("#movesCard");
@@ -31530,6 +31588,13 @@ var require_main = __commonJS({
       } catch {
         showToast("Clipboard access failed. Copy the link manually.");
       }
+    });
+    roomInviteButton.addEventListener("click", () => {
+      if (!accountSidebarController.canSendRoomInvites()) {
+        showToast("Create or join a room before inviting friends.");
+        return;
+      }
+      accountSidebarController.openSidebarToFriends();
     });
     liveNavFirst.addEventListener("click", () => {
       navigateToHistoryPosition(0);
@@ -32418,6 +32483,7 @@ var require_main = __commonJS({
       refreshBotDifficultyUi();
       const isMultiplayer = state.gameMode === "multiplayer";
       const bothConnected = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
+      const canSendRoomInvites = hasRoom && isMultiplayer && accountSidebarController.canSendRoomInvites();
       const isGameActive = Boolean(
         isMultiplayer && bothConnected && snapshot?.isStarted || state.gameMode === "bot" && snapshot !== null
       );
@@ -32442,7 +32508,7 @@ var require_main = __commonJS({
       gameNavRow.hidden = !isGameActive || maxMoves === 0;
       roomBadge.textContent = state.roomId ? `Room ${state.roomId}` : "No active room";
       roleBadge.textContent = humanRole(state.role);
-      shareLink.textContent = state.shareUrl || "Create or join a room to get a live invite link.";
+      roomInviteButton.hidden = !canSendRoomInvites;
       const heroCopy = document.querySelector(".hero-copy");
       if (heroCopy) heroCopy.hidden = isGameActive;
       inviteJoinCard.hidden = isGameActive;
