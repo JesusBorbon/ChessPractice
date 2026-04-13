@@ -12,7 +12,7 @@ import "./account-sidebar-import.css";
 import "./badge-icon-colors.css";
 import { buildArrowLayerMarkup } from "./arrow-render";
 import { BestMoveArrow, canShowBestMoveArrow, parseBestMoveArrow } from "./best-move-arrow";
-import { createAccountSidebarController } from "./account-sidebar";
+import { createAccountSidebarController, type MultiplayerFriendshipStatus } from "./account-sidebar";
 import { createVoiceChatController } from "./live-chat";
 import { createNotificationsStateController } from "./notifications/notification-state";
 import { createNotificationsUiController } from "./notifications/notification-ui";
@@ -1190,6 +1190,7 @@ const pregamePlaceholder = must<HTMLDivElement>("#pregamePlaceholder");
 const inviteJoinCard = must<HTMLElement>("#inviteJoinCard");
 const analysisBoardLink = must<HTMLAnchorElement>("#analysisBoardLink");
 const quickIdentity = must<HTMLParagraphElement>("#quickIdentity");
+const notificationsShell = must<HTMLElement>("#notificationsShell");
 const notificationsButton = must<HTMLButtonElement>("#notificationsButton");
 const notificationsBadge = must<HTMLSpanElement>("#notificationsBadge");
 const notificationsPopover = must<HTMLElement>("#notificationsPopover");
@@ -1458,6 +1459,7 @@ const notificationsStateController = createNotificationsStateController({
 
 const notificationsUiController = createNotificationsUiController({
   refs: {
+    shell: notificationsShell,
     button: notificationsButton,
     badge: notificationsBadge,
     popover: notificationsPopover,
@@ -2493,14 +2495,50 @@ sendFriendRequestButton.addEventListener("click", () => {
     return;
   }
 
+  const currentSeat = getCurrentSeatInfo(state.snapshot);
   const opponentSeat = getOpponentSeatInfo(state.snapshot);
-  if (!opponentSeat || !opponentSeat.userId || !opponentSeat.connected) {
+  if (!currentSeat || !opponentSeat || !opponentSeat.connected) {
+    showToast("Opponent is unavailable for friend requests right now.");
+    return;
+  }
+
+  const currentUserIsRegistered = Boolean(currentSeat.userId && currentSeat.friendId);
+  const opponentIsRegistered = Boolean(opponentSeat.userId && opponentSeat.friendId);
+  const friendshipStatus = accountSidebarController.getFriendshipStatusWithUser(opponentSeat.userId);
+  const eligible = canSendFriendRequest(
+    { isRegistered: currentUserIsRegistered },
+    { isRegistered: opponentIsRegistered },
+    friendshipStatus,
+  );
+
+  if (!eligible) {
+    if (!currentUserIsRegistered) {
+      showToast("Sign in with a registered account to send friend requests.");
+      return;
+    }
+
+    if (!opponentIsRegistered) {
+      showToast("Opponent is playing as guest and cannot receive friend requests.");
+      return;
+    }
+
+    if (friendshipStatus === "friends") {
+      showToast("You are already friends with your opponent.");
+      return;
+    }
+
+    showToast("Checking friendship status. Try again in a moment.");
+    return;
+  }
+
+  const opponentUserId = opponentSeat.userId;
+  if (!opponentUserId) {
     showToast("Opponent is unavailable for friend requests right now.");
     return;
   }
 
   setSendFriendRequestState(true);
-  socket.emit("friends:request:send", { toUserId: opponentSeat.userId });
+  socket.emit("friends:request:send", { toUserId: opponentUserId });
 });
 
 acceptInGameFriendRequestButton.addEventListener("click", async () => {
@@ -2543,6 +2581,7 @@ declineInGameFriendRequestButton.addEventListener("click", () => {
 function onSocketConnect() {
   state.connected = true;
   emitCurrentProfileName();
+  accountSidebarController.emitFriendshipState();
 
   if (state.autoJoinCode) {
     if (ROOM_ID_PATTERN.test(state.autoJoinCode)) {
@@ -3086,12 +3125,40 @@ function renderSession(): void {
   blackClock.classList.toggle("is-low", snapshot.isStarted && blackMs <= snapshot.clock.lowTimeThresholdMs);
 
   const opponentSeat = getOpponentSeatInfo(snapshot);
+  const currentSeat = getCurrentSeatInfo(snapshot);
+  const currentUserIsRegistered = Boolean(currentSeat?.userId && currentSeat.friendId);
+  const opponentIsRegistered = Boolean(opponentSeat?.userId && opponentSeat?.friendId);
+  const friendshipStatus: MultiplayerFriendshipStatus = opponentSeat
+    ? accountSidebarController.getFriendshipStatusWithUser(opponentSeat.userId)
+    : "unknown";
+  const canShowSendFriendRequestButton = Boolean(
+    opponentSeat
+    && opponentSeat.connected
+    && canSendFriendRequest(
+      { isRegistered: currentUserIsRegistered },
+      { isRegistered: opponentIsRegistered },
+      friendshipStatus,
+    ),
+  );
+
   if (inGameFriendPanel.hidden || !opponentSeat || !opponentSeat.connected) {
     inGameFriendMeta.textContent = "Waiting for opponent to connect.";
     sendFriendRequestButton.hidden = true;
     sendFriendRequestButton.disabled = true;
-  } else if (!opponentSeat.userId || !opponentSeat.friendId) {
+  } else if (!currentUserIsRegistered) {
+    inGameFriendMeta.textContent = "Friend requests are available for registered accounts only.";
+    sendFriendRequestButton.hidden = true;
+    sendFriendRequestButton.disabled = true;
+  } else if (!opponentIsRegistered) {
     inGameFriendMeta.textContent = `${opponentSeat.name} is playing as guest.`;
+    sendFriendRequestButton.hidden = true;
+    sendFriendRequestButton.disabled = true;
+  } else if (friendshipStatus === "friends") {
+    inGameFriendMeta.textContent = `You and ${opponentSeat.name} are already friends.`;
+    sendFriendRequestButton.hidden = true;
+    sendFriendRequestButton.disabled = true;
+  } else if (!canShowSendFriendRequestButton) {
+    inGameFriendMeta.textContent = "Checking friendship status...";
     sendFriendRequestButton.hidden = true;
     sendFriendRequestButton.disabled = true;
   } else {
@@ -4940,6 +5007,44 @@ function isOwnPiece(color: PlayerRole): boolean {
 
 function reachesPromotionRank(square: Square, role: PlayerRole): boolean {
   return role === "w" ? square.endsWith("8") : square.endsWith("1");
+}
+
+function getCurrentSeatInfo(snapshot: RoomSnapshot): {
+  connected: boolean;
+  role: PlayerRole;
+  name: string;
+  userId: string | null;
+  friendId: string | null;
+} | null {
+  if (state.role === "w") {
+    return {
+      connected: snapshot.players.whiteConnected,
+      role: "w",
+      name: normalizeUsername(snapshot.players.whiteName) || "Guest",
+      userId: snapshot.players.whiteUserId,
+      friendId: snapshot.players.whiteFriendId,
+    };
+  }
+
+  if (state.role === "b") {
+    return {
+      connected: snapshot.players.blackConnected,
+      role: "b",
+      name: normalizeUsername(snapshot.players.blackName) || "Guest",
+      userId: snapshot.players.blackUserId,
+      friendId: snapshot.players.blackFriendId,
+    };
+  }
+
+  return null;
+}
+
+function canSendFriendRequest(
+  currentUser: { isRegistered: boolean },
+  opponent: { isRegistered: boolean },
+  friendshipStatus: MultiplayerFriendshipStatus,
+): boolean {
+  return currentUser.isRegistered && opponent.isRegistered && friendshipStatus === "not-friends";
 }
 
 function getOpponentSeatInfo(snapshot: RoomSnapshot): {

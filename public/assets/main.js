@@ -27349,6 +27349,9 @@ function setDoc(t, e, n) {
   const r = __PRIVATE_cast(t.firestore, Firestore), s = __PRIVATE_applyFirestoreDataConverter(t.converter, e, n), o = __PRIVATE_newUserDataReader(r);
   return executeWrite(r, [__PRIVATE_parseSetData(o, "setDoc", t._key, s, null !== t.converter, n).toMutation(t._key, Precondition.none())]);
 }
+function deleteDoc(t) {
+  return executeWrite(__PRIVATE_cast(t.firestore, Firestore), [new __PRIVATE_DeleteMutation(t._key, Precondition.none())]);
+}
 function executeWrite(t, e) {
   const n = ensureFirestoreConfigured(t);
   return __PRIVATE_firestoreClientWrite(n, e);
@@ -27827,6 +27830,39 @@ function normalizeDisplayName(value2) {
   }
   return value2.trim().replace(/\s+/g, " ").slice(0, 24);
 }
+function normalizeUsername(value2) {
+  if (typeof value2 !== "string") {
+    return "";
+  }
+  return value2.trim().slice(0, USERNAME_MAX_LENGTH);
+}
+function normalizeInitialUsername(value2) {
+  const stripped = normalizeUsername(value2).replace(/\s+/g, "");
+  if (stripped.length >= USERNAME_MIN_LENGTH) {
+    return stripped;
+  }
+  return "Player";
+}
+function normalizeUsernameChangeCount(value2) {
+  if (typeof value2 !== "number" || !Number.isFinite(value2)) {
+    return 0;
+  }
+  const rounded = Math.floor(value2);
+  return rounded < 0 ? 0 : rounded;
+}
+function assertValidUsernameInput(value2) {
+  const normalized = normalizeUsername(value2);
+  if (!normalized) {
+    throw new Error("Username cannot be empty.");
+  }
+  if (/\s/.test(normalized)) {
+    throw new Error("Username cannot contain spaces.");
+  }
+  if (normalized.length < USERNAME_MIN_LENGTH) {
+    throw new Error("Username must be at least 2 characters.");
+  }
+  return normalized;
+}
 function normalizeEmail(value2) {
   if (typeof value2 !== "string") {
     return null;
@@ -27976,8 +28012,175 @@ function normalizePublicUserProfile(userId, value2) {
     userId: normalizedUserId,
     friendId: normalizeFriendId(record.friendId),
     displayName: normalizeDisplayName(record.displayName) || "Player",
-    email: normalizeEmail(record.email)
+    email: normalizeEmail(record.email),
+    usernameChangeCount: normalizeUsernameChangeCount(record.usernameChangeCount)
   };
+}
+async function resolveUniqueUsername(database, userId, preferredUsername) {
+  const preferred = normalizeInitialUsername(preferredUsername);
+  for (let attempt = 0; attempt < 128; attempt += 1) {
+    const suffix = attempt === 0 ? "" : String(attempt + 1);
+    const baseLimit = USERNAME_MAX_LENGTH - suffix.length;
+    const candidate = `${preferred.slice(0, Math.max(USERNAME_MIN_LENGTH, baseLimit))}${suffix}`;
+    const candidateKey = normalizeDisplayNameKey(candidate);
+    if (!candidateKey) {
+      continue;
+    }
+    const indexRef = doc(database, "userDisplayNameIndex", candidateKey);
+    const indexSnapshot = await getDoc(indexRef);
+    const existingUserId = normalizeUserId(indexSnapshot.data()?.userId);
+    if (!existingUserId || existingUserId === userId) {
+      return candidate;
+    }
+  }
+  throw new Error("Could not allocate a unique username.");
+}
+async function upsertUsernameIndex(database, userId, username) {
+  const usernameKey = normalizeDisplayNameKey(username);
+  if (!usernameKey) {
+    return;
+  }
+  await setDoc(
+    doc(database, "userDisplayNameIndex", usernameKey),
+    {
+      userId,
+      updatedAt: serverTimestamp()
+    },
+    { merge: true }
+  );
+}
+async function propagateProfileRename(database, profile, previousDisplayName) {
+  if (profile.displayName === previousDisplayName) {
+    return;
+  }
+  const ownerFriendsRef = doc(database, "userFriends", profile.userId);
+  const ownerFriendsSnapshot = await getDoc(ownerFriendsRef);
+  const ownerFriends = ownerFriendsSnapshot.exists() ? normalizeFriendList(ownerFriendsSnapshot.data().friends) : [];
+  const friendDocUpdates = ownerFriends.map(async (friend) => {
+    const friendFriendsRef = doc(database, "userFriends", friend.userId);
+    const friendFriendsSnapshot = await getDoc(friendFriendsRef);
+    if (!friendFriendsSnapshot.exists()) {
+      return;
+    }
+    const friendList = normalizeFriendList(friendFriendsSnapshot.data().friends);
+    let changed = false;
+    const updatedFriendList = friendList.map((entry) => {
+      if (entry.userId !== profile.userId) {
+        return entry;
+      }
+      if (entry.displayName === profile.displayName && entry.email === profile.email) {
+        return entry;
+      }
+      changed = true;
+      return {
+        ...entry,
+        displayName: profile.displayName,
+        email: profile.email
+      };
+    });
+    if (!changed) {
+      return;
+    }
+    await setDoc(
+      friendFriendsRef,
+      {
+        userId: friend.userId,
+        friends: serializeFriendList(updatedFriendList),
+        updatedAt: serverTimestamp()
+      },
+      { merge: true }
+    );
+  });
+  const ownerRequestsRef = doc(database, "userFriendRequests", profile.userId);
+  const ownerRequestsSnapshot = await getDoc(ownerRequestsRef);
+  const ownerIncoming = ownerRequestsSnapshot.exists() ? normalizeFriendRequestList(ownerRequestsSnapshot.data().incoming) : [];
+  const ownerOutgoing = ownerRequestsSnapshot.exists() ? normalizeFriendRequestList(ownerRequestsSnapshot.data().outgoing) : [];
+  const counterpartIds = /* @__PURE__ */ new Set();
+  for (const request of ownerIncoming) {
+    counterpartIds.add(request.fromUserId);
+  }
+  for (const request of ownerOutgoing) {
+    counterpartIds.add(request.toUserId);
+  }
+  const syncRequestsDocForOwner = async (ownerUserId) => {
+    const requestsRef = doc(database, "userFriendRequests", ownerUserId);
+    const snapshot = await getDoc(requestsRef);
+    if (!snapshot.exists()) {
+      return;
+    }
+    const incoming = normalizeFriendRequestList(snapshot.data().incoming);
+    const outgoing = normalizeFriendRequestList(snapshot.data().outgoing);
+    let incomingChanged = false;
+    const updatedIncoming = incoming.map((request) => {
+      if (request.fromUserId !== profile.userId && request.toUserId !== profile.userId) {
+        return request;
+      }
+      if (request.fromUserId === profile.userId) {
+        if (request.fromDisplayName === profile.displayName && request.fromEmail === profile.email) {
+          return request;
+        }
+        incomingChanged = true;
+        return {
+          ...request,
+          fromDisplayName: profile.displayName,
+          fromEmail: profile.email
+        };
+      }
+      if (request.toDisplayName === profile.displayName && request.toEmail === profile.email) {
+        return request;
+      }
+      incomingChanged = true;
+      return {
+        ...request,
+        toDisplayName: profile.displayName,
+        toEmail: profile.email
+      };
+    });
+    let outgoingChanged = false;
+    const updatedOutgoing = outgoing.map((request) => {
+      if (request.fromUserId !== profile.userId && request.toUserId !== profile.userId) {
+        return request;
+      }
+      if (request.fromUserId === profile.userId) {
+        if (request.fromDisplayName === profile.displayName && request.fromEmail === profile.email) {
+          return request;
+        }
+        outgoingChanged = true;
+        return {
+          ...request,
+          fromDisplayName: profile.displayName,
+          fromEmail: profile.email
+        };
+      }
+      if (request.toDisplayName === profile.displayName && request.toEmail === profile.email) {
+        return request;
+      }
+      outgoingChanged = true;
+      return {
+        ...request,
+        toDisplayName: profile.displayName,
+        toEmail: profile.email
+      };
+    });
+    if (!incomingChanged && !outgoingChanged) {
+      return;
+    }
+    await setDoc(
+      requestsRef,
+      {
+        userId: ownerUserId,
+        incoming: serializeFriendRequestList(updatedIncoming),
+        outgoing: serializeFriendRequestList(updatedOutgoing),
+        updatedAt: serverTimestamp()
+      },
+      { merge: true }
+    );
+  };
+  const requestDocUpdates = [
+    syncRequestsDocForOwner(profile.userId),
+    ...Array.from(counterpartIds).map((counterpartId) => syncRequestsDocForOwner(counterpartId))
+  ];
+  await Promise.all([...friendDocUpdates, ...requestDocUpdates]);
 }
 function upsertFriendEntry(list, entry) {
   const next = list.filter((friend) => friend.userId !== entry.userId);
@@ -28250,6 +28453,16 @@ async function resolveUserProfileByLookup(database, lookup3) {
   if (!normalizedNameKey) {
     return null;
   }
+  const nameIndexRef = doc(database, "userDisplayNameIndex", normalizedNameKey);
+  const nameIndexSnapshot = await getDoc(nameIndexRef);
+  const indexedNameUserId = normalizeUserId(nameIndexSnapshot.data()?.userId);
+  if (indexedNameUserId) {
+    const profileRef = doc(database, "userProfiles", indexedNameUserId);
+    const profileSnapshot = await getDoc(profileRef);
+    if (profileSnapshot.exists()) {
+      return normalizePublicUserProfile(indexedNameUserId, profileSnapshot.data());
+    }
+  }
   const profilesRef = collection(database, "userProfiles");
   const profileQuery = query(profilesRef, where("displayNameKey", "==", normalizedNameKey), limit(1));
   const profileResults = await getDocs(profileQuery);
@@ -28266,10 +28479,12 @@ async function syncUserProfile(user, displayName) {
   }
   const database = requireDb();
   const profileRef = doc(database, "userProfiles", userId);
-  const normalizedDisplayName = normalizeDisplayName(displayName) || "Player";
+  const preferredDisplayName = normalizeInitialUsername(displayName);
   const profileSnapshot = await getDoc(profileRef);
   const existingProfile = profileSnapshot.exists() ? normalizePublicUserProfile(userId, profileSnapshot.data()) : null;
   const friendId = existingProfile?.friendId || await assignUniqueFriendId(database, userId);
+  const usernameChangeCount = existingProfile?.usernameChangeCount ?? 0;
+  const normalizedDisplayName = existingProfile?.displayName || await resolveUniqueUsername(database, userId, preferredDisplayName);
   await setDoc(
     profileRef,
     {
@@ -28278,6 +28493,8 @@ async function syncUserProfile(user, displayName) {
       displayName: normalizedDisplayName,
       displayNameKey: normalizeDisplayNameKey(normalizedDisplayName),
       email: normalizeEmail(user.email),
+      usernameChangeCount,
+      hasChangedUsername: usernameChangeCount >= 1,
       updatedAt: serverTimestamp()
     },
     { merge: true }
@@ -28290,12 +28507,80 @@ async function syncUserProfile(user, displayName) {
     },
     { merge: true }
   );
+  await upsertUsernameIndex(database, userId, normalizedDisplayName);
   return {
     userId,
     friendId,
     displayName: normalizedDisplayName,
-    email: normalizeEmail(user.email)
+    email: normalizeEmail(user.email),
+    usernameChangeCount
   };
+}
+async function renameUserProfile(user, nextUsername) {
+  const userId = normalizeUserId(user.uid);
+  if (!userId) {
+    throw new Error("Invalid authenticated user ID.");
+  }
+  const database = requireDb();
+  const requestedUsername = assertValidUsernameInput(nextUsername);
+  const requestedUsernameKey = normalizeDisplayNameKey(requestedUsername);
+  const profileRef = doc(database, "userProfiles", userId);
+  const [profileSnapshot, usernameIndexSnapshot] = await Promise.all([
+    getDoc(profileRef),
+    getDoc(doc(database, "userDisplayNameIndex", requestedUsernameKey))
+  ]);
+  if (!profileSnapshot.exists()) {
+    throw new Error("Your profile is not ready yet. Please sign out and sign in again.");
+  }
+  const profile = normalizePublicUserProfile(userId, profileSnapshot.data());
+  if (!profile) {
+    throw new Error("Could not read player profile data.");
+  }
+  if (profile.usernameChangeCount >= 1) {
+    throw new Error("Username can only be changed once per account.");
+  }
+  if (profile.displayName === requestedUsername) {
+    throw new Error("Choose a different username.");
+  }
+  const indexedUserId = normalizeUserId(usernameIndexSnapshot.data()?.userId);
+  if (indexedUserId && indexedUserId !== userId) {
+    throw new Error("Username already taken.");
+  }
+  const previousDisplayName = profile.displayName;
+  const nextCount = profile.usernameChangeCount + 1;
+  const nextEmail = normalizeEmail(user.email);
+  await setDoc(
+    profileRef,
+    {
+      userId,
+      displayName: requestedUsername,
+      displayNameKey: requestedUsernameKey,
+      email: nextEmail,
+      usernameChangeCount: nextCount,
+      hasChangedUsername: true,
+      updatedAt: serverTimestamp()
+    },
+    { merge: true }
+  );
+  await upsertUsernameIndex(database, userId, requestedUsername);
+  const previousKey = normalizeDisplayNameKey(previousDisplayName);
+  if (previousKey && previousKey !== requestedUsernameKey) {
+    const previousIndexRef = doc(database, "userDisplayNameIndex", previousKey);
+    const previousIndexSnapshot = await getDoc(previousIndexRef);
+    const previousIndexOwner = normalizeUserId(previousIndexSnapshot.data()?.userId);
+    if (previousIndexOwner === userId) {
+      await deleteDoc(previousIndexRef);
+    }
+  }
+  const updatedProfile = {
+    userId,
+    friendId: profile.friendId,
+    displayName: requestedUsername,
+    email: nextEmail,
+    usernameChangeCount: nextCount
+  };
+  await propagateProfileRename(database, updatedProfile, previousDisplayName);
+  return updatedProfile;
 }
 async function getPublicUserProfile(userId) {
   const normalizedUserId = normalizeUserId(userId);
@@ -28630,7 +28915,7 @@ async function removeFriendForUser(userId, friendUserId) {
     )
   ]);
 }
-var REQUIRED_CONFIG_KEYS, GOOGLE_PROVIDER, POPUP_RECOVERY_CODES, MAX_FRIENDS, MAX_FRIEND_REQUESTS, FRIEND_ID_DIGITS, FRIEND_ID_MIN, FRIEND_ID_MAX, auth, db, disabledReason, initPromise;
+var REQUIRED_CONFIG_KEYS, GOOGLE_PROVIDER, POPUP_RECOVERY_CODES, MAX_FRIENDS, MAX_FRIEND_REQUESTS, FRIEND_ID_DIGITS, FRIEND_ID_MIN, FRIEND_ID_MAX, USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH, auth, db, disabledReason, initPromise;
 var init_firebase = __esm({
   "src/client/firebase.ts"() {
     "use strict";
@@ -28656,6 +28941,8 @@ var init_firebase = __esm({
     FRIEND_ID_DIGITS = 5;
     FRIEND_ID_MIN = 1e4;
     FRIEND_ID_MAX = 99999;
+    USERNAME_MIN_LENGTH = 2;
+    USERNAME_MAX_LENGTH = 24;
     auth = null;
     db = null;
     disabledReason = null;
@@ -28891,6 +29178,7 @@ function createAccountSidebarController({
   let authInitFinished = false;
   let storedGamesCount = null;
   let editableUsername = "";
+  let currentProfile = null;
   let sidebarOpen = false;
   let activeSidebarTab = "profile";
   let savedGameHistory = [];
@@ -28973,25 +29261,110 @@ function createAccountSidebarController({
     editableUsername = refs.usernameInput.value;
     renderAuthPanel();
   };
-  const onSaveUsernameClick = () => {
+  const onSaveUsernameClick = async () => {
+    if (authBusy) {
+      return;
+    }
     if (!authenticatedUser) {
       showToast("Only registered users can set a custom username.");
       return;
     }
-    const normalized = normalizeUsername(refs.usernameInput.value);
+    const normalized = normalizeUsernameDraft(refs.usernameInput.value);
     if (normalized.length < 2) {
       showToast("Username must be at least 2 characters.");
       return;
     }
-    localStorage.setItem(usernameStorageKey(authenticatedUser.uid), normalized);
-    editableUsername = normalized;
-    emitCurrentProfileName();
-    if (authenticatedUser && isFirebaseAuthEnabled()) {
-      void syncUserProfile(authenticatedUser, normalized);
+    if (/\s/.test(normalized)) {
+      showToast("Username cannot contain spaces.");
+      return;
     }
+    if ((currentProfile?.usernameChangeCount ?? 0) >= 1) {
+      showToast("Username can only be changed once per account.");
+      return;
+    }
+    if (currentProfile && normalized === currentProfile.displayName) {
+      showToast("Choose a different username.");
+      return;
+    }
+    authBusy = true;
     renderAuthPanel();
-    onIdentityUpdated();
-    showToast("Username updated.");
+    try {
+      const updatedProfile = await renameUserProfile(authenticatedUser, normalized);
+      currentProfile = updatedProfile;
+      currentFriendId = updatedProfile.friendId || currentFriendId;
+      editableUsername = updatedProfile.displayName;
+      emitCurrentProfileName();
+      onIdentityUpdated();
+      await refreshFriendsPanel();
+      showToast("Username updated.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not update username right now.";
+      showToast(message);
+    } finally {
+      authBusy = false;
+      renderAuthPanel();
+    }
+  };
+  const onFriendProfileUpdate = (payload) => {
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+    const record = payload;
+    const userId = normalizeSocketUserId(record.userId);
+    const displayName = normalizeUsernameDraft(typeof record.displayName === "string" ? record.displayName : "");
+    const friendId = typeof record.friendId === "string" ? record.friendId.trim() : "";
+    if (!userId || !displayName) {
+      return;
+    }
+    let changed = false;
+    friends = friends.map((entry) => {
+      if (entry.userId !== userId) {
+        return entry;
+      }
+      const nextFriendId = friendId || entry.friendId;
+      if (entry.displayName === displayName && entry.friendId === nextFriendId) {
+        return entry;
+      }
+      changed = true;
+      return {
+        ...entry,
+        displayName,
+        friendId: nextFriendId
+      };
+    });
+    incomingFriendRequests = incomingFriendRequests.map((request) => {
+      if (request.fromUserId !== userId || request.fromDisplayName === displayName) {
+        return request;
+      }
+      changed = true;
+      return {
+        ...request,
+        fromDisplayName: displayName
+      };
+    });
+    outgoingFriendRequests = outgoingFriendRequests.map((request) => {
+      if (request.toUserId !== userId || request.toDisplayName === displayName) {
+        return request;
+      }
+      changed = true;
+      return {
+        ...request,
+        toDisplayName: displayName
+      };
+    });
+    if (authenticatedUser && authenticatedUser.uid === userId && currentProfile && currentProfile.displayName !== displayName) {
+      currentProfile = {
+        ...currentProfile,
+        displayName
+      };
+      editableUsername = displayName;
+      changed = true;
+      onIdentityUpdated();
+    }
+    if (changed) {
+      renderFriendsPanel();
+      renderAuthPanel();
+    }
   };
   const onFriendIdInput = () => {
     if (friendsComposerOpen && refs.friendsComposer.style.maxHeight !== "none") {
@@ -29159,11 +29532,11 @@ function createAccountSidebarController({
       renderAuthPanel();
     }
   };
-  function usernameStorageKey(uid) {
-    return `${USERNAME_STORAGE_PREFIX}${uid}`;
-  }
-  function normalizeUsername(value2) {
+  function normalizeUsername2(value2) {
     return value2.trim().replace(/\s+/g, " ").slice(0, 24);
+  }
+  function normalizeUsernameDraft(value2) {
+    return value2.trim().slice(0, 24);
   }
   function normalizeSocketUserId(value2) {
     if (typeof value2 !== "string") {
@@ -29222,14 +29595,20 @@ function createAccountSidebarController({
   async function refreshCurrentFriendId() {
     if (!authenticatedUser || !isFirebaseAuthEnabled()) {
       currentFriendId = null;
+      currentProfile = null;
       renderFriendsPanel();
       return;
     }
     try {
       const profile = await getPublicUserProfile(authenticatedUser.uid);
+      currentProfile = profile;
       currentFriendId = profile?.friendId || null;
+      if (profile?.displayName) {
+        editableUsername = profile.displayName;
+      }
     } catch {
       currentFriendId = null;
+      currentProfile = null;
     }
     renderFriendsPanel();
     emitCurrentProfileName();
@@ -29266,11 +29645,11 @@ function createAccountSidebarController({
     if (!authenticatedUser) {
       return "Guest";
     }
-    const custom = normalizeUsername(localStorage.getItem(usernameStorageKey(authenticatedUser.uid)) ?? "");
-    if (custom) {
-      return custom;
+    const profileName = normalizeUsernameDraft(currentProfile?.displayName ?? "");
+    if (profileName) {
+      return profileName;
     }
-    const fallback = normalizeUsername(authenticatedUser.displayName ?? "");
+    const fallback = normalizeUsernameDraft(authenticatedUser.displayName ?? "").replace(/\s+/g, "");
     if (fallback) {
       return fallback;
     }
@@ -29280,12 +29659,43 @@ function createAccountSidebarController({
     if (!socket.connected) {
       return;
     }
+    if (authenticatedUser && isFirebaseAuthEnabled() && !currentProfile) {
+      return;
+    }
     socket.emit("profile:setName", {
       name: getCurrentPlayerName(),
       userId: authenticatedUser?.uid ?? null,
       email: authenticatedUser?.email ?? null,
-      friendId: currentFriendId
+      friendId: currentFriendId,
+      usernameChangeCount: currentProfile?.usernameChangeCount ?? 0
     });
+  }
+  function emitFriendshipState() {
+    if (!socket.connected || !authenticatedUser || !isFirebaseAuthEnabled() || friendsLoading) {
+      return;
+    }
+    const friendUserIds = Array.from(new Set(friends.map((entry) => entry.userId).filter(Boolean)));
+    socket.emit("friends:state", {
+      userId: authenticatedUser.uid,
+      friendUserIds
+    });
+  }
+  function getAuthenticatedUserId() {
+    return authenticatedUser?.uid ?? null;
+  }
+  function getFriendshipStatusWithUser(userId) {
+    const currentUserId = getAuthenticatedUserId();
+    const targetUserId = normalizeSocketUserId(userId);
+    if (!currentUserId || !targetUserId || !isFirebaseAuthEnabled()) {
+      return "unknown";
+    }
+    if (targetUserId === currentUserId) {
+      return "friends";
+    }
+    if (friendsLoading) {
+      return "unknown";
+    }
+    return friends.some((entry) => entry.userId === targetUserId) ? "friends" : "not-friends";
   }
   function getPresenceLabel(status) {
     if (status === "in-room") {
@@ -29494,6 +29904,7 @@ function createAccountSidebarController({
       friendsLoading = false;
       renderFriendsPanel();
       syncFriendActivitySubscription();
+      emitFriendshipState();
     }
   }
   function setSidebarOpen(nextOpen) {
@@ -29915,17 +30326,19 @@ function createAccountSidebarController({
     }
     if (authenticatedUser) {
       const userLabel = getCurrentPlayerName();
+      const canRenameUsername = (currentProfile?.usernameChangeCount ?? 0) < 1;
       refs.quickIdentity.textContent = userLabel;
-      refs.authStatus.textContent = `Signed in as ${userLabel}`;
+      refs.authStatus.textContent = canRenameUsername ? `Signed in as ${userLabel}. You can change your username once.` : `Signed in as ${userLabel}. Username change already used.`;
       refs.storedGamesMeta.textContent = `History enabled: ${storedGamesCount ?? "..."} / 100 PGNs`;
-      refs.usernameInput.hidden = false;
-      refs.saveUsernameButton.hidden = false;
-      refs.usernameInput.disabled = authBusy;
+      refs.usernameInput.hidden = !canRenameUsername;
+      refs.saveUsernameButton.hidden = !canRenameUsername;
+      refs.usernameInput.disabled = authBusy || !canRenameUsername;
       if (document.activeElement !== refs.usernameInput) {
         refs.usernameInput.value = editableUsername;
       }
-      const normalizedDraft = normalizeUsername(refs.usernameInput.value);
-      refs.saveUsernameButton.disabled = authBusy || normalizedDraft.length < 2 || normalizedDraft === getCurrentPlayerName();
+      const normalizedDraft = normalizeUsernameDraft(refs.usernameInput.value);
+      const hasWhitespace = /\s/.test(normalizedDraft);
+      refs.saveUsernameButton.disabled = authBusy || !canRenameUsername || normalizedDraft.length < 2 || hasWhitespace || normalizedDraft === getCurrentPlayerName();
       refs.guestModeButton.disabled = authBusy;
       refs.signInGoogleButton.hidden = true;
       refs.signOutButton.hidden = false;
@@ -30015,6 +30428,7 @@ function createAccountSidebarController({
     refs.guestModeButton.addEventListener("click", onGuestModeClick);
     refs.signOutButton.addEventListener("click", onSignOutClick);
     socket.on("friends:invite:sent", onFriendInviteSent);
+    socket.on("friends:profile:update", onFriendProfileUpdate);
     socket.on("session:joined", onSessionJoined);
     socket.on("session:left", onSessionLeft);
     listenersWired = true;
@@ -30043,6 +30457,7 @@ function createAccountSidebarController({
     refs.guestModeButton.removeEventListener("click", onGuestModeClick);
     refs.signOutButton.removeEventListener("click", onSignOutClick);
     socket.off("friends:invite:sent", onFriendInviteSent);
+    socket.off("friends:profile:update", onFriendProfileUpdate);
     socket.off("session:joined", onSessionJoined);
     socket.off("session:left", onSessionLeft);
     listenersWired = false;
@@ -30064,6 +30479,7 @@ function createAccountSidebarController({
     authUnsubscribe?.();
     authUnsubscribe = listenToAuthState((user) => {
       authenticatedUser = user;
+      currentProfile = null;
       storedGamesCount = null;
       savedGameHistory = [];
       historyLoading = false;
@@ -30072,26 +30488,35 @@ function createAccountSidebarController({
       incomingFriendRequests = [];
       outgoingFriendRequests = [];
       pendingFriendRemovals.clear();
-      friendsLoading = false;
+      friendsLoading = Boolean(user);
       addFriendBusy = false;
       currentFriendId = null;
       friendActivityRealtime.updateWatchedFriendIds([]);
       editableUsername = getCurrentPlayerName();
       renderAuthPanel();
       renderSavedHistoryPanel();
-      emitCurrentProfileName();
-      onIdentityUpdated();
       if (user) {
         void (async () => {
-          const profile = await syncUserProfile(user, getCurrentPlayerName());
-          currentFriendId = profile.friendId ?? null;
-          renderFriendsPanel();
-          emitCurrentProfileName();
+          try {
+            const profile = await syncUserProfile(user, getCurrentPlayerName());
+            currentProfile = profile;
+            currentFriendId = profile.friendId ?? null;
+            editableUsername = profile.displayName;
+            renderFriendsPanel();
+            renderAuthPanel();
+            emitCurrentProfileName();
+            onIdentityUpdated();
+          } catch {
+            emitCurrentProfileName();
+            onIdentityUpdated();
+          }
         })();
         void refreshStoredGamesCount();
         void refreshSavedHistoryPanel();
         void refreshFriendsPanel();
       } else {
+        emitCurrentProfileName();
+        onIdentityUpdated();
         void refreshCurrentFriendId();
         void refreshFriendsPanel();
       }
@@ -30109,18 +30534,21 @@ function createAccountSidebarController({
     initialize,
     dispose,
     emitCurrentProfileName,
+    emitFriendshipState,
     getCurrentPlayerName,
+    getAuthenticatedUserId,
+    getFriendshipStatusWithUser,
     openSidebarToFriends,
     getInviteCandidates,
     canSendRoomInvites,
     sendInviteToFriend,
     addFriendByLookup: sendFriendRequestByLookup2,
-    normalizeUsername,
+    normalizeUsername: normalizeUsername2,
     resetFinishedGameTracking,
     handleFinishedGamePersist
   };
 }
-var USERNAME_STORAGE_PREFIX, MOBILE_BREAKPOINT_PX, MOBILE_SCROLL_LOCK_CLASS, FRIEND_NUMERIC_ID_LENGTH, ROOM_ID_PATTERN2;
+var MOBILE_BREAKPOINT_PX, MOBILE_SCROLL_LOCK_CLASS, FRIEND_NUMERIC_ID_LENGTH, ROOM_ID_PATTERN2;
 var init_account_sidebar2 = __esm({
   "src/client/account-sidebar.ts"() {
     "use strict";
@@ -30128,7 +30556,6 @@ var init_account_sidebar2 = __esm({
     init_firebase();
     init_friend_system();
     init_friend_activity_realtime();
-    USERNAME_STORAGE_PREFIX = "chess-custom-username:";
     MOBILE_BREAKPOINT_PX = 640;
     MOBILE_SCROLL_LOCK_CLASS = "sidebar-open-mobile";
     FRIEND_NUMERIC_ID_LENGTH = 5;
@@ -30792,6 +31219,31 @@ function createNotificationsStateController({
     }
     void refresh();
   };
+  const onFriendProfileUpdate = (payload) => {
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+    const record = payload;
+    const userId = typeof record.userId === "string" ? record.userId.trim() : "";
+    const displayName = typeof record.displayName === "string" ? record.displayName.trim().slice(0, 24) : "";
+    if (!userId || !displayName) {
+      return;
+    }
+    let changed = false;
+    notifications = notifications.map((item) => {
+      if (item.fromUserId !== userId || item.fromDisplayName === displayName) {
+        return item;
+      }
+      changed = true;
+      return {
+        ...item,
+        fromDisplayName: displayName
+      };
+    });
+    if (changed) {
+      emitSnapshot();
+    }
+  };
   function emitSnapshot() {
     if (disposed) {
       return;
@@ -30888,6 +31340,7 @@ function createNotificationsStateController({
     }
     socket.on("friends:notification:request", onIncomingNotification);
     socket.on("friends:notification:response", onResponseNotification);
+    socket.on("friends:profile:update", onFriendProfileUpdate);
     authUnsubscribe?.();
     authUnsubscribe = listenToAuthState((user) => {
       currentUser = user;
@@ -30907,6 +31360,7 @@ function createNotificationsStateController({
     setPollEnabled(false);
     socket.off("friends:notification:request", onIncomingNotification);
     socket.off("friends:notification:response", onResponseNotification);
+    socket.off("friends:profile:update", onFriendProfileUpdate);
     listeners.clear();
   }
   function subscribe(listener) {
@@ -31067,6 +31521,12 @@ function createNotificationsUiController({
   }
   function render(snapshot) {
     latestSnapshot = snapshot;
+    refs.shell.hidden = !snapshot.signedIn;
+    if (!snapshot.signedIn) {
+      isOpen = false;
+      refs.popover.hidden = true;
+      refs.button.setAttribute("aria-expanded", "false");
+    }
     refs.badge.hidden = snapshot.pendingCount <= 0;
     refs.badge.textContent = String(snapshot.pendingCount);
     const disabled = !snapshot.enabled || !snapshot.signedIn;
@@ -32165,6 +32625,7 @@ var require_main = __commonJS({
     var inviteJoinCard = must("#inviteJoinCard");
     var analysisBoardLink = must("#analysisBoardLink");
     var quickIdentity = must("#quickIdentity");
+    var notificationsShell = must("#notificationsShell");
     var notificationsButton = must("#notificationsButton");
     var notificationsBadge = must("#notificationsBadge");
     var notificationsPopover = must("#notificationsPopover");
@@ -32414,6 +32875,7 @@ var require_main = __commonJS({
     });
     var notificationsUiController = createNotificationsUiController({
       refs: {
+        shell: notificationsShell,
         button: notificationsButton,
         badge: notificationsBadge,
         popover: notificationsPopover,
@@ -32426,7 +32888,7 @@ var require_main = __commonJS({
     var unsubscribeNotificationsState = notificationsStateController.subscribe((snapshot) => {
       notificationsUiController.render(snapshot);
     });
-    function normalizeUsername(value2) {
+    function normalizeUsername2(value2) {
       return accountSidebarController.normalizeUsername(value2);
     }
     function getCurrentPlayerName() {
@@ -33232,13 +33694,43 @@ var require_main = __commonJS({
       if (sendFriendRequestBusy || !state.snapshot) {
         return;
       }
+      const currentSeat = getCurrentSeatInfo(state.snapshot);
       const opponentSeat = getOpponentSeatInfo(state.snapshot);
-      if (!opponentSeat || !opponentSeat.userId || !opponentSeat.connected) {
+      if (!currentSeat || !opponentSeat || !opponentSeat.connected) {
+        showToast("Opponent is unavailable for friend requests right now.");
+        return;
+      }
+      const currentUserIsRegistered = Boolean(currentSeat.userId && currentSeat.friendId);
+      const opponentIsRegistered = Boolean(opponentSeat.userId && opponentSeat.friendId);
+      const friendshipStatus = accountSidebarController.getFriendshipStatusWithUser(opponentSeat.userId);
+      const eligible = canSendFriendRequest(
+        { isRegistered: currentUserIsRegistered },
+        { isRegistered: opponentIsRegistered },
+        friendshipStatus
+      );
+      if (!eligible) {
+        if (!currentUserIsRegistered) {
+          showToast("Sign in with a registered account to send friend requests.");
+          return;
+        }
+        if (!opponentIsRegistered) {
+          showToast("Opponent is playing as guest and cannot receive friend requests.");
+          return;
+        }
+        if (friendshipStatus === "friends") {
+          showToast("You are already friends with your opponent.");
+          return;
+        }
+        showToast("Checking friendship status. Try again in a moment.");
+        return;
+      }
+      const opponentUserId = opponentSeat.userId;
+      if (!opponentUserId) {
         showToast("Opponent is unavailable for friend requests right now.");
         return;
       }
       setSendFriendRequestState(true);
-      socket.emit("friends:request:send", { toUserId: opponentSeat.userId });
+      socket.emit("friends:request:send", { toUserId: opponentUserId });
     });
     acceptInGameFriendRequestButton.addEventListener("click", async () => {
       if (!pendingInGameFriendRequest) {
@@ -33272,6 +33764,7 @@ var require_main = __commonJS({
     function onSocketConnect() {
       state.connected = true;
       emitCurrentProfileName();
+      accountSidebarController.emitFriendshipState();
       if (state.autoJoinCode) {
         if (ROOM_ID_PATTERN3.test(state.autoJoinCode)) {
           socket.emit("room:join", {
@@ -33668,12 +34161,35 @@ var require_main = __commonJS({
       whiteClock.classList.toggle("is-low", snapshot.isStarted && whiteMs <= snapshot.clock.lowTimeThresholdMs);
       blackClock.classList.toggle("is-low", snapshot.isStarted && blackMs <= snapshot.clock.lowTimeThresholdMs);
       const opponentSeat = getOpponentSeatInfo(snapshot);
+      const currentSeat = getCurrentSeatInfo(snapshot);
+      const currentUserIsRegistered = Boolean(currentSeat?.userId && currentSeat.friendId);
+      const opponentIsRegistered = Boolean(opponentSeat?.userId && opponentSeat?.friendId);
+      const friendshipStatus = opponentSeat ? accountSidebarController.getFriendshipStatusWithUser(opponentSeat.userId) : "unknown";
+      const canShowSendFriendRequestButton = Boolean(
+        opponentSeat && opponentSeat.connected && canSendFriendRequest(
+          { isRegistered: currentUserIsRegistered },
+          { isRegistered: opponentIsRegistered },
+          friendshipStatus
+        )
+      );
       if (inGameFriendPanel.hidden || !opponentSeat || !opponentSeat.connected) {
         inGameFriendMeta.textContent = "Waiting for opponent to connect.";
         sendFriendRequestButton.hidden = true;
         sendFriendRequestButton.disabled = true;
-      } else if (!opponentSeat.userId || !opponentSeat.friendId) {
+      } else if (!currentUserIsRegistered) {
+        inGameFriendMeta.textContent = "Friend requests are available for registered accounts only.";
+        sendFriendRequestButton.hidden = true;
+        sendFriendRequestButton.disabled = true;
+      } else if (!opponentIsRegistered) {
         inGameFriendMeta.textContent = `${opponentSeat.name} is playing as guest.`;
+        sendFriendRequestButton.hidden = true;
+        sendFriendRequestButton.disabled = true;
+      } else if (friendshipStatus === "friends") {
+        inGameFriendMeta.textContent = `You and ${opponentSeat.name} are already friends.`;
+        sendFriendRequestButton.hidden = true;
+        sendFriendRequestButton.disabled = true;
+      } else if (!canShowSendFriendRequestButton) {
+        inGameFriendMeta.textContent = "Checking friendship status...";
         sendFriendRequestButton.hidden = true;
         sendFriendRequestButton.disabled = true;
       } else {
@@ -35071,12 +35587,36 @@ var require_main = __commonJS({
     function reachesPromotionRank(square, role) {
       return role === "w" ? square.endsWith("8") : square.endsWith("1");
     }
+    function getCurrentSeatInfo(snapshot) {
+      if (state.role === "w") {
+        return {
+          connected: snapshot.players.whiteConnected,
+          role: "w",
+          name: normalizeUsername2(snapshot.players.whiteName) || "Guest",
+          userId: snapshot.players.whiteUserId,
+          friendId: snapshot.players.whiteFriendId
+        };
+      }
+      if (state.role === "b") {
+        return {
+          connected: snapshot.players.blackConnected,
+          role: "b",
+          name: normalizeUsername2(snapshot.players.blackName) || "Guest",
+          userId: snapshot.players.blackUserId,
+          friendId: snapshot.players.blackFriendId
+        };
+      }
+      return null;
+    }
+    function canSendFriendRequest(currentUser, opponent, friendshipStatus) {
+      return currentUser.isRegistered && opponent.isRegistered && friendshipStatus === "not-friends";
+    }
     function getOpponentSeatInfo(snapshot) {
       if (state.role === "w") {
         return {
           connected: snapshot.players.blackConnected,
           role: "b",
-          name: normalizeUsername(snapshot.players.blackName) || "Guest",
+          name: normalizeUsername2(snapshot.players.blackName) || "Guest",
           userId: snapshot.players.blackUserId,
           friendId: snapshot.players.blackFriendId
         };
@@ -35085,7 +35625,7 @@ var require_main = __commonJS({
         return {
           connected: snapshot.players.whiteConnected,
           role: "w",
-          name: normalizeUsername(snapshot.players.whiteName) || "Guest",
+          name: normalizeUsername2(snapshot.players.whiteName) || "Guest",
           userId: snapshot.players.whiteUserId,
           friendId: snapshot.players.whiteFriendId
         };
@@ -35093,7 +35633,7 @@ var require_main = __commonJS({
       return null;
     }
     function seatLabel(role, playerName, friendId, userId) {
-      const safeName = normalizeUsername(playerName) || "Guest";
+      const safeName = normalizeUsername2(playerName) || "Guest";
       const colorLabel = role === "w" ? "White" : "Black";
       if (state.role === role) {
         return `You (${getCurrentPlayerName()})`;

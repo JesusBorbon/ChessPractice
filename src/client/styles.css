@@ -1256,7 +1256,7 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
 .chat-fab {
   position: fixed;
   right: 20px;
-  bottom: 22px;
+  bottom: calc(78px + env(safe-area-inset-bottom, 0px));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1264,13 +1264,32 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   height: 50px;
   padding: 0 16px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.26);
-  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 80%, #0f2720), color-mix(in srgb, var(--accent-strong) 78%, #0b1916));
-  color: #f5fbf8;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, rgba(255, 255, 255, 0.3));
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 46%, rgba(14, 30, 25, 0.72)), color-mix(in srgb, var(--accent-strong) 52%, rgba(8, 19, 16, 0.82)));
+  color: color-mix(in srgb, #ffffff 92%, var(--accent-soft) 8%);
   font-weight: 700;
   letter-spacing: 0.01em;
-  box-shadow: 0 16px 30px rgba(6, 14, 12, 0.34), 0 0 0 1px rgba(255, 255, 255, 0.14) inset;
+  box-shadow:
+    0 18px 36px rgba(6, 14, 12, 0.36),
+    0 0 0 1px rgba(255, 255, 255, 0.18) inset;
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
   z-index: 1650;
+}
+
+.chat-fab:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 22px 40px rgba(6, 14, 12, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.22) inset;
+}
+
+.chat-fab:focus-visible {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 34%, transparent),
+    0 18px 36px rgba(6, 14, 12, 0.36),
+    0 0 0 1px rgba(255, 255, 255, 0.2) inset;
 }
 
 .chat-fab-badge {
@@ -1295,17 +1314,23 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
 .live-chat-panel {
   position: fixed;
   right: 20px;
-  bottom: 82px;
-  width: min(92vw, 380px);
-  max-height: min(72vh, 560px);
+  bottom: calc(142px + env(safe-area-inset-bottom, 0px));
+  width: min(92vw, 392px);
+  max-height: min(70vh, 560px);
   padding: 14px;
-  border-radius: 20px;
-  border: 1px solid rgba(23, 39, 33, 0.16);
-  background: color-mix(in srgb, var(--paper) 92%, #ffffff 8%);
-  box-shadow: 0 22px 50px rgba(6, 14, 12, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  border-radius: 24px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.34));
+  background:
+    linear-gradient(155deg, color-mix(in srgb, var(--paper) 66%, rgba(255, 255, 255, 0.22)), color-mix(in srgb, var(--accent-soft) 34%, rgba(10, 20, 17, 0.2)));
+  box-shadow:
+    0 26px 56px rgba(6, 14, 12, 0.34),
+    0 0 0 1px rgba(255, 255, 255, 0.16) inset,
+    0 1px 0 rgba(255, 255, 255, 0.24) inset;
+  backdrop-filter: blur(22px) saturate(148%);
+  -webkit-backdrop-filter: blur(22px) saturate(148%);
   display: grid;
   grid-template-rows: auto auto auto minmax(120px, 1fr) auto;
-  gap: 10px;
+  gap: 11px;
   z-index: 1650;
 }
 
@@ -1314,12 +1339,33 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  padding: 2px 2px 0;
 }
 
 .live-chat-header h2 {
   margin: 0;
   font-family: "Fraunces", Georgia, serif;
-  font-size: 1.15rem;
+  font-size: 1.12rem;
+  letter-spacing: 0.01em;
+  color: color-mix(in srgb, var(--ink) 84%, #ffffff 16%);
+}
+
+.live-chat-header .chip {
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, rgba(255, 255, 255, 0.34));
+  background: color-mix(in srgb, var(--paper) 70%, rgba(255, 255, 255, 0.18));
+  min-height: 38px;
+  height: 38px;
+  padding: 0 14px;
+}
+
+#chatStatusText {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 12%, rgba(255, 255, 255, 0.28));
+  background: color-mix(in srgb, var(--paper) 76%, rgba(255, 255, 255, 0.1));
+  color: color-mix(in srgb, var(--muted) 90%, #ffffff 10%);
+  line-height: 1.35;
 }
 
 .live-chat-actions {
@@ -1328,8 +1374,34 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   gap: 8px;
 }
 
+.live-chat-actions .chip,
+.live-chat-actions .action {
+  min-height: 40px;
+  height: 40px;
+  border-radius: 12px;
+  font-weight: 700;
+}
+
+.live-chat-actions .chip {
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, rgba(255, 255, 255, 0.28));
+  background: color-mix(in srgb, var(--paper) 72%, rgba(255, 255, 255, 0.16));
+}
+
+.live-chat-actions .action {
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, rgba(255, 255, 255, 0.36));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent-strong) 80%, #ffffff 20%), color-mix(in srgb, var(--accent) 72%, #ffffff 28%));
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--accent-strong) 34%, transparent);
+}
+
+.live-chat-actions .action:disabled,
+.live-chat-actions .chip:disabled,
+.live-chat-compose .action:disabled {
+  opacity: 0.58;
+  box-shadow: none;
+}
+
 .chat-voice-btn.is-recording {
-  background: linear-gradient(145deg, #b1302d, #dd4337);
+  background: var(--accent);
   border-color: rgba(255, 255, 255, 0.24);
   color: #fff6f1;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25), 0 10px 26px rgba(177, 48, 45, 0.38);
@@ -1341,27 +1413,41 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   overflow: auto;
   display: grid;
   gap: 8px;
-  padding-right: 2px;
+  padding: 8px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 12%, rgba(255, 255, 255, 0.22));
+  background: color-mix(in srgb, var(--paper) 72%, rgba(255, 255, 255, 0.08));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
 }
 
 .chat-bubble {
-  padding: 10px;
-  border-radius: 12px;
-  border: 1px solid rgba(25, 35, 32, 0.12);
-  background: color-mix(in srgb, var(--paper) 85%, white 15%);
+  width: fit-content;
+  max-width: min(86%, 290px);
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 10%, rgba(255, 255, 255, 0.24));
+  background: color-mix(in srgb, var(--paper) 84%, rgba(255, 255, 255, 0.2));
+  box-shadow:
+    0 7px 16px rgba(19, 31, 27, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+.chat-bubble.opp {
+  margin-right: auto;
 }
 
 .chat-bubble.mine {
-  background: color-mix(in srgb, var(--accent-soft) 74%, #ffffff 26%);
-  border-color: color-mix(in srgb, var(--accent) 26%, rgba(25, 35, 32, 0.2));
+  margin-left: auto;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent-soft) 70%, #ffffff 30%), color-mix(in srgb, var(--accent) 18%, #ffffff 82%));
+  border-color: color-mix(in srgb, var(--accent) 34%, rgba(25, 35, 32, 0.2));
 }
 
 .chat-bubble-meta {
-  margin-bottom: 5px;
-  color: color-mix(in srgb, var(--muted) 88%, #ffffff 12%);
+  margin-bottom: 6px;
+  color: color-mix(in srgb, var(--muted) 84%, #ffffff 16%);
   font-size: 0.76rem;
   font-weight: 600;
 }
@@ -1374,6 +1460,9 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
 
 .chat-bubble audio {
   width: 100%;
+  height: 32px;
+  border-radius: 10px;
+  filter: saturate(1.05);
 }
 
 .live-chat-compose {
@@ -1383,7 +1472,35 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
 }
 
 .live-chat-input {
-  min-height: 42px;
+  min-height: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, rgba(255, 255, 255, 0.28));
+  background: color-mix(in srgb, var(--paper) 72%, rgba(255, 255, 255, 0.14));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  color: color-mix(in srgb, var(--ink) 90%, #ffffff 10%);
+}
+
+.live-chat-input::placeholder {
+  color: color-mix(in srgb, var(--muted) 80%, #ffffff 20%);
+}
+
+.live-chat-input:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 48%, rgba(255, 255, 255, 0.44));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.live-chat-compose .action {
+  min-width: 84px;
+  min-height: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, rgba(255, 255, 255, 0.34));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent-strong) 82%, #ffffff 18%), color-mix(in srgb, var(--accent) 74%, #ffffff 26%));
+  box-shadow: 0 12px 24px color-mix(in srgb, var(--accent-strong) 30%, transparent);
 }
 
 @keyframes chat-record-pulse {
@@ -3008,7 +3125,7 @@ body.focus-mode.focus-analyze .nav-row button:hover {
 @media (max-width: 640px) {
   .chat-fab {
     right: 12px;
-    bottom: 14px;
+    bottom: calc(72px + env(safe-area-inset-bottom, 0px));
     min-width: 78px;
     height: 46px;
   }
@@ -3016,9 +3133,11 @@ body.focus-mode.focus-analyze .nav-row button:hover {
   .live-chat-panel {
     right: 10px;
     left: 10px;
-    bottom: 68px;
+    bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     width: auto;
-    max-height: min(74vh, 560px);
+    max-height: min(68vh, 520px);
+    padding: 12px;
+    border-radius: 20px;
   }
 
   .live-chat-actions {

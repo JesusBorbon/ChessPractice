@@ -116,6 +116,36 @@ export function createNotificationsStateController({
     void refresh();
   };
 
+  const onFriendProfileUpdate = (payload?: unknown): void => {
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+
+    const record = payload as { userId?: unknown; displayName?: unknown };
+    const userId = typeof record.userId === "string" ? record.userId.trim() : "";
+    const displayName = typeof record.displayName === "string" ? record.displayName.trim().slice(0, 24) : "";
+    if (!userId || !displayName) {
+      return;
+    }
+
+    let changed = false;
+    notifications = notifications.map((item) => {
+      if (item.fromUserId !== userId || item.fromDisplayName === displayName) {
+        return item;
+      }
+
+      changed = true;
+      return {
+        ...item,
+        fromDisplayName: displayName,
+      };
+    });
+
+    if (changed) {
+      emitSnapshot();
+    }
+  };
+
   function emitSnapshot(): void {
     if (disposed) {
       return;
@@ -232,6 +262,7 @@ export function createNotificationsStateController({
 
     socket.on("friends:notification:request", onIncomingNotification);
     socket.on("friends:notification:response", onResponseNotification);
+    socket.on("friends:profile:update", onFriendProfileUpdate);
 
     authUnsubscribe?.();
     authUnsubscribe = listenToAuthState((user) => {
@@ -253,6 +284,7 @@ export function createNotificationsStateController({
     setPollEnabled(false);
     socket.off("friends:notification:request", onIncomingNotification);
     socket.off("friends:notification:response", onResponseNotification);
+    socket.off("friends:profile:update", onFriendProfileUpdate);
     listeners.clear();
   }
 

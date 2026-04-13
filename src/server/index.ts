@@ -40,6 +40,7 @@ type ClientState = {
   userId?: string;
   email?: string;
   friendId?: string;
+  usernameChangeCount?: number;
 };
 
 type FriendPresenceStatus = "online" | "in-room" | "offline";
@@ -184,6 +185,9 @@ const activeUserSockets = new Map<string, Set<string>>();
 const socketUserIds = new Map<string, string>();
 const watchedFriendIdsBySocket = new Map<string, Set<string>>();
 const friendWatchersByUserId = new Map<string, Set<string>>();
+const knownFriendUserIdsBySocket = new Map<string, Set<string>>();
+const lockedUsernameByUserId = new Map<string, string>();
+const lockedUsernameOwnerByKey = new Map<string, string>();
 const cachedFriendPresenceByUserId = new Map<string, string>();
 const pendingFriendInvites = new Map<string, PendingFriendInvite>();
 const pendingFriendRequests = new Map<string, PendingFriendRequest>();
@@ -612,6 +616,15 @@ function normalizeFriendId(value: unknown): string | null {
   return normalized;
 }
 
+function normalizeUsernameChangeCount(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+
+  const normalized = Math.floor(value);
+  return normalized < 0 ? 0 : normalized;
+}
+
 function getSocketUserId(socketId: string): string | null {
   const state = io.sockets.sockets.get(socketId)?.data as ClientState | undefined;
   const normalized = normalizeUserId(state?.userId);
@@ -654,6 +667,47 @@ function getConnectedUserSocketIds(userId: string): string[] {
   }
 
   return connectedSocketIds;
+}
+
+function clearKnownFriendsForSocket(socketId: string): void {
+  knownFriendUserIdsBySocket.delete(socketId);
+}
+
+function setKnownFriendsForSocket(socketId: string, friendUserIds: readonly string[]): void {
+  const senderUserId = getSocketUserId(socketId);
+  if (!senderUserId) {
+    clearKnownFriendsForSocket(socketId);
+    return;
+  }
+
+  const normalizedFriendIds = new Set<string>();
+  for (const rawFriendUserId of friendUserIds) {
+    const friendUserId = normalizeUserId(rawFriendUserId);
+    if (!friendUserId || friendUserId === senderUserId) {
+      continue;
+    }
+
+    normalizedFriendIds.add(friendUserId);
+    if (normalizedFriendIds.size >= 1000) {
+      break;
+    }
+  }
+
+  knownFriendUserIdsBySocket.set(socketId, normalizedFriendIds);
+}
+
+function areKnownFriendsForSocket(socketId: string, targetUserId: string): boolean {
+  const normalizedTargetUserId = normalizeUserId(targetUserId);
+  if (!normalizedTargetUserId) {
+    return false;
+  }
+
+  const knownFriends = knownFriendUserIdsBySocket.get(socketId);
+  if (!knownFriends) {
+    return false;
+  }
+
+  return knownFriends.has(normalizedTargetUserId);
 }
 
 function pruneDisconnectedRoomSeats(room: GameRoom, now = Date.now()): boolean {
@@ -884,6 +938,21 @@ function notifyFriendWatchers(userId: string): void {
 
   for (const watcherSocketId of watchers) {
     emitFriendPresenceToSocket(watcherSocketId);
+  }
+}
+
+function notifyFriendProfileWatchers(userId: string, displayName: string, friendId: string | null): void {
+  const watchers = friendWatchersByUserId.get(userId);
+  if (!watchers || watchers.size === 0) {
+    return;
+  }
+
+  for (const watcherSocketId of watchers) {
+    io.to(watcherSocketId).emit("friends:profile:update", {
+      userId,
+      displayName,
+      friendId,
+    });
   }
 }
 
@@ -1631,7 +1700,7 @@ io.on("connection", (socket) => {
 
   socket.emit("connection:status", { connected: true });
 
-  socket.on("profile:setName", (payload?: { name?: string; userId?: string | null; email?: string | null; friendId?: string | null }) => {
+  socket.on("profile:setName", (payload?: { name?: string; userId?: string | null; email?: string | null; friendId?: string | null; usernameChangeCount?: number }) => {
     const rawName = payload?.name;
     if (typeof rawName !== "string") {
       socket.emit("room:error", { message: "Invalid player name." });
@@ -1644,11 +1713,52 @@ io.on("connection", (socket) => {
       return;
     }
 
+    if (/\s/.test(trimmed)) {
+      socket.emit("room:error", { message: "Username cannot contain spaces." });
+      return;
+    }
+
     const state = socket.data as ClientState;
-    state.displayName = trimmed;
+    const previousUserId = normalizeUserId(state.userId);
+    const previousDisplayName = state.displayName?.trim() ?? "";
     const normalizedUserId = normalizeUserId(payload?.userId);
     const normalizedEmail = normalizeEmail(payload?.email);
     const normalizedFriendId = normalizeFriendId(payload?.friendId);
+    const requestedChangeCount = normalizeUsernameChangeCount(payload?.usernameChangeCount);
+
+    if (normalizedUserId) {
+      const previousCount = normalizeUsernameChangeCount(state.usernameChangeCount);
+      const nextCount = Math.max(previousCount, requestedChangeCount);
+      const lockedUsername = lockedUsernameByUserId.get(normalizedUserId);
+      const requestedUsernameKey = trimmed.toLowerCase();
+      const keyOwnerUserId = lockedUsernameOwnerByKey.get(requestedUsernameKey);
+
+      if (keyOwnerUserId && keyOwnerUserId !== normalizedUserId) {
+        socket.emit("room:error", { message: "Username already taken." });
+        return;
+      }
+
+      if (lockedUsername && trimmed !== lockedUsername) {
+        socket.emit("room:error", { message: "Username can only be changed once per account." });
+        return;
+      }
+
+      if (
+        nextCount >= 1
+        && previousDisplayName
+        && previousDisplayName !== "Guest"
+        && trimmed !== previousDisplayName
+      ) {
+        socket.emit("room:error", { message: "Username can only be changed once per account." });
+        return;
+      }
+
+      state.usernameChangeCount = nextCount;
+    } else {
+      delete state.usernameChangeCount;
+    }
+
+    state.displayName = trimmed;
 
     if (normalizedUserId) {
       state.userId = normalizedUserId;
@@ -1670,6 +1780,23 @@ io.on("connection", (socket) => {
       clearSocketUserIdentity(socket.id);
     }
 
+    if (normalizedUserId && normalizeUsernameChangeCount(state.usernameChangeCount) >= 1) {
+      const previousLockedUsername = lockedUsernameByUserId.get(normalizedUserId);
+      if (previousLockedUsername && previousLockedUsername.toLowerCase() !== trimmed.toLowerCase()) {
+        lockedUsernameOwnerByKey.delete(previousLockedUsername.toLowerCase());
+      }
+      lockedUsernameByUserId.set(normalizedUserId, trimmed);
+      lockedUsernameOwnerByKey.set(trimmed.toLowerCase(), normalizedUserId);
+    }
+
+    if (!normalizedUserId || previousUserId !== normalizedUserId) {
+      clearKnownFriendsForSocket(socket.id);
+    }
+
+    if (normalizedUserId && trimmed !== previousDisplayName) {
+      notifyFriendProfileWatchers(normalizedUserId, trimmed, normalizedFriendId);
+    }
+
     const room = getRoomForSocket(socket.id);
     if (room) {
       if (room.white === socket.id) {
@@ -1685,6 +1812,27 @@ io.on("connection", (socket) => {
   socket.on("friends:watch", (payload?: { friendIds?: string[] }) => {
     const friendIds = Array.isArray(payload?.friendIds) ? payload.friendIds : [];
     setFriendWatchForSocket(socket.id, friendIds);
+  });
+
+  socket.on("friends:state", (payload?: { userId?: string | null; friendUserIds?: string[] }) => {
+    const senderUserId = getSocketUserId(socket.id);
+    if (!senderUserId) {
+      clearKnownFriendsForSocket(socket.id);
+      return;
+    }
+
+    const payloadUserId = normalizeUserId(payload?.userId);
+    if (payloadUserId && payloadUserId !== senderUserId) {
+      roomTrace("friends-state-mismatch", {
+        socketId: socket.id,
+        senderUserId,
+        payloadUserId,
+      });
+      return;
+    }
+
+    const friendUserIds = Array.isArray(payload?.friendUserIds) ? payload.friendUserIds : [];
+    setKnownFriendsForSocket(socket.id, friendUserIds);
   });
 
   socket.on("friends:notification:request", (payload?: {
@@ -1958,6 +2106,11 @@ io.on("connection", (socket) => {
 
     if (opponentUserId === senderUserId) {
       socket.emit("room:error", { message: "You cannot send a friend request to yourself." });
+      return;
+    }
+
+    if (areKnownFriendsForSocket(socket.id, opponentUserId) || areKnownFriendsForSocket(opponentSocketId, senderUserId)) {
+      socket.emit("room:error", { message: "You and your opponent are already friends." });
       return;
     }
 
@@ -2877,6 +3030,7 @@ socket.on("game:rematch", () => {
   socket.on("disconnect", () => {
     removeFromRoom(socket.id, false); // false = no es inmediato, aplicar grace period
     clearFriendWatchForSocket(socket.id);
+    clearKnownFriendsForSocket(socket.id);
     clearSocketUserIdentity(socket.id);
   });
 });

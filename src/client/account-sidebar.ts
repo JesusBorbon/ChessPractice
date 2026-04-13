@@ -8,6 +8,8 @@ import {
   formatGoogleAuthError,
   getFirebaseAuthDisabledReason,
   getPublicUserProfile,
+  PublicUserProfile,
+  renameUserProfile,
   getStoredGameCount,
   getStoredGameHistory,
   initializeFirebaseClient,
@@ -51,6 +53,8 @@ export type FriendInviteCandidate = {
   email: string | null;
   status: FriendPresenceStatus;
 };
+
+export type MultiplayerFriendshipStatus = "friends" | "not-friends" | "unknown";
 
 export type AccountSidebarDomRefs = { // this is for the sake of better readability and maintainability, grouping all DOM refs related to the account sidebar in a single typez
   quickIdentity: HTMLParagraphElement;
@@ -98,7 +102,10 @@ export type AccountSidebarController = {
   initialize: () => Promise<void>;
   dispose: () => void;
   emitCurrentProfileName: () => void;
+  emitFriendshipState: () => void;
   getCurrentPlayerName: () => string;
+  getAuthenticatedUserId: () => string | null;
+  getFriendshipStatusWithUser: (userId: string | null | undefined) => MultiplayerFriendshipStatus;
   openSidebarToFriends: () => void;
   getInviteCandidates: () => FriendInviteCandidate[];
   canSendRoomInvites: () => boolean;
@@ -109,7 +116,6 @@ export type AccountSidebarController = {
   handleFinishedGamePersist: (input: PersistFinishedGameInput) => Promise<void>;
 };
 
-const USERNAME_STORAGE_PREFIX = "chess-custom-username:"; // prefix for localStorage keys where custom usernames are stored, namespaced by user ID
 const MOBILE_BREAKPOINT_PX = 640;
 const MOBILE_SCROLL_LOCK_CLASS = "sidebar-open-mobile";
 const FRIEND_NUMERIC_ID_LENGTH = 5;
@@ -128,6 +134,7 @@ export function createAccountSidebarController({
   let authInitFinished = false;
   let storedGamesCount: number | null = null;
   let editableUsername = "";
+  let currentProfile: PublicUserProfile | null = null;
 
   let sidebarOpen = false;
   let activeSidebarTab: "profile" | "history" = "profile";
@@ -229,27 +236,128 @@ export function createAccountSidebarController({
     renderAuthPanel();
   };
 
-  const onSaveUsernameClick = (): void => {
+  const onSaveUsernameClick = async (): Promise<void> => {
+    if (authBusy) {
+      return;
+    }
+
     if (!authenticatedUser) {
       showToast("Only registered users can set a custom username.");
       return;
     }
 
-    const normalized = normalizeUsername(refs.usernameInput.value);
+    const normalized = normalizeUsernameDraft(refs.usernameInput.value);
     if (normalized.length < 2) {
       showToast("Username must be at least 2 characters.");
       return;
     }
 
-    localStorage.setItem(usernameStorageKey(authenticatedUser.uid), normalized);
-    editableUsername = normalized;
-    emitCurrentProfileName();
-    if (authenticatedUser && isFirebaseAuthEnabled()) {
-      void syncUserProfile(authenticatedUser, normalized);
+    if (/\s/.test(normalized)) {
+      showToast("Username cannot contain spaces.");
+      return;
     }
+
+    if ((currentProfile?.usernameChangeCount ?? 0) >= 1) {
+      showToast("Username can only be changed once per account.");
+      return;
+    }
+
+    if (currentProfile && normalized === currentProfile.displayName) {
+      showToast("Choose a different username.");
+      return;
+    }
+
+    authBusy = true;
     renderAuthPanel();
-    onIdentityUpdated();
-    showToast("Username updated.");
+
+    try {
+      const updatedProfile = await renameUserProfile(authenticatedUser, normalized);
+      currentProfile = updatedProfile;
+      currentFriendId = updatedProfile.friendId || currentFriendId;
+      editableUsername = updatedProfile.displayName;
+      emitCurrentProfileName();
+      onIdentityUpdated();
+      await refreshFriendsPanel();
+      showToast("Username updated.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not update username right now.";
+      showToast(message);
+    } finally {
+      authBusy = false;
+      renderAuthPanel();
+    }
+  };
+
+  const onFriendProfileUpdate = (payload?: unknown): void => {
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+
+    const record = payload as { userId?: unknown; displayName?: unknown; friendId?: unknown };
+    const userId = normalizeSocketUserId(record.userId);
+    const displayName = normalizeUsernameDraft(typeof record.displayName === "string" ? record.displayName : "");
+    const friendId = typeof record.friendId === "string" ? record.friendId.trim() : "";
+    if (!userId || !displayName) {
+      return;
+    }
+
+    let changed = false;
+    friends = friends.map((entry) => {
+      if (entry.userId !== userId) {
+        return entry;
+      }
+
+      const nextFriendId = friendId || entry.friendId;
+      if (entry.displayName === displayName && entry.friendId === nextFriendId) {
+        return entry;
+      }
+
+      changed = true;
+      return {
+        ...entry,
+        displayName,
+        friendId: nextFriendId,
+      };
+    });
+
+    incomingFriendRequests = incomingFriendRequests.map((request) => {
+      if (request.fromUserId !== userId || request.fromDisplayName === displayName) {
+        return request;
+      }
+
+      changed = true;
+      return {
+        ...request,
+        fromDisplayName: displayName,
+      };
+    });
+
+    outgoingFriendRequests = outgoingFriendRequests.map((request) => {
+      if (request.toUserId !== userId || request.toDisplayName === displayName) {
+        return request;
+      }
+
+      changed = true;
+      return {
+        ...request,
+        toDisplayName: displayName,
+      };
+    });
+
+    if (authenticatedUser && authenticatedUser.uid === userId && currentProfile && currentProfile.displayName !== displayName) {
+      currentProfile = {
+        ...currentProfile,
+        displayName,
+      };
+      editableUsername = displayName;
+      changed = true;
+      onIdentityUpdated();
+    }
+
+    if (changed) {
+      renderFriendsPanel();
+      renderAuthPanel();
+    }
   };
 
   const onFriendIdInput = (): void => {
@@ -450,12 +558,12 @@ export function createAccountSidebarController({
     }
   };
 
-  function usernameStorageKey(uid: string): string {
-    return `${USERNAME_STORAGE_PREFIX}${uid}`;
-  }
-
   function normalizeUsername(value: string): string {
     return value.trim().replace(/\s+/g, " ").slice(0, 24);
+  }
+
+  function normalizeUsernameDraft(value: string): string {
+    return value.trim().slice(0, 24);
   }
 
   function normalizeSocketUserId(value: unknown): string {
@@ -532,15 +640,21 @@ export function createAccountSidebarController({
   async function refreshCurrentFriendId(): Promise<void> {
     if (!authenticatedUser || !isFirebaseAuthEnabled()) {
       currentFriendId = null;
+      currentProfile = null;
       renderFriendsPanel();
       return;
     }
 
     try {
       const profile = await getPublicUserProfile(authenticatedUser.uid);
+      currentProfile = profile;
       currentFriendId = profile?.friendId || null;
+      if (profile?.displayName) {
+        editableUsername = profile.displayName;
+      }
     } catch {
       currentFriendId = null;
+      currentProfile = null;
     }
 
     renderFriendsPanel();
@@ -589,12 +703,12 @@ export function createAccountSidebarController({
       return "Guest";
     }
 
-    const custom = normalizeUsername(localStorage.getItem(usernameStorageKey(authenticatedUser.uid)) ?? "");
-    if (custom) {
-      return custom;
+    const profileName = normalizeUsernameDraft(currentProfile?.displayName ?? "");
+    if (profileName) {
+      return profileName;
     }
 
-    const fallback = normalizeUsername(authenticatedUser.displayName ?? "");
+    const fallback = normalizeUsernameDraft(authenticatedUser.displayName ?? "").replace(/\s+/g, "");
     if (fallback) {
       return fallback;
     }
@@ -607,12 +721,51 @@ export function createAccountSidebarController({
       return;
     }
 
+    if (authenticatedUser && isFirebaseAuthEnabled() && !currentProfile) {
+      return;
+    }
+
     socket.emit("profile:setName", {
       name: getCurrentPlayerName(),
       userId: authenticatedUser?.uid ?? null,
       email: authenticatedUser?.email ?? null,
       friendId: currentFriendId,
+      usernameChangeCount: currentProfile?.usernameChangeCount ?? 0,
     });
+  }
+
+  function emitFriendshipState(): void {
+    if (!socket.connected || !authenticatedUser || !isFirebaseAuthEnabled() || friendsLoading) {
+      return;
+    }
+
+    const friendUserIds = Array.from(new Set(friends.map((entry) => entry.userId).filter(Boolean)));
+    socket.emit("friends:state", {
+      userId: authenticatedUser.uid,
+      friendUserIds,
+    });
+  }
+
+  function getAuthenticatedUserId(): string | null {
+    return authenticatedUser?.uid ?? null;
+  }
+
+  function getFriendshipStatusWithUser(userId: string | null | undefined): MultiplayerFriendshipStatus {
+    const currentUserId = getAuthenticatedUserId();
+    const targetUserId = normalizeSocketUserId(userId);
+    if (!currentUserId || !targetUserId || !isFirebaseAuthEnabled()) {
+      return "unknown";
+    }
+
+    if (targetUserId === currentUserId) {
+      return "friends";
+    }
+
+    if (friendsLoading) {
+      return "unknown";
+    }
+
+    return friends.some((entry) => entry.userId === targetUserId) ? "friends" : "not-friends";
   }
 
   function getPresenceLabel(status: FriendPresenceStatus): string {
@@ -876,6 +1029,7 @@ export function createAccountSidebarController({
       friendsLoading = false;
       renderFriendsPanel();
       syncFriendActivitySubscription();
+      emitFriendshipState();
     }
   }
 
@@ -1397,17 +1551,25 @@ export function createAccountSidebarController({
 
     if (authenticatedUser) {
       const userLabel = getCurrentPlayerName();
+      const canRenameUsername = (currentProfile?.usernameChangeCount ?? 0) < 1;
       refs.quickIdentity.textContent = userLabel;
-      refs.authStatus.textContent = `Signed in as ${userLabel}`;
+      refs.authStatus.textContent = canRenameUsername
+        ? `Signed in as ${userLabel}. You can change your username once.`
+        : `Signed in as ${userLabel}. Username change already used.`;
       refs.storedGamesMeta.textContent = `History enabled: ${storedGamesCount ?? "..."} / 100 PGNs`;
-      refs.usernameInput.hidden = false;
-      refs.saveUsernameButton.hidden = false;
-      refs.usernameInput.disabled = authBusy;
+      refs.usernameInput.hidden = !canRenameUsername;
+      refs.saveUsernameButton.hidden = !canRenameUsername;
+      refs.usernameInput.disabled = authBusy || !canRenameUsername;
       if (document.activeElement !== refs.usernameInput) {
         refs.usernameInput.value = editableUsername;
       }
-      const normalizedDraft = normalizeUsername(refs.usernameInput.value);
-      refs.saveUsernameButton.disabled = authBusy || normalizedDraft.length < 2 || normalizedDraft === getCurrentPlayerName();
+      const normalizedDraft = normalizeUsernameDraft(refs.usernameInput.value);
+      const hasWhitespace = /\s/.test(normalizedDraft);
+      refs.saveUsernameButton.disabled = authBusy
+        || !canRenameUsername
+        || normalizedDraft.length < 2
+        || hasWhitespace
+        || normalizedDraft === getCurrentPlayerName();
       refs.guestModeButton.disabled = authBusy;
       refs.signInGoogleButton.hidden = true;
       refs.signOutButton.hidden = false;
@@ -1514,6 +1676,7 @@ export function createAccountSidebarController({
     refs.guestModeButton.addEventListener("click", onGuestModeClick);
     refs.signOutButton.addEventListener("click", onSignOutClick);
     socket.on("friends:invite:sent", onFriendInviteSent);
+    socket.on("friends:profile:update", onFriendProfileUpdate);
     socket.on("session:joined", onSessionJoined);
     socket.on("session:left", onSessionLeft);
 
@@ -1546,6 +1709,7 @@ export function createAccountSidebarController({
     refs.guestModeButton.removeEventListener("click", onGuestModeClick);
     refs.signOutButton.removeEventListener("click", onSignOutClick);
     socket.off("friends:invite:sent", onFriendInviteSent);
+    socket.off("friends:profile:update", onFriendProfileUpdate);
     socket.off("session:joined", onSessionJoined);
     socket.off("session:left", onSessionLeft);
 
@@ -1572,6 +1736,7 @@ export function createAccountSidebarController({
     authUnsubscribe?.();
     authUnsubscribe = listenToAuthState((user) => {
       authenticatedUser = user;
+      currentProfile = null;
       storedGamesCount = null;
       savedGameHistory = [];
       historyLoading = false;
@@ -1580,7 +1745,7 @@ export function createAccountSidebarController({
       incomingFriendRequests = [];
       outgoingFriendRequests = [];
       pendingFriendRemovals.clear();
-      friendsLoading = false;
+      friendsLoading = Boolean(user);
       addFriendBusy = false;
       currentFriendId = null;
       friendActivityRealtime.updateWatchedFriendIds([]);
@@ -1589,20 +1754,29 @@ export function createAccountSidebarController({
 
       renderAuthPanel();
       renderSavedHistoryPanel();
-      emitCurrentProfileName();
-      onIdentityUpdated();
 
       if (user) {
         void (async () => {
-          const profile = await syncUserProfile(user, getCurrentPlayerName());
-          currentFriendId = profile.friendId ?? null;
-          renderFriendsPanel();
-          emitCurrentProfileName();
+          try {
+            const profile = await syncUserProfile(user, getCurrentPlayerName());
+            currentProfile = profile;
+            currentFriendId = profile.friendId ?? null;
+            editableUsername = profile.displayName;
+            renderFriendsPanel();
+            renderAuthPanel();
+            emitCurrentProfileName();
+            onIdentityUpdated();
+          } catch {
+            emitCurrentProfileName();
+            onIdentityUpdated();
+          }
         })();
         void refreshStoredGamesCount();
         void refreshSavedHistoryPanel();
         void refreshFriendsPanel();
       } else {
+        emitCurrentProfileName();
+        onIdentityUpdated();
         void refreshCurrentFriendId();
         void refreshFriendsPanel();
       }
@@ -1622,7 +1796,10 @@ export function createAccountSidebarController({
     initialize,
     dispose,
     emitCurrentProfileName,
+    emitFriendshipState,
     getCurrentPlayerName,
+    getAuthenticatedUserId,
+    getFriendshipStatusWithUser,
     openSidebarToFriends,
     getInviteCandidates,
     canSendRoomInvites,

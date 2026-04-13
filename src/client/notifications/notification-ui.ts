@@ -4,6 +4,7 @@ import {
 } from "./notification-state";
 
 type NotificationsUiRefs = {
+  shell: HTMLElement;
   button: HTMLButtonElement;
   badge: HTMLSpanElement;
   popover: HTMLElement;
@@ -171,6 +172,13 @@ export function createNotificationsUiController({
 
   function render(snapshot: NotificationsSnapshot): void {
     latestSnapshot = snapshot;
+
+    refs.shell.hidden = !snapshot.signedIn;
+    if (!snapshot.signedIn) {
+      isOpen = false;
+      refs.popover.hidden = true;
+      refs.button.setAttribute("aria-expanded", "false");
+    }
 
     refs.badge.hidden = snapshot.pendingCount <= 0;
     refs.badge.textContent = String(snapshot.pendingCount);

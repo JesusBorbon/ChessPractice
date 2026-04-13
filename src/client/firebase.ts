@@ -14,6 +14,7 @@ import {
 import {
   Firestore,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -46,6 +47,7 @@ export type PublicUserProfile = {
   friendId: string;
   displayName: string;
   email: string | null;
+  usernameChangeCount: number;
 };
 
 export type FriendListEntry = {
@@ -90,6 +92,8 @@ const MAX_FRIEND_REQUESTS = 300;
 const FRIEND_ID_DIGITS = 5;
 const FRIEND_ID_MIN = 10_000;
 const FRIEND_ID_MAX = 99_999;
+const USERNAME_MIN_LENGTH = 2;
+const USERNAME_MAX_LENGTH = 24;
 
 let auth: Auth | null = null;
 let db: Firestore | null = null;
@@ -148,6 +152,49 @@ function normalizeDisplayName(value: unknown): string {
   }
 
   return value.trim().replace(/\s+/g, " ").slice(0, 24);
+}
+
+function normalizeUsername(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim().slice(0, USERNAME_MAX_LENGTH);
+}
+
+function normalizeInitialUsername(value: unknown): string {
+  const stripped = normalizeUsername(value).replace(/\s+/g, "");
+  if (stripped.length >= USERNAME_MIN_LENGTH) {
+    return stripped;
+  }
+
+  return "Player";
+}
+
+function normalizeUsernameChangeCount(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+
+  const rounded = Math.floor(value);
+  return rounded < 0 ? 0 : rounded;
+}
+
+function assertValidUsernameInput(value: unknown): string {
+  const normalized = normalizeUsername(value);
+  if (!normalized) {
+    throw new Error("Username cannot be empty.");
+  }
+
+  if (/\s/.test(normalized)) {
+    throw new Error("Username cannot contain spaces.");
+  }
+
+  if (normalized.length < USERNAME_MIN_LENGTH) {
+    throw new Error("Username must be at least 2 characters.");
+  }
+
+  return normalized;
 }
 
 function normalizeEmail(value: unknown): string | null {
@@ -350,7 +397,216 @@ function normalizePublicUserProfile(userId: string, value: unknown): PublicUserP
     friendId: normalizeFriendId(record.friendId),
     displayName: normalizeDisplayName(record.displayName) || "Player",
     email: normalizeEmail(record.email),
+    usernameChangeCount: normalizeUsernameChangeCount(record.usernameChangeCount),
   };
+}
+
+async function resolveUniqueUsername(database: Firestore, userId: string, preferredUsername: string): Promise<string> {
+  const preferred = normalizeInitialUsername(preferredUsername);
+
+  for (let attempt = 0; attempt < 128; attempt += 1) {
+    const suffix = attempt === 0 ? "" : String(attempt + 1);
+    const baseLimit = USERNAME_MAX_LENGTH - suffix.length;
+    const candidate = `${preferred.slice(0, Math.max(USERNAME_MIN_LENGTH, baseLimit))}${suffix}`;
+    const candidateKey = normalizeDisplayNameKey(candidate);
+    if (!candidateKey) {
+      continue;
+    }
+
+    const indexRef = doc(database, "userDisplayNameIndex", candidateKey);
+    const indexSnapshot = await getDoc(indexRef);
+    const existingUserId = normalizeUserId(indexSnapshot.data()?.userId);
+    if (!existingUserId || existingUserId === userId) {
+      return candidate;
+    }
+  }
+
+  throw new Error("Could not allocate a unique username.");
+}
+
+async function upsertUsernameIndex(database: Firestore, userId: string, username: string): Promise<void> {
+  const usernameKey = normalizeDisplayNameKey(username);
+  if (!usernameKey) {
+    return;
+  }
+
+  await setDoc(
+    doc(database, "userDisplayNameIndex", usernameKey),
+    {
+      userId,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+}
+
+async function propagateProfileRename(
+  database: Firestore,
+  profile: PublicUserProfile,
+  previousDisplayName: string,
+): Promise<void> {
+  if (profile.displayName === previousDisplayName) {
+    return;
+  }
+
+  const ownerFriendsRef = doc(database, "userFriends", profile.userId);
+  const ownerFriendsSnapshot = await getDoc(ownerFriendsRef);
+  const ownerFriends = ownerFriendsSnapshot.exists()
+    ? normalizeFriendList(ownerFriendsSnapshot.data().friends)
+    : [];
+
+  const friendDocUpdates = ownerFriends.map(async (friend) => {
+    const friendFriendsRef = doc(database, "userFriends", friend.userId);
+    const friendFriendsSnapshot = await getDoc(friendFriendsRef);
+    if (!friendFriendsSnapshot.exists()) {
+      return;
+    }
+
+    const friendList = normalizeFriendList(friendFriendsSnapshot.data().friends);
+    let changed = false;
+    const updatedFriendList = friendList.map((entry) => {
+      if (entry.userId !== profile.userId) {
+        return entry;
+      }
+
+      if (entry.displayName === profile.displayName && entry.email === profile.email) {
+        return entry;
+      }
+
+      changed = true;
+      return {
+        ...entry,
+        displayName: profile.displayName,
+        email: profile.email,
+      };
+    });
+
+    if (!changed) {
+      return;
+    }
+
+    await setDoc(
+      friendFriendsRef,
+      {
+        userId: friend.userId,
+        friends: serializeFriendList(updatedFriendList),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
+  });
+
+  const ownerRequestsRef = doc(database, "userFriendRequests", profile.userId);
+  const ownerRequestsSnapshot = await getDoc(ownerRequestsRef);
+  const ownerIncoming = ownerRequestsSnapshot.exists()
+    ? normalizeFriendRequestList(ownerRequestsSnapshot.data().incoming)
+    : [];
+  const ownerOutgoing = ownerRequestsSnapshot.exists()
+    ? normalizeFriendRequestList(ownerRequestsSnapshot.data().outgoing)
+    : [];
+
+  const counterpartIds = new Set<string>();
+  for (const request of ownerIncoming) {
+    counterpartIds.add(request.fromUserId);
+  }
+  for (const request of ownerOutgoing) {
+    counterpartIds.add(request.toUserId);
+  }
+
+  const syncRequestsDocForOwner = async (ownerUserId: string): Promise<void> => {
+    const requestsRef = doc(database, "userFriendRequests", ownerUserId);
+    const snapshot = await getDoc(requestsRef);
+    if (!snapshot.exists()) {
+      return;
+    }
+
+    const incoming = normalizeFriendRequestList(snapshot.data().incoming);
+    const outgoing = normalizeFriendRequestList(snapshot.data().outgoing);
+
+    let incomingChanged = false;
+    const updatedIncoming = incoming.map((request) => {
+      if (request.fromUserId !== profile.userId && request.toUserId !== profile.userId) {
+        return request;
+      }
+
+      if (request.fromUserId === profile.userId) {
+        if (request.fromDisplayName === profile.displayName && request.fromEmail === profile.email) {
+          return request;
+        }
+
+        incomingChanged = true;
+        return {
+          ...request,
+          fromDisplayName: profile.displayName,
+          fromEmail: profile.email,
+        };
+      }
+
+      if (request.toDisplayName === profile.displayName && request.toEmail === profile.email) {
+        return request;
+      }
+
+      incomingChanged = true;
+      return {
+        ...request,
+        toDisplayName: profile.displayName,
+        toEmail: profile.email,
+      };
+    });
+
+    let outgoingChanged = false;
+    const updatedOutgoing = outgoing.map((request) => {
+      if (request.fromUserId !== profile.userId && request.toUserId !== profile.userId) {
+        return request;
+      }
+
+      if (request.fromUserId === profile.userId) {
+        if (request.fromDisplayName === profile.displayName && request.fromEmail === profile.email) {
+          return request;
+        }
+
+        outgoingChanged = true;
+        return {
+          ...request,
+          fromDisplayName: profile.displayName,
+          fromEmail: profile.email,
+        };
+      }
+
+      if (request.toDisplayName === profile.displayName && request.toEmail === profile.email) {
+        return request;
+      }
+
+      outgoingChanged = true;
+      return {
+        ...request,
+        toDisplayName: profile.displayName,
+        toEmail: profile.email,
+      };
+    });
+
+    if (!incomingChanged && !outgoingChanged) {
+      return;
+    }
+
+    await setDoc(
+      requestsRef,
+      {
+        userId: ownerUserId,
+        incoming: serializeFriendRequestList(updatedIncoming),
+        outgoing: serializeFriendRequestList(updatedOutgoing),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
+  };
+
+  const requestDocUpdates = [
+    syncRequestsDocForOwner(profile.userId),
+    ...Array.from(counterpartIds).map((counterpartId) => syncRequestsDocForOwner(counterpartId)),
+  ];
+
+  await Promise.all([...friendDocUpdates, ...requestDocUpdates]);
 }
 
 function upsertFriendEntry(list: FriendListEntry[], entry: FriendListEntry): FriendListEntry[] {
@@ -693,6 +949,17 @@ async function resolveUserProfileByLookup(database: Firestore, lookup: string): 
     return null;
   }
 
+  const nameIndexRef = doc(database, "userDisplayNameIndex", normalizedNameKey);
+  const nameIndexSnapshot = await getDoc(nameIndexRef);
+  const indexedNameUserId = normalizeUserId(nameIndexSnapshot.data()?.userId);
+  if (indexedNameUserId) {
+    const profileRef = doc(database, "userProfiles", indexedNameUserId);
+    const profileSnapshot = await getDoc(profileRef);
+    if (profileSnapshot.exists()) {
+      return normalizePublicUserProfile(indexedNameUserId, profileSnapshot.data());
+    }
+  }
+
   const profilesRef = collection(database, "userProfiles");
   const profileQuery = query(profilesRef, where("displayNameKey", "==", normalizedNameKey), limit(1));
   const profileResults = await getDocs(profileQuery);
@@ -712,13 +979,16 @@ export async function syncUserProfile(user: User, displayName: string): Promise<
 
   const database = requireDb();
   const profileRef = doc(database, "userProfiles", userId);
-  const normalizedDisplayName = normalizeDisplayName(displayName) || "Player";
+  const preferredDisplayName = normalizeInitialUsername(displayName);
   const profileSnapshot = await getDoc(profileRef);
   const existingProfile = profileSnapshot.exists()
     ? normalizePublicUserProfile(userId, profileSnapshot.data())
     : null;
 
   const friendId = existingProfile?.friendId || await assignUniqueFriendId(database, userId);
+  const usernameChangeCount = existingProfile?.usernameChangeCount ?? 0;
+  const normalizedDisplayName = existingProfile?.displayName
+    || await resolveUniqueUsername(database, userId, preferredDisplayName);
 
   await setDoc(
     profileRef,
@@ -728,6 +998,8 @@ export async function syncUserProfile(user: User, displayName: string): Promise<
       displayName: normalizedDisplayName,
       displayNameKey: normalizeDisplayNameKey(normalizedDisplayName),
       email: normalizeEmail(user.email),
+      usernameChangeCount,
+      hasChangedUsername: usernameChangeCount >= 1,
       updatedAt: serverTimestamp(),
     },
     { merge: true },
@@ -742,12 +1014,96 @@ export async function syncUserProfile(user: User, displayName: string): Promise<
     { merge: true },
   );
 
+  await upsertUsernameIndex(database, userId, normalizedDisplayName);
+
   return {
     userId,
     friendId,
     displayName: normalizedDisplayName,
     email: normalizeEmail(user.email),
+    usernameChangeCount,
   };
+}
+
+export async function renameUserProfile(user: User, nextUsername: string): Promise<PublicUserProfile> {
+  const userId = normalizeUserId(user.uid);
+  if (!userId) {
+    throw new Error("Invalid authenticated user ID.");
+  }
+
+  const database = requireDb();
+  const requestedUsername = assertValidUsernameInput(nextUsername);
+  const requestedUsernameKey = normalizeDisplayNameKey(requestedUsername);
+
+  const profileRef = doc(database, "userProfiles", userId);
+  const [profileSnapshot, usernameIndexSnapshot] = await Promise.all([
+    getDoc(profileRef),
+    getDoc(doc(database, "userDisplayNameIndex", requestedUsernameKey)),
+  ]);
+
+  if (!profileSnapshot.exists()) {
+    throw new Error("Your profile is not ready yet. Please sign out and sign in again.");
+  }
+
+  const profile = normalizePublicUserProfile(userId, profileSnapshot.data());
+  if (!profile) {
+    throw new Error("Could not read player profile data.");
+  }
+
+  if (profile.usernameChangeCount >= 1) {
+    throw new Error("Username can only be changed once per account.");
+  }
+
+  if (profile.displayName === requestedUsername) {
+    throw new Error("Choose a different username.");
+  }
+
+  const indexedUserId = normalizeUserId(usernameIndexSnapshot.data()?.userId);
+  if (indexedUserId && indexedUserId !== userId) {
+    throw new Error("Username already taken.");
+  }
+
+  const previousDisplayName = profile.displayName;
+  const nextCount = profile.usernameChangeCount + 1;
+  const nextEmail = normalizeEmail(user.email);
+
+  await setDoc(
+    profileRef,
+    {
+      userId,
+      displayName: requestedUsername,
+      displayNameKey: requestedUsernameKey,
+      email: nextEmail,
+      usernameChangeCount: nextCount,
+      hasChangedUsername: true,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+
+  await upsertUsernameIndex(database, userId, requestedUsername);
+
+  const previousKey = normalizeDisplayNameKey(previousDisplayName);
+  if (previousKey && previousKey !== requestedUsernameKey) {
+    const previousIndexRef = doc(database, "userDisplayNameIndex", previousKey);
+    const previousIndexSnapshot = await getDoc(previousIndexRef);
+    const previousIndexOwner = normalizeUserId(previousIndexSnapshot.data()?.userId);
+    if (previousIndexOwner === userId) {
+      await deleteDoc(previousIndexRef);
+    }
+  }
+
+  const updatedProfile: PublicUserProfile = {
+    userId,
+    friendId: profile.friendId,
+    displayName: requestedUsername,
+    email: nextEmail,
+    usernameChangeCount: nextCount,
+  };
+
+  await propagateProfileRename(database, updatedProfile, previousDisplayName);
+
+  return updatedProfile;
 }
 
 export async function getPublicUserProfile(userId: string): Promise<PublicUserProfile | null> {
