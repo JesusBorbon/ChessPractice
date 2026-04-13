@@ -32,6 +32,8 @@ type FriendPresenceStatus = "online" | "in-room" | "offline";
 
 type SidebarFriendEntry = FriendListEntry & {
   status: FriendPresenceStatus;
+  presenceRoomId: string | null;
+  canSpectate: boolean;
 };
 
 export type AccountSidebarDomRefs = { // this is for the sake of better readability and maintainability, grouping all DOM refs related to the account sidebar in a single typez
@@ -91,6 +93,7 @@ const USERNAME_STORAGE_PREFIX = "chess-custom-username:"; // prefix for localSto
 const MOBILE_BREAKPOINT_PX = 640;
 const MOBILE_SCROLL_LOCK_CLASS = "sidebar-open-mobile";
 const FRIEND_NUMERIC_ID_LENGTH = 5;
+const ROOM_ID_PATTERN = /^\d{4}$/;
 
 export function createAccountSidebarController({
   socket,
@@ -121,6 +124,7 @@ export function createAccountSidebarController({
   let addFriendBusy = false;
   let friendsComposerOpen = false;
   let currentFriendId: string | null = null;
+  let currentRoomId: string | null = null;
 
   let savingGameSignature: string | null = null;
   let savedGameSignature: string | null = null;
@@ -314,26 +318,56 @@ export function createAccountSidebarController({
       return;
     }
 
-    const statusById = new Map<string, FriendPresenceStatus>();
+    const presenceById = new Map<string, {
+      status: FriendPresenceStatus;
+      roomId: string | null;
+      canSpectate: boolean;
+    }>();
     for (const item of records) {
       if (!item || typeof item !== "object") {
         continue;
       }
 
-      const record = item as { userId?: unknown; status?: unknown };
+      const record = item as { userId?: unknown; status?: unknown; roomId?: unknown; canSpectate?: unknown };
       const userId = normalizeSocketUserId(record.userId);
       const status = normalizePresenceStatus(record.status);
+      const roomId = normalizeRoomId(record.roomId);
+      const canSpectate = record.canSpectate === true;
       if (!userId) {
         continue;
       }
 
-      statusById.set(userId, status);
+      presenceById.set(userId, { status, roomId, canSpectate });
     }
 
-    friends = friends.map((entry) => ({
-      ...entry,
-      status: statusById.get(entry.userId) ?? "offline",
-    }));
+    friends = friends.map((entry) => {
+      const presence = presenceById.get(entry.userId);
+      return {
+        ...entry,
+        status: presence?.status ?? "offline",
+        presenceRoomId: presence?.roomId ?? null,
+        canSpectate: presence?.canSpectate ?? false,
+      };
+    });
+    renderFriendsPanel();
+  };
+
+  const onSessionJoined = (payload?: unknown): void => {
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+
+    const roomId = normalizeRoomId((payload as { roomId?: unknown }).roomId);
+    currentRoomId = roomId;
+    renderFriendsPanel();
+  };
+
+  const onSessionLeft = (): void => {
+    if (currentRoomId === null) {
+      return;
+    }
+
+    currentRoomId = null;
     renderFriendsPanel();
   };
 
@@ -434,6 +468,15 @@ export function createAccountSidebarController({
     }
 
     return "offline";
+  }
+
+  function normalizeRoomId(value: unknown): string | null {
+    if (typeof value !== "string") {
+      return null;
+    }
+
+    const normalized = value.trim();
+    return ROOM_ID_PATTERN.test(normalized) ? normalized : null;
   }
 
   function setFriendsComposerOpen(nextOpen: boolean, shouldAnimate = true): void {
@@ -573,20 +616,47 @@ export function createAccountSidebarController({
     identity.appendChild(idLine);
     identity.appendChild(status);
 
-    const inviteButton = document.createElement("button");
-    inviteButton.type = "button";
-    inviteButton.className = "chip friend-invite-button";
-    inviteButton.disabled = !socket.connected;
-    inviteButton.textContent = entry.status === "offline" ? "Send Gmail Invite" : "Invite";
-    inviteButton.addEventListener("click", () => {
-      socket.emit("friends:invite:send", {
-        toUserId: entry.userId,
-        toEmail: entry.email,
-      });
-    });
-
     item.appendChild(identity);
-    item.appendChild(inviteButton);
+
+    const actions = document.createElement("div");
+    actions.className = "friend-actions";
+
+    if (currentRoomId) {
+      const inviteButton = document.createElement("button");
+      inviteButton.type = "button";
+      inviteButton.className = "chip friend-invite-button";
+      inviteButton.disabled = !socket.connected;
+      inviteButton.textContent = entry.status === "offline" ? "Send Gmail Invite" : "Invite";
+      inviteButton.addEventListener("click", () => {
+        socket.emit("friends:invite:send", {
+          toUserId: entry.userId,
+          toEmail: entry.email,
+        });
+      });
+      actions.appendChild(inviteButton);
+    }
+
+    if (entry.canSpectate && entry.presenceRoomId && entry.presenceRoomId !== currentRoomId) {
+      const spectateButton = document.createElement("button");
+      spectateButton.type = "button";
+      spectateButton.className = "action friend-spectate-button";
+      spectateButton.disabled = !socket.connected;
+      spectateButton.textContent = "Spectate";
+      spectateButton.addEventListener("click", () => {
+        if (!entry.presenceRoomId) {
+          return;
+        }
+
+        socket.emit("room:join", { roomId: entry.presenceRoomId });
+        setSidebarOpen(false);
+        showToast(`Joining ${entry.displayName}'s game as spectator...`);
+      });
+      actions.appendChild(spectateButton);
+    }
+
+    if (actions.childElementCount > 0) {
+      item.appendChild(actions);
+    }
 
     return item;
   }
@@ -655,6 +725,8 @@ export function createAccountSidebarController({
       friends = loadedFriends.map((entry) => ({
         ...entry,
         status: "offline",
+        presenceRoomId: null,
+        canSpectate: false,
       }));
     } catch {
       friends = [];
@@ -1302,6 +1374,8 @@ export function createAccountSidebarController({
     refs.signOutButton.addEventListener("click", onSignOutClick);
     socket.on("friends:presence", onFriendsPresence);
     socket.on("friends:invite:sent", onFriendInviteSent);
+    socket.on("session:joined", onSessionJoined);
+    socket.on("session:left", onSessionLeft);
 
     listenersWired = true;
   }
@@ -1333,6 +1407,8 @@ export function createAccountSidebarController({
     refs.signOutButton.removeEventListener("click", onSignOutClick);
     socket.off("friends:presence", onFriendsPresence);
     socket.off("friends:invite:sent", onFriendInviteSent);
+    socket.off("session:joined", onSessionJoined);
+    socket.off("session:left", onSessionLeft);
 
     listenersWired = false;
   }

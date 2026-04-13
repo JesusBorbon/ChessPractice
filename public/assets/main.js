@@ -28375,6 +28375,7 @@ function createAccountSidebarController({
   let addFriendBusy = false;
   let friendsComposerOpen = false;
   let currentFriendId = null;
+  let currentRoomId = null;
   let savingGameSignature = null;
   let savedGameSignature = null;
   let failedGameSignature = null;
@@ -28533,7 +28534,7 @@ function createAccountSidebarController({
     if (!Array.isArray(records)) {
       return;
     }
-    const statusById = /* @__PURE__ */ new Map();
+    const presenceById = /* @__PURE__ */ new Map();
     for (const item of records) {
       if (!item || typeof item !== "object") {
         continue;
@@ -28541,15 +28542,37 @@ function createAccountSidebarController({
       const record = item;
       const userId = normalizeSocketUserId(record.userId);
       const status = normalizePresenceStatus(record.status);
+      const roomId = normalizeRoomId(record.roomId);
+      const canSpectate = record.canSpectate === true;
       if (!userId) {
         continue;
       }
-      statusById.set(userId, status);
+      presenceById.set(userId, { status, roomId, canSpectate });
     }
-    friends = friends.map((entry) => ({
-      ...entry,
-      status: statusById.get(entry.userId) ?? "offline"
-    }));
+    friends = friends.map((entry) => {
+      const presence = presenceById.get(entry.userId);
+      return {
+        ...entry,
+        status: presence?.status ?? "offline",
+        presenceRoomId: presence?.roomId ?? null,
+        canSpectate: presence?.canSpectate ?? false
+      };
+    });
+    renderFriendsPanel();
+  };
+  const onSessionJoined = (payload) => {
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+    const roomId = normalizeRoomId(payload.roomId);
+    currentRoomId = roomId;
+    renderFriendsPanel();
+  };
+  const onSessionLeft = () => {
+    if (currentRoomId === null) {
+      return;
+    }
+    currentRoomId = null;
     renderFriendsPanel();
   };
   const onFriendInviteSent = (payload) => {
@@ -28630,6 +28653,13 @@ function createAccountSidebarController({
       return value2;
     }
     return "offline";
+  }
+  function normalizeRoomId(value2) {
+    if (typeof value2 !== "string") {
+      return null;
+    }
+    const normalized = value2.trim();
+    return ROOM_ID_PATTERN.test(normalized) ? normalized : null;
   }
   function setFriendsComposerOpen(nextOpen, shouldAnimate = true) {
     friendsComposerOpen = nextOpen;
@@ -28737,19 +28767,42 @@ function createAccountSidebarController({
     identity.appendChild(title);
     identity.appendChild(idLine);
     identity.appendChild(status);
-    const inviteButton = document.createElement("button");
-    inviteButton.type = "button";
-    inviteButton.className = "chip friend-invite-button";
-    inviteButton.disabled = !socket.connected;
-    inviteButton.textContent = entry.status === "offline" ? "Send Gmail Invite" : "Invite";
-    inviteButton.addEventListener("click", () => {
-      socket.emit("friends:invite:send", {
-        toUserId: entry.userId,
-        toEmail: entry.email
-      });
-    });
     item.appendChild(identity);
-    item.appendChild(inviteButton);
+    const actions = document.createElement("div");
+    actions.className = "friend-actions";
+    if (currentRoomId) {
+      const inviteButton = document.createElement("button");
+      inviteButton.type = "button";
+      inviteButton.className = "chip friend-invite-button";
+      inviteButton.disabled = !socket.connected;
+      inviteButton.textContent = entry.status === "offline" ? "Send Gmail Invite" : "Invite";
+      inviteButton.addEventListener("click", () => {
+        socket.emit("friends:invite:send", {
+          toUserId: entry.userId,
+          toEmail: entry.email
+        });
+      });
+      actions.appendChild(inviteButton);
+    }
+    if (entry.canSpectate && entry.presenceRoomId && entry.presenceRoomId !== currentRoomId) {
+      const spectateButton = document.createElement("button");
+      spectateButton.type = "button";
+      spectateButton.className = "action friend-spectate-button";
+      spectateButton.disabled = !socket.connected;
+      spectateButton.textContent = "Spectate";
+      spectateButton.addEventListener("click", () => {
+        if (!entry.presenceRoomId) {
+          return;
+        }
+        socket.emit("room:join", { roomId: entry.presenceRoomId });
+        setSidebarOpen(false);
+        showToast(`Joining ${entry.displayName}'s game as spectator...`);
+      });
+      actions.appendChild(spectateButton);
+    }
+    if (actions.childElementCount > 0) {
+      item.appendChild(actions);
+    }
     return item;
   }
   function renderFriendsPanel() {
@@ -28801,7 +28854,9 @@ function createAccountSidebarController({
       const loadedFriends = await getFriendListForUser(authenticatedUser.uid);
       friends = loadedFriends.map((entry) => ({
         ...entry,
-        status: "offline"
+        status: "offline",
+        presenceRoomId: null,
+        canSpectate: false
       }));
     } catch {
       friends = [];
@@ -29332,6 +29387,8 @@ function createAccountSidebarController({
     refs.signOutButton.addEventListener("click", onSignOutClick);
     socket.on("friends:presence", onFriendsPresence);
     socket.on("friends:invite:sent", onFriendInviteSent);
+    socket.on("session:joined", onSessionJoined);
+    socket.on("session:left", onSessionLeft);
     listenersWired = true;
   }
   function unWireEventListeners() {
@@ -29359,6 +29416,8 @@ function createAccountSidebarController({
     refs.signOutButton.removeEventListener("click", onSignOutClick);
     socket.off("friends:presence", onFriendsPresence);
     socket.off("friends:invite:sent", onFriendInviteSent);
+    socket.off("session:joined", onSessionJoined);
+    socket.off("session:left", onSessionLeft);
     listenersWired = false;
   }
   async function initialize() {
@@ -29423,7 +29482,7 @@ function createAccountSidebarController({
     handleFinishedGamePersist
   };
 }
-var USERNAME_STORAGE_PREFIX, MOBILE_BREAKPOINT_PX, MOBILE_SCROLL_LOCK_CLASS, FRIEND_NUMERIC_ID_LENGTH;
+var USERNAME_STORAGE_PREFIX, MOBILE_BREAKPOINT_PX, MOBILE_SCROLL_LOCK_CLASS, FRIEND_NUMERIC_ID_LENGTH, ROOM_ID_PATTERN;
 var init_account_sidebar2 = __esm({
   "src/client/account-sidebar.ts"() {
     "use strict";
@@ -29433,6 +29492,7 @@ var init_account_sidebar2 = __esm({
     MOBILE_BREAKPOINT_PX = 640;
     MOBILE_SCROLL_LOCK_CLASS = "sidebar-open-mobile";
     FRIEND_NUMERIC_ID_LENGTH = 5;
+    ROOM_ID_PATTERN = /^\d{4}$/;
   }
 });
 
@@ -30495,7 +30555,7 @@ var require_main = __commonJS({
     };
     var LIVE_BRILLIANT_VERIFICATION_DEPTH = 16;
     var ROOM_CODE_LENGTH = 4;
-    var ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
+    var ROOM_ID_PATTERN2 = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
     function applyAnimationTiming(style) {
       const cssDuration = style === "epic" ? 760 : SMOOTH_MOVE_DURATION_MS;
       document.documentElement.style.setProperty("--move-duration", `${cssDuration}ms`);
@@ -31453,7 +31513,7 @@ var require_main = __commonJS({
         showToast("Enter a room code first.");
         return;
       }
-      if (!ROOM_ID_PATTERN.test(code)) {
+      if (!ROOM_ID_PATTERN2.test(code)) {
         showToast("Room code must be exactly 4 digits.");
         return;
       }
@@ -32119,7 +32179,7 @@ var require_main = __commonJS({
       state.connected = true;
       emitCurrentProfileName();
       if (state.autoJoinCode) {
-        if (ROOM_ID_PATTERN.test(state.autoJoinCode)) {
+        if (ROOM_ID_PATTERN2.test(state.autoJoinCode)) {
           socket.emit("room:join", { roomId: state.autoJoinCode });
         }
         state.autoJoinCode = null;
@@ -32137,7 +32197,7 @@ var require_main = __commonJS({
       const inviteId = typeof payload?.inviteId === "string" ? payload.inviteId : "";
       const fromUserId = typeof payload?.fromUserId === "string" ? payload.fromUserId : "";
       const roomId = typeof payload?.roomId === "string" ? payload.roomId : "";
-      if (!inviteId || !fromUserId || !ROOM_ID_PATTERN.test(roomId)) {
+      if (!inviteId || !fromUserId || !ROOM_ID_PATTERN2.test(roomId)) {
         return;
       }
       const fromName2 = typeof payload?.fromName === "string" && payload.fromName.trim() ? payload.fromName.trim().slice(0, 24) : "A friend";

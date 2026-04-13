@@ -31,6 +31,12 @@ type ClientState = {
 
 type FriendPresenceStatus = "online" | "in-room" | "offline";
 
+type FriendPresenceInfo = {
+  status: FriendPresenceStatus;
+  roomId: string | null;
+  canSpectate: boolean;
+};
+
 type PendingFriendInvite = {
   inviteId: string;
   fromUserId: string;
@@ -763,29 +769,78 @@ function clearFriendWatchForSocket(socketId: string): void {
   }
 }
 
-function getFriendPresenceStatus(userId: string): FriendPresenceStatus {
+function getFriendPresenceInfo(userId: string): FriendPresenceInfo {
   const connectedSocketIds = getConnectedUserSocketIds(userId);
   if (connectedSocketIds.length === 0) {
-    return "offline";
+    return {
+      status: "offline",
+      roomId: null,
+      canSpectate: false,
+    };
   }
+
+  let inRoomPresence: FriendPresenceInfo | null = null;
 
   for (const socketId of connectedSocketIds) {
     const socket = io.sockets.sockets.get(socketId);
     const state = socket?.data as ClientState | undefined;
-    if (state?.roomId) {
-      return "in-room";
+    if (!state?.roomId) {
+      continue;
     }
+
+    const room = rooms.get(state.roomId);
+    if (!room) {
+      inRoomPresence ??= {
+        status: "in-room",
+        roomId: state.roomId,
+        canSpectate: false,
+      };
+      continue;
+    }
+
+    const liveRole = getLiveRoomRole(room, socketId);
+    const isSeatedPlayer = liveRole === "w" || liveRole === "b";
+    const bothPlayersSeated = Boolean(room.white && room.black);
+    const inLiveGame = room.isStarted && !room.winner && !room.chess.isGameOver();
+    const canSpectate = isSeatedPlayer && bothPlayersSeated && inLiveGame;
+
+    if (canSpectate) {
+      return {
+        status: "in-room",
+        roomId: room.id,
+        canSpectate: true,
+      };
+    }
+
+    inRoomPresence ??= {
+      status: "in-room",
+      roomId: room.id,
+      canSpectate: false,
+    };
   }
 
-  return "online";
+  if (inRoomPresence) {
+    return inRoomPresence;
+  }
+
+  return {
+    status: "online",
+    roomId: null,
+    canSpectate: false,
+  };
 }
 
 function emitFriendPresenceToSocket(socketId: string): void {
   const watchedIds = watchedFriendIdsBySocket.get(socketId) ?? new Set<string>();
-  const friends = [...watchedIds].map((userId) => ({
-    userId,
-    status: getFriendPresenceStatus(userId),
-  }));
+  const friends = [...watchedIds].map((userId) => {
+    const presence = getFriendPresenceInfo(userId);
+    return {
+      userId,
+      status: presence.status,
+      roomId: presence.roomId,
+      canSpectate: presence.canSpectate,
+    };
+  });
 
   io.to(socketId).emit("friends:presence", { friends });
 }
