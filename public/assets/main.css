@@ -2062,6 +2062,34 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
 .meta-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
+.in-game-friend-panel {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(25, 35, 32, 0.12);
+  display: grid;
+  gap: 8px;
+}
+.in-game-friend-meta {
+  margin: 0;
+}
+.in-game-friend-request {
+  margin-top: 10px;
+  border: 1px solid rgba(25, 35, 32, 0.18);
+  border-radius: 14px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--paper-strong) 82%, var(--accent-soft));
+  display: grid;
+  gap: 10px;
+}
+.in-game-friend-request-text {
+  margin: 0;
+  font-weight: 700;
+}
+.in-game-friend-request-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .move-list {
   display: grid;
   gap: 10px;

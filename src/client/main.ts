@@ -65,6 +65,10 @@ type RoomSnapshot = {
     spectatorCount: number;
     whiteName: string;
     blackName: string;
+    whiteUserId: string | null;
+    blackUserId: string | null;
+    whiteFriendId: string | null;
+    blackFriendId: string | null;
   };
   rematchVotes: number;
   analysis: {
@@ -107,6 +111,13 @@ type IncomingFriendInvite = {
   fromUserId: string;
   fromName: string;
   roomId: string;
+};
+
+type IncomingInGameFriendRequest = {
+  requestId: string;
+  fromUserId: string;
+  fromName: string;
+  fromFriendId: string;
 };
 
 type Premove = {
@@ -411,6 +422,8 @@ let botPickerHideTimer: number | null = null;
 let botPickerLockedScrollY: number | null = null;
 let botResponseTimer: number | null = null;
 let pendingFriendInvite: IncomingFriendInvite | null = null;
+let pendingInGameFriendRequest: IncomingInGameFriendRequest | null = null;
+let sendFriendRequestBusy = false;
 
 const SMOOTH_MOVE_DURATION_MS = 620;
 const EPIC_MOVE_DURATION_MS = {
@@ -949,6 +962,17 @@ app.innerHTML = `
               <span class="muted" id="spectatorMeta">0</span>
             </div>
           </div>
+          <section class="in-game-friend-panel" id="inGameFriendPanel" hidden>
+            <p class="muted in-game-friend-meta" id="inGameFriendMeta">Opponent info unavailable.</p>
+            <button class="chip" id="sendFriendRequestButton" type="button">Send Friend Request</button>
+          </section>
+          <section class="in-game-friend-request" id="inGameFriendRequest" hidden>
+            <p class="in-game-friend-request-text" id="inGameFriendRequestText">Friend request incoming.</p>
+            <div class="in-game-friend-request-actions">
+              <button class="chip" id="declineInGameFriendRequestButton" type="button">Decline</button>
+              <button class="action" id="acceptInGameFriendRequestButton" type="button">Accept</button>
+            </div>
+          </section>
         </section>
 
         <section class="summary-card" id="summaryCard" hidden>
@@ -1097,6 +1121,13 @@ const blackSeat = must<HTMLSpanElement>("#blackSeat");
 const turnMeta = must<HTMLSpanElement>("#turnMeta");
 const movesMeta = must<HTMLSpanElement>("#movesMeta");
 const spectatorMeta = must<HTMLSpanElement>("#spectatorMeta");
+const inGameFriendPanel = must<HTMLElement>("#inGameFriendPanel");
+const inGameFriendMeta = must<HTMLParagraphElement>("#inGameFriendMeta");
+const sendFriendRequestButton = must<HTMLButtonElement>("#sendFriendRequestButton");
+const inGameFriendRequest = must<HTMLElement>("#inGameFriendRequest");
+const inGameFriendRequestText = must<HTMLParagraphElement>("#inGameFriendRequestText");
+const acceptInGameFriendRequestButton = must<HTMLButtonElement>("#acceptInGameFriendRequestButton");
+const declineInGameFriendRequestButton = must<HTMLButtonElement>("#declineInGameFriendRequestButton");
 const summaryText = must<HTMLParagraphElement>("#summaryText");
 const liveAnalysisText = must<HTMLParagraphElement>("#liveAnalysisText");
 const chatFabButton = must<HTMLButtonElement>("#chatFabButton");
@@ -2181,6 +2212,64 @@ friendInviteDeclineButton.addEventListener("click", () => {
   showToast("Invitation declined.");
 });
 
+function setSendFriendRequestState(nextBusy: boolean): void {
+  sendFriendRequestBusy = nextBusy;
+  if (!sendFriendRequestButton.hidden) {
+    sendFriendRequestButton.disabled = nextBusy;
+    sendFriendRequestButton.textContent = nextBusy ? "Sending..." : "Send Friend Request";
+  }
+}
+
+sendFriendRequestButton.addEventListener("click", () => {
+  if (sendFriendRequestBusy || !state.snapshot) {
+    return;
+  }
+
+  const opponentSeat = getOpponentSeatInfo(state.snapshot);
+  if (!opponentSeat || !opponentSeat.userId || !opponentSeat.connected) {
+    showToast("Opponent is unavailable for friend requests right now.");
+    return;
+  }
+
+  setSendFriendRequestState(true);
+  socket.emit("friends:request:send", { toUserId: opponentSeat.userId });
+});
+
+acceptInGameFriendRequestButton.addEventListener("click", async () => {
+  if (!pendingInGameFriendRequest) {
+    return;
+  }
+
+  const request = pendingInGameFriendRequest;
+  pendingInGameFriendRequest = null;
+  renderSession();
+
+  await accountSidebarController.addFriendByLookup(request.fromFriendId);
+  socket.emit("friends:request:respond", {
+    requestId: request.requestId,
+    fromUserId: request.fromUserId,
+    accepted: true,
+  });
+  showToast(`${request.fromName} added to your friends.`);
+});
+
+declineInGameFriendRequestButton.addEventListener("click", () => {
+  if (!pendingInGameFriendRequest) {
+    return;
+  }
+
+  const request = pendingInGameFriendRequest;
+  pendingInGameFriendRequest = null;
+  renderSession();
+
+  socket.emit("friends:request:respond", {
+    requestId: request.requestId,
+    fromUserId: request.fromUserId,
+    accepted: false,
+  });
+  showToast("Friend request declined.");
+});
+
 // --- SOCKET.IO LISTENERS ---
 
 function onSocketConnect() {
@@ -2231,6 +2320,48 @@ socket.on("friends:invite:response", (payload?: { accepted?: boolean; friendName
     ? payload.friendName.trim().slice(0, 24)
     : "Friend";
   showToast(accepted ? `${friendName} accepted your invitation.` : `${friendName} declined your invitation.`);
+});
+
+socket.on("friends:request:incoming", (payload?: {
+  requestId?: string;
+  fromUserId?: string;
+  fromName?: string;
+  fromFriendId?: string;
+}) => {
+  const requestId = typeof payload?.requestId === "string" ? payload.requestId.trim() : "";
+  const fromUserId = typeof payload?.fromUserId === "string" ? payload.fromUserId.trim() : "";
+  const fromName = typeof payload?.fromName === "string" && payload.fromName.trim()
+    ? payload.fromName.trim().slice(0, 24)
+    : "Opponent";
+  const fromFriendId = typeof payload?.fromFriendId === "string" ? payload.fromFriendId.trim() : "";
+
+  if (!requestId || !fromUserId || !/^\d{5}$/.test(fromFriendId)) {
+    return;
+  }
+
+  pendingInGameFriendRequest = { requestId, fromUserId, fromName, fromFriendId };
+  renderSession();
+  showToast(`${fromName} sent you a friend request.`);
+});
+
+socket.on("friends:request:sent", () => {
+  setSendFriendRequestState(false);
+  showToast("Friend request sent.");
+});
+
+socket.on("friends:request:response", (payload?: { accepted?: boolean; friendName?: string; friendId?: string | null }) => {
+  setSendFriendRequestState(false);
+  const accepted = Boolean(payload?.accepted);
+  const friendName = typeof payload?.friendName === "string" && payload.friendName.trim()
+    ? payload.friendName.trim().slice(0, 24)
+    : "Opponent";
+  const friendId = typeof payload?.friendId === "string" ? payload.friendId.trim() : "";
+
+  if (accepted && /^\d{5}$/.test(friendId)) {
+    void accountSidebarController.addFriendByLookup(friendId);
+  }
+
+  showToast(accepted ? `${friendName} accepted your friend request.` : `${friendName} declined your friend request.`);
 });
 
 socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl: string }) => {
@@ -2373,6 +2504,7 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
 });
 
 socket.on("room:error", (payload: { message: string }) => {
+  setSendFriendRequestState(false);
   suppressAnimationForMove = null;
   if (state.autoJoinCode) {
     state.autoJoinCode = null;
@@ -2508,9 +2640,15 @@ function renderSession(): void {
   }
   
   const canVote = state.role === "w" || state.role === "b";
+  const isSeatedPlayer = state.role === "w" || state.role === "b";
   const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
   const analysisLocked = Boolean(snapshot?.analysis.locked && state.gameMode === "multiplayer");
   const maxMoves = snapshot?.moves.length ?? 0;
+
+  inGameFriendRequest.hidden = pendingInGameFriendRequest === null || !isGameActive || state.gameMode !== "multiplayer";
+  if (pendingInGameFriendRequest) {
+    inGameFriendRequestText.textContent = `${pendingInGameFriendRequest.fromName} sent you a friend request.`;
+  }
 
   // 2. Setup UI & Action Visibility Toggles
   gameNavRow.hidden = !isGameActive || maxMoves === 0;
@@ -2538,6 +2676,7 @@ function renderSession(): void {
   seatCard.hidden = !hasRoom;
   summaryCard.hidden = !isGameActive;
   movesCard.hidden = !isGameActive;
+  inGameFriendPanel.hidden = !isGameActive || state.gameMode !== "multiplayer" || !isSeatedPlayer;
 
   liveAnalysisButton.hidden = !isGameActive || !canVote || state.gameMode === "bot" || (state.gameMode === "multiplayer" && analysisLocked);
   labelsOnlyButton.hidden = !isGameActive || !canVote;
@@ -2569,6 +2708,10 @@ function renderSession(): void {
     modeHint.textContent = "Room creator selects the timer. Color choice and ready are still required.";
     summaryText.textContent = "Ready to play.";
     liveAnalysisText.textContent = "Live analysis disabled.";
+    inGameFriendPanel.hidden = true;
+    inGameFriendMeta.textContent = "Opponent info unavailable.";
+    sendFriendRequestButton.hidden = true;
+    sendFriendRequestButton.disabled = true;
     updateFocusHud();
     return;
   }
@@ -2640,8 +2783,12 @@ function renderSession(): void {
 
   // 5. Live Game Data
   matchStatus.textContent = snapshot.status;
-  whiteSeat.textContent = snapshot.players.whiteConnected ? seatLabel("w", snapshot.players.whiteName) : "Waiting for player";
-  blackSeat.textContent = snapshot.players.blackConnected ? seatLabel("b", snapshot.players.blackName) : "Waiting for player";
+  whiteSeat.textContent = snapshot.players.whiteConnected
+    ? seatLabel("w", snapshot.players.whiteName, snapshot.players.whiteFriendId, snapshot.players.whiteUserId)
+    : "Waiting for player";
+  blackSeat.textContent = snapshot.players.blackConnected
+    ? seatLabel("b", snapshot.players.blackName, snapshot.players.blackFriendId, snapshot.players.blackUserId)
+    : "Waiting for player";
   turnMeta.textContent = snapshot.turn === "w" ? "White" : "Black";
   movesMeta.textContent = String(snapshot.moveCount);
   spectatorMeta.textContent = String(snapshot.players.spectatorCount);
@@ -2652,6 +2799,22 @@ function renderSession(): void {
   blackClock.textContent = formatClockMs(blackMs);
   whiteClock.classList.toggle("is-low", snapshot.isStarted && whiteMs <= snapshot.clock.lowTimeThresholdMs);
   blackClock.classList.toggle("is-low", snapshot.isStarted && blackMs <= snapshot.clock.lowTimeThresholdMs);
+
+  const opponentSeat = getOpponentSeatInfo(snapshot);
+  if (inGameFriendPanel.hidden || !opponentSeat || !opponentSeat.connected) {
+    inGameFriendMeta.textContent = "Waiting for opponent to connect.";
+    sendFriendRequestButton.hidden = true;
+    sendFriendRequestButton.disabled = true;
+  } else if (!opponentSeat.userId || !opponentSeat.friendId) {
+    inGameFriendMeta.textContent = `${opponentSeat.name} is playing as guest.`;
+    sendFriendRequestButton.hidden = true;
+    sendFriendRequestButton.disabled = true;
+  } else {
+    inGameFriendMeta.textContent = `Opponent: ${opponentSeat.name} (ID ${opponentSeat.friendId})`;
+    sendFriendRequestButton.hidden = false;
+    sendFriendRequestButton.disabled = sendFriendRequestBusy;
+    sendFriendRequestButton.textContent = sendFriendRequestBusy ? "Sending..." : "Send Friend Request";
+  }
 
   // 6. Text Summary
   const roleDescription = state.role === "spectator"
@@ -4284,6 +4447,10 @@ function startBotGame() {
       spectatorCount: 0,
       whiteName: getCurrentPlayerName(),
       blackName: `Bot (${botDifficultySummary(botPreset)})`,
+      whiteUserId: null,
+      blackUserId: null,
+      whiteFriendId: null,
+      blackFriendId: null,
     },
     rematchVotes: 0,
     analysis: { enabled: false, votes: 0, locked: false, labelsOnly: false, labelsVotes: 0 },
@@ -4485,14 +4652,49 @@ function reachesPromotionRank(square: Square, role: PlayerRole): boolean {
   return role === "w" ? square.endsWith("8") : square.endsWith("1");
 }
 
-function seatLabel(role: PlayerRole, playerName: string): string {
+function getOpponentSeatInfo(snapshot: RoomSnapshot): {
+  connected: boolean;
+  role: PlayerRole;
+  name: string;
+  userId: string | null;
+  friendId: string | null;
+} | null {
+  if (state.role === "w") {
+    return {
+      connected: snapshot.players.blackConnected,
+      role: "b",
+      name: normalizeUsername(snapshot.players.blackName) || "Guest",
+      userId: snapshot.players.blackUserId,
+      friendId: snapshot.players.blackFriendId,
+    };
+  }
+
+  if (state.role === "b") {
+    return {
+      connected: snapshot.players.whiteConnected,
+      role: "w",
+      name: normalizeUsername(snapshot.players.whiteName) || "Guest",
+      userId: snapshot.players.whiteUserId,
+      friendId: snapshot.players.whiteFriendId,
+    };
+  }
+
+  return null;
+}
+
+function seatLabel(role: PlayerRole, playerName: string, friendId: string | null, userId: string | null): string {
   const safeName = normalizeUsername(playerName) || "Guest";
+  const colorLabel = role === "w" ? "White" : "Black";
 
   if (state.role === role) {
     return `You (${getCurrentPlayerName()})`;
   }
 
-  return `${safeName} (${role === "w" ? "White" : "Black"})`;
+  if (userId && friendId) {
+    return `${safeName} (${colorLabel} - ID ${friendId})`;
+  }
+
+  return `${safeName} (${colorLabel} - Guest)`;
 }
 
 function humanRole(role: RoomRole | null): string {
@@ -4526,6 +4728,8 @@ function syncUrl(roomId: string | null): void {
 
 function clearLocalRoomState(): void {  
   clearScheduledBotResponse();
+  pendingInGameFriendRequest = null;
+  setSendFriendRequestState(false);
   voiceChatController.syncSession({
     roomId: null,
     role: null,

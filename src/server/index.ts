@@ -26,6 +26,7 @@ type ClientState = {
   displayName?: string;
   userId?: string;
   email?: string;
+  friendId?: string;
 };
 
 type FriendPresenceStatus = "online" | "in-room" | "offline";
@@ -36,6 +37,15 @@ type PendingFriendInvite = {
   toUserId: string;
   roomId: string;
   fromName: string;
+  createdAt: number;
+};
+
+type PendingFriendRequest = {
+  requestId: string;
+  fromUserId: string;
+  fromName: string;
+  fromFriendId: string;
+  toUserId: string;
   createdAt: number;
 };
 
@@ -67,6 +77,10 @@ type RoomSnapshot = {
     spectatorCount: number;
     whiteName: string;
     blackName: string;
+    whiteUserId: string | null;
+    blackUserId: string | null;
+    whiteFriendId: string | null;
+    blackFriendId: string | null;
   };
   rematchVotes: number;
   analysis: {
@@ -148,6 +162,7 @@ const socketUserIds = new Map<string, string>();
 const watchedFriendIdsBySocket = new Map<string, Set<string>>();
 const friendWatchersByUserId = new Map<string, Set<string>>();
 const pendingFriendInvites = new Map<string, PendingFriendInvite>();
+const pendingFriendRequests = new Map<string, PendingFriendRequest>();
 const ROOM_ALPHABET = "0123456789";
 const ROOM_CODE_LENGTH = 4;
 const ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
@@ -558,10 +573,28 @@ function normalizeEmail(value: unknown): string | null {
   return normalized;
 }
 
+function normalizeFriendId(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  if (!/^\d{5}$/.test(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
 function getSocketUserId(socketId: string): string | null {
   const state = io.sockets.sockets.get(socketId)?.data as ClientState | undefined;
   const normalized = normalizeUserId(state?.userId);
   return normalized || null;
+}
+
+function getSocketFriendId(socketId: string): string | null {
+  const state = io.sockets.sockets.get(socketId)?.data as ClientState | undefined;
+  return normalizeFriendId(state?.friendId);
 }
 
 function clearSocketUserIdentity(socketId: string): void {
@@ -894,6 +927,10 @@ return {
       spectatorCount: getSpectatorCount(room.id, room),
       whiteName: getSocketDisplayName(room.white),
       blackName: getSocketDisplayName(room.black),
+      whiteUserId: room.white ? getSocketUserId(room.white) : null,
+      blackUserId: room.black ? getSocketUserId(room.black) : null,
+      whiteFriendId: room.white ? getSocketFriendId(room.white) : null,
+      blackFriendId: room.black ? getSocketFriendId(room.black) : null,
     },
     rematchVotes: room.rematchVotes.size,
     analysis: {
@@ -1289,6 +1326,12 @@ const cleanupTimer = setInterval(() => {
       pendingFriendInvites.delete(inviteId);
     }
   }
+
+  for (const [requestId, request] of pendingFriendRequests.entries()) {
+    if (now - request.createdAt > FRIEND_INVITE_EXPIRY_MS) {
+      pendingFriendRequests.delete(requestId);
+    }
+  }
 }, 60_000);
 
 cleanupTimer.unref();
@@ -1313,7 +1356,7 @@ io.on("connection", (socket) => {
 
   socket.emit("connection:status", { connected: true });
 
-  socket.on("profile:setName", (payload?: { name?: string; userId?: string | null; email?: string | null }) => {
+  socket.on("profile:setName", (payload?: { name?: string; userId?: string | null; email?: string | null; friendId?: string | null }) => {
     const rawName = payload?.name;
     if (typeof rawName !== "string") {
       socket.emit("room:error", { message: "Invalid player name." });
@@ -1330,6 +1373,7 @@ io.on("connection", (socket) => {
     state.displayName = trimmed;
     const normalizedUserId = normalizeUserId(payload?.userId);
     const normalizedEmail = normalizeEmail(payload?.email);
+    const normalizedFriendId = normalizeFriendId(payload?.friendId);
 
     if (normalizedUserId) {
       state.userId = normalizedUserId;
@@ -1338,10 +1382,16 @@ io.on("connection", (socket) => {
       } else {
         delete state.email;
       }
+      if (normalizedFriendId) {
+        state.friendId = normalizedFriendId;
+      } else {
+        delete state.friendId;
+      }
       registerSocketUserIdentity(socket.id, normalizedUserId);
     } else {
       delete state.userId;
       delete state.email;
+      delete state.friendId;
       clearSocketUserIdentity(socket.id);
     }
 
@@ -1465,6 +1515,117 @@ io.on("connection", (socket) => {
       io.to(senderSocketId).emit("friends:invite:response", {
         accepted: payload.accepted,
         friendName,
+      });
+    }
+  });
+
+  socket.on("friends:request:send", (payload?: { toUserId?: string }) => {
+    const senderUserId = getSocketUserId(socket.id);
+    const senderFriendId = getSocketFriendId(socket.id);
+    if (!senderUserId || !senderFriendId) {
+      socket.emit("room:error", { message: "Sign in with an account before sending friend requests." });
+      return;
+    }
+
+    const room = getRoomForSocket(socket.id);
+    if (!room || !room.isStarted) {
+      socket.emit("room:error", { message: "Friend requests are available during active multiplayer games." });
+      return;
+    }
+
+    if (room.white !== socket.id && room.black !== socket.id) {
+      socket.emit("room:error", { message: "Only seated players can send friend requests." });
+      return;
+    }
+
+    const opponentSocketId = getOpponentSocketId(room, socket.id);
+    if (!opponentSocketId) {
+      socket.emit("room:error", { message: "No opponent connected yet." });
+      return;
+    }
+
+    const opponentUserId = getSocketUserId(opponentSocketId);
+    if (!opponentUserId) {
+      socket.emit("room:error", { message: "Opponent is playing as guest and cannot receive friend requests." });
+      return;
+    }
+
+    const payloadToUserId = normalizeUserId(payload?.toUserId);
+    if (payloadToUserId && payloadToUserId !== opponentUserId) {
+      socket.emit("room:error", { message: "Friend request target does not match the current opponent." });
+      return;
+    }
+
+    if (opponentUserId === senderUserId) {
+      socket.emit("room:error", { message: "You cannot send a friend request to yourself." });
+      return;
+    }
+
+    const requestId = randomUUID();
+    const fromName = getSocketDisplayName(socket.id);
+    pendingFriendRequests.set(requestId, {
+      requestId,
+      fromUserId: senderUserId,
+      fromName,
+      fromFriendId: senderFriendId,
+      toUserId: opponentUserId,
+      createdAt: Date.now(),
+    });
+
+    io.to(opponentSocketId).emit("friends:request:incoming", {
+      requestId,
+      fromUserId: senderUserId,
+      fromFriendId: senderFriendId,
+      fromName,
+    });
+
+    socket.emit("friends:request:sent", { toUserId: opponentUserId });
+  });
+
+  socket.on("friends:request:respond", (payload?: { requestId?: string; fromUserId?: string; accepted?: boolean }) => {
+    if (typeof payload?.accepted !== "boolean") {
+      socket.emit("room:error", { message: "Invalid friend request response." });
+      return;
+    }
+
+    const requestId = normalizeUserId(payload?.requestId);
+    const fromUserId = normalizeUserId(payload?.fromUserId);
+    if (!requestId || !fromUserId) {
+      socket.emit("room:error", { message: "Invalid friend request response." });
+      return;
+    }
+
+    const receiverUserId = getSocketUserId(socket.id);
+    if (!receiverUserId) {
+      socket.emit("room:error", { message: "Only signed-in players can respond to friend requests." });
+      return;
+    }
+
+    const pendingRequest = pendingFriendRequests.get(requestId);
+    if (!pendingRequest) {
+      socket.emit("room:error", { message: "Friend request has expired." });
+      return;
+    }
+
+    if (pendingRequest.toUserId !== receiverUserId || pendingRequest.fromUserId !== fromUserId) {
+      socket.emit("room:error", { message: "Friend request does not match this account." });
+      return;
+    }
+
+    pendingFriendRequests.delete(requestId);
+
+    const senderSockets = activeUserSockets.get(fromUserId);
+    if (!senderSockets || senderSockets.size === 0) {
+      return;
+    }
+
+    const friendName = getSocketDisplayName(socket.id);
+    const friendId = getSocketFriendId(socket.id);
+    for (const senderSocketId of senderSockets) {
+      io.to(senderSocketId).emit("friends:request:response", {
+        accepted: payload.accepted,
+        friendName,
+        friendId,
       });
     }
   });

@@ -81,6 +81,7 @@ export type AccountSidebarController = {
   dispose: () => void;
   emitCurrentProfileName: () => void;
   getCurrentPlayerName: () => string;
+  addFriendByLookup: (lookup: string) => Promise<boolean>;
   normalizeUsername: (value: string) => string;
   resetFinishedGameTracking: () => void;
   handleFinishedGamePersist: (input: PersistFinishedGameInput) => Promise<void>;
@@ -263,8 +264,26 @@ export function createAccountSidebarController({
       return;
     }
 
+    const added = await addFriendByLookup(lookupQuery);
+    if (added) {
+      refs.friendIdInput.value = "";
+      renderFriendsPanel();
+    }
+  };
+
+  async function addFriendByLookup(lookup: string): Promise<boolean> {
+    if (!authenticatedUser || !isFirebaseAuthEnabled()) {
+      showToast("Sign in to add friends.");
+      return false;
+    }
+
     if (addFriendBusy) {
-      return;
+      return false;
+    }
+
+    const lookupQuery = normalizeFriendLookupQuery(lookup);
+    if (!lookupQuery) {
+      return false;
     }
 
     addFriendBusy = true;
@@ -272,17 +291,18 @@ export function createAccountSidebarController({
 
     try {
       await addFriendForUserByLookup(authenticatedUser.uid, lookupQuery);
-      refs.friendIdInput.value = "";
       showToast("Friend added.");
       await refreshFriendsPanel();
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not find that friend by username or ID.";
       showToast(message);
+      return false;
     } finally {
       addFriendBusy = false;
       renderFriendsPanel();
     }
-  };
+  }
 
   const onFriendsPresence = (payload?: unknown): void => {
     if (!payload || typeof payload !== "object") {
@@ -473,6 +493,7 @@ export function createAccountSidebarController({
     }
 
     renderFriendsPanel();
+    emitCurrentProfileName();
   }
 
   function syncFriendPresenceWatch(): void {
@@ -512,6 +533,7 @@ export function createAccountSidebarController({
       name: getCurrentPlayerName(),
       userId: authenticatedUser?.uid ?? null,
       email: authenticatedUser?.email ?? null,
+      friendId: currentFriendId,
     });
 
     syncFriendPresenceWatch();
@@ -1355,6 +1377,7 @@ export function createAccountSidebarController({
           const profile = await syncUserProfile(user, getCurrentPlayerName());
           currentFriendId = profile.friendId ?? null;
           renderFriendsPanel();
+          emitCurrentProfileName();
         })();
         void refreshStoredGamesCount();
         void refreshSavedHistoryPanel();
@@ -1378,6 +1401,7 @@ export function createAccountSidebarController({
     dispose,
     emitCurrentProfileName,
     getCurrentPlayerName,
+    addFriendByLookup,
     normalizeUsername,
     resetFinishedGameTracking,
     handleFinishedGamePersist,
