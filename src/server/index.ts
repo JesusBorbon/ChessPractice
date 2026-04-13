@@ -5,8 +5,12 @@ import { randomUUID } from "node:crypto";
 
 import express from "express";
 import { Chess, Move, Square } from "chess.js";
-import nodemailer from "nodemailer";
 import { Server } from "socket.io";
+import {
+  canSendFriendInviteEmail,
+  getGmailInviteConfigErrorMessage,
+  sendOfflineFriendInviteEmail,
+} from "./gmail-invite";
 import { ChatRole, ChatStoredMessage, createLiveChatStore } from "./live-chat-store";
 
 type PlayerRole = "w" | "b";
@@ -181,20 +185,6 @@ const VOICE_MIN_DURATION_MS = 250;
 const VOICE_ALLOWED_MIME_PREFIX = "audio/";
 const CHAT_MAX_TEXT_LENGTH = 420;
 const FRIEND_INVITE_EXPIRY_MS = 1000 * 60 * 30;
-
-const EMAIL_SMTP_USER = process.env.GMAIL_SMTP_USER?.trim() ?? "";
-const EMAIL_SMTP_PASS = process.env.GMAIL_SMTP_PASS?.trim() ?? "";
-const EMAIL_FROM = process.env.GMAIL_SMTP_FROM?.trim() || EMAIL_SMTP_USER;
-
-const friendInviteMailer = EMAIL_SMTP_USER && EMAIL_SMTP_PASS
-  ? nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: EMAIL_SMTP_USER,
-        pass: EMAIL_SMTP_PASS,
-      },
-    })
-  : null;
 
 type FirebaseClientConfig = {
   apiKey: string;
@@ -879,45 +869,6 @@ function notifySocketOwnerPresence(socketId: string): void {
   }
 
   notifyFriendWatchers(userId);
-}
-
-function canSendFriendInviteEmail(): boolean {
-  return Boolean(friendInviteMailer && EMAIL_FROM);
-}
-
-async function sendOfflineFriendInviteEmail(input: {
-  toEmail: string;
-  inviterName: string;
-  roomId: string;
-  shareUrl: string;
-}): Promise<void> {
-  if (!friendInviteMailer || !EMAIL_FROM) {
-    throw new Error("Friend invite email transport is not configured.");
-  }
-
-  const subject = `${input.inviterName} invited you to a ChessPractice room`;
-  const text = [
-    `${input.inviterName} invited you to join room ${input.roomId}.`,
-    "",
-    `Accept invitation: ${input.shareUrl}`,
-  ].join("\n");
-
-  const html = `
-    <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.45;color:#1e2b24;max-width:560px;margin:0 auto;">
-      <h2 style="margin:0 0 12px;">You have a chess invitation</h2>
-      <p style="margin:0 0 14px;"><strong>${input.inviterName}</strong> invited you to room <strong>${input.roomId}</strong>.</p>
-      <p style="margin:0 0 20px;">Tap accept to open the app and join the correct room automatically.</p>
-      <a href="${input.shareUrl}" style="display:inline-block;padding:10px 16px;border-radius:999px;background:#1f7a53;color:#ffffff;text-decoration:none;font-weight:700;">Accept invitation</a>
-    </div>
-  `;
-
-  await friendInviteMailer.sendMail({
-    from: EMAIL_FROM,
-    to: input.toEmail,
-    subject,
-    text,
-    html,
-  });
 }
 
 function getSpectatorCount(roomId: string, room: GameRoom): number {
@@ -1615,7 +1566,7 @@ io.on("connection", (socket) => {
     }
 
     if (!canSendFriendInviteEmail()) {
-      socket.emit("room:error", { message: "Gmail invites are not configured on the server (missing GMAIL_SMTP_USER / GMAIL_SMTP_PASS)." });
+      socket.emit("room:error", { message: getGmailInviteConfigErrorMessage() });
       return;
     }
 
