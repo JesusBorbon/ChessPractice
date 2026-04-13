@@ -31501,9 +31501,13 @@ var require_main = __commonJS({
     if (!app) {
       throw new Error("Missing #app root element.");
     }
-    var initialRoomCode = new URLSearchParams(window.location.search).get("room")?.trim() ?? null;
+    var initialQuery = new URLSearchParams(window.location.search);
+    var initialRoomCode = initialQuery.get("room")?.trim() ?? null;
+    var initialInviteToken = initialQuery.get("invite")?.trim() ?? null;
     var savedRoomId = localStorage.getItem("chess_roomId");
+    var savedInviteToken = localStorage.getItem("chess_roomInviteToken");
     var autoJoinCode = initialRoomCode ?? (savedRoomId || null);
+    var autoJoinInviteToken = initialInviteToken ?? (savedInviteToken || null);
     var savedBotLevel = clampBotLevel(Number(localStorage.getItem("chess-bot-level")) || 1);
     var savedBotTimeControlId = normalizeBotTimeControlId(localStorage.getItem("chess-bot-time-control"));
     var state = {
@@ -31519,6 +31523,7 @@ var require_main = __commonJS({
       pendingPromotion: null,
       premoves: [],
       autoJoinCode,
+      autoJoinInviteToken,
       focusMode: false,
       liveAnalysisSummary: "Live analysis disabled.",
       lastAnalyzedMoveKey: null,
@@ -33199,7 +33204,7 @@ var require_main = __commonJS({
         accepted: true
       });
       hideFriendInvitePrompt();
-      socket.emit("room:join", { roomId: invite.roomId });
+      socket.emit("room:join", { roomId: invite.roomId, inviteToken: invite.inviteToken });
       showToast(`Joining room ${invite.roomId}...`);
     });
     friendInviteDeclineButton.addEventListener("click", () => {
@@ -33269,9 +33274,13 @@ var require_main = __commonJS({
       emitCurrentProfileName();
       if (state.autoJoinCode) {
         if (ROOM_ID_PATTERN3.test(state.autoJoinCode)) {
-          socket.emit("room:join", { roomId: state.autoJoinCode });
+          socket.emit("room:join", {
+            roomId: state.autoJoinCode,
+            inviteToken: state.autoJoinInviteToken
+          });
         }
         state.autoJoinCode = null;
+        state.autoJoinInviteToken = null;
       }
     }
     socket.on("connect", onSocketConnect);
@@ -33290,7 +33299,8 @@ var require_main = __commonJS({
         return;
       }
       const fromName2 = typeof payload?.fromName === "string" && payload.fromName.trim() ? payload.fromName.trim().slice(0, 24) : "A friend";
-      showFriendInvitePrompt({ inviteId, fromUserId, fromName: fromName2, roomId });
+      const inviteToken = typeof payload?.inviteToken === "string" && payload.inviteToken.trim() ? payload.inviteToken.trim() : null;
+      showFriendInvitePrompt({ inviteId, fromUserId, fromName: fromName2, roomId, inviteToken });
     });
     socket.on("friends:invite:response", (payload) => {
       const accepted = Boolean(payload?.accepted);
@@ -33329,11 +33339,23 @@ var require_main = __commonJS({
       state.shareUrl = payload.shareUrl || `${window.location.origin}/?room=${payload.roomId}`;
       roomInput.value = payload.roomId;
       localStorage.setItem("chess_roomId", payload.roomId);
+      try {
+        const shareUrl = new URL(state.shareUrl, window.location.origin);
+        const inviteToken = shareUrl.searchParams.get("invite")?.trim() || "";
+        if (inviteToken) {
+          localStorage.setItem("chess_roomInviteToken", inviteToken);
+        } else {
+          localStorage.removeItem("chess_roomInviteToken");
+        }
+        syncUrl(payload.roomId, inviteToken || null);
+      } catch {
+        localStorage.removeItem("chess_roomInviteToken");
+        syncUrl(payload.roomId, null);
+      }
       if (payload.role === "w" || payload.role === "b") {
         state.orientation = payload.role;
       }
       accountSidebarController.resetFinishedGameTracking();
-      syncUrl(payload.roomId);
       emitCurrentProfileName();
       render();
     });
@@ -33423,6 +33445,9 @@ var require_main = __commonJS({
       suppressAnimationForMove = null;
       if (state.autoJoinCode) {
         state.autoJoinCode = null;
+        state.autoJoinInviteToken = null;
+        localStorage.removeItem("chess_roomId");
+        localStorage.removeItem("chess_roomInviteToken");
         syncUrl(null);
         return;
       }
@@ -35091,12 +35116,17 @@ var require_main = __commonJS({
       }
       return `${name4} (Not seated)`;
     }
-    function syncUrl(roomId) {
+    function syncUrl(roomId, inviteToken = null) {
       const url2 = new URL(window.location.href);
       if (roomId) {
         url2.searchParams.set("room", roomId);
       } else {
         url2.searchParams.delete("room");
+      }
+      if (roomId && inviteToken) {
+        url2.searchParams.set("invite", inviteToken);
+      } else {
+        url2.searchParams.delete("invite");
       }
       window.history.replaceState({}, "", url2);
     }
@@ -35161,6 +35191,7 @@ var require_main = __commonJS({
       liveAnalysisToken += 1;
       lastRoomStateReceivedAtMs = Date.now();
       localStorage.removeItem("chess_roomId");
+      localStorage.removeItem("chess_roomInviteToken");
       cancelCurrentDrag();
       clearArrows();
       chess.reset();

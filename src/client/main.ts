@@ -114,6 +114,7 @@ type IncomingFriendInvite = {
   fromUserId: string;
   fromName: string;
   roomId: string;
+  inviteToken: string | null;
 };
 
 type IncomingInGameFriendRequest = {
@@ -144,6 +145,7 @@ type AppState = {
   pendingPromotion: PendingPromotion | null;
   premoves: Premove[]; 
   autoJoinCode: string | null;
+  autoJoinInviteToken: string | null;
   focusMode: boolean;
   liveAnalysisSummary: string;
   lastAnalyzedMoveKey: string | null;
@@ -444,11 +446,15 @@ if (!app) {
   throw new Error("Missing #app root element.");
 }
 
-const initialRoomCode = new URLSearchParams(window.location.search).get("room")?.trim() ?? null;
+const initialQuery = new URLSearchParams(window.location.search);
+const initialRoomCode = initialQuery.get("room")?.trim() ?? null;
+const initialInviteToken = initialQuery.get("invite")?.trim() ?? null;
 
 // Restaurar roomId guardada en localStorage si existe
 const savedRoomId = localStorage.getItem("chess_roomId");
+const savedInviteToken = localStorage.getItem("chess_roomInviteToken");
 const autoJoinCode = initialRoomCode ?? (savedRoomId || null);
+const autoJoinInviteToken = initialInviteToken ?? (savedInviteToken || null);
 const savedBotLevel = clampBotLevel(Number(localStorage.getItem("chess-bot-level")) || 1);
 const savedBotTimeControlId = normalizeBotTimeControlId(localStorage.getItem("chess-bot-time-control"));
 
@@ -465,6 +471,7 @@ const state: AppState = {
   pendingPromotion: null,
   premoves: [],
   autoJoinCode,
+  autoJoinInviteToken,
   focusMode: false,
   liveAnalysisSummary: "Live analysis disabled.",
   lastAnalyzedMoveKey: null,
@@ -2453,7 +2460,7 @@ friendInviteAcceptButton.addEventListener("click", () => {
     accepted: true,
   });
   hideFriendInvitePrompt();
-  socket.emit("room:join", { roomId: invite.roomId });
+  socket.emit("room:join", { roomId: invite.roomId, inviteToken: invite.inviteToken });
   showToast(`Joining room ${invite.roomId}...`);
 });
 
@@ -2539,9 +2546,13 @@ function onSocketConnect() {
 
   if (state.autoJoinCode) {
     if (ROOM_ID_PATTERN.test(state.autoJoinCode)) {
-      socket.emit("room:join", { roomId: state.autoJoinCode });
+      socket.emit("room:join", {
+        roomId: state.autoJoinCode,
+        inviteToken: state.autoJoinInviteToken,
+      });
     }
     state.autoJoinCode = null;
+    state.autoJoinInviteToken = null;
   }
 }
 socket.on("connect", onSocketConnect);
@@ -2560,6 +2571,7 @@ socket.on("friends:invite:incoming", (payload?: {
   fromUserId?: string;
   fromName?: string;
   roomId?: string;
+  inviteToken?: string;
 }) => {
   const inviteId = typeof payload?.inviteId === "string" ? payload.inviteId : "";
   const fromUserId = typeof payload?.fromUserId === "string" ? payload.fromUserId : "";
@@ -2571,8 +2583,11 @@ socket.on("friends:invite:incoming", (payload?: {
   const fromName = typeof payload?.fromName === "string" && payload.fromName.trim()
     ? payload.fromName.trim().slice(0, 24)
     : "A friend";
+  const inviteToken = typeof payload?.inviteToken === "string" && payload.inviteToken.trim()
+    ? payload.inviteToken.trim()
+    : null;
 
-  showFriendInvitePrompt({ inviteId, fromUserId, fromName, roomId });
+  showFriendInvitePrompt({ inviteId, fromUserId, fromName, roomId, inviteToken });
 });
 
 socket.on("friends:invite:response", (payload?: { accepted?: boolean; friendName?: string }) => {
@@ -2632,6 +2647,19 @@ socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl
   roomInput.value = payload.roomId;
 
   localStorage.setItem("chess_roomId", payload.roomId);
+  try {
+    const shareUrl = new URL(state.shareUrl, window.location.origin);
+    const inviteToken = shareUrl.searchParams.get("invite")?.trim() || "";
+    if (inviteToken) {
+      localStorage.setItem("chess_roomInviteToken", inviteToken);
+    } else {
+      localStorage.removeItem("chess_roomInviteToken");
+    }
+    syncUrl(payload.roomId, inviteToken || null);
+  } catch {
+    localStorage.removeItem("chess_roomInviteToken");
+    syncUrl(payload.roomId, null);
+  }
 
   if (payload.role === "w" || payload.role === "b") {
     state.orientation = payload.role;
@@ -2639,7 +2667,6 @@ socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl
 
   accountSidebarController.resetFinishedGameTracking();
 
-  syncUrl(payload.roomId);
   emitCurrentProfileName();
   render();
 });
@@ -2769,6 +2796,9 @@ socket.on("room:error", (payload: { message: string }) => {
   suppressAnimationForMove = null;
   if (state.autoJoinCode) {
     state.autoJoinCode = null;
+    state.autoJoinInviteToken = null;
+    localStorage.removeItem("chess_roomId");
+    localStorage.removeItem("chess_roomInviteToken");
     syncUrl(null);
     return;
   }
@@ -4975,12 +5005,18 @@ function humanRole(role: RoomRole | null): string {
   return `${name} (Not seated)`;
 }
 
-function syncUrl(roomId: string | null): void {
+function syncUrl(roomId: string | null, inviteToken: string | null = null): void {
   const url = new URL(window.location.href);
   if (roomId) {
     url.searchParams.set("room", roomId);
   } else {
     url.searchParams.delete("room");
+  }
+
+  if (roomId && inviteToken) {
+    url.searchParams.set("invite", inviteToken);
+  } else {
+    url.searchParams.delete("invite");
   }
 
   window.history.replaceState({}, "", url);
@@ -5058,6 +5094,7 @@ function clearLocalRoomState(): void {
   lastRoomStateReceivedAtMs = Date.now();
   
   localStorage.removeItem("chess_roomId");
+  localStorage.removeItem("chess_roomInviteToken");
   
   // NEW: Ensure any active drag is killed when leaving or resetting
   cancelCurrentDrag();

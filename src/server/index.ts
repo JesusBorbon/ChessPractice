@@ -12,6 +12,15 @@ import {
   sendOfflineFriendInviteEmail,
 } from "./gmail-invite";
 import { ChatRole, ChatStoredMessage, createLiveChatStore } from "./live-chat-store";
+import {
+  buildRoomInviteQuery,
+  canJoinAsSpectator,
+  createRoomAccessState,
+  evaluateRoomJoinAuthorization,
+  grantDirectRoomInvite,
+  RoomAccessState,
+} from "./room-access";
+import { canStartPregameMatch, sanitizePregameSeatState } from "./room-readiness";
 
 type PlayerRole = "w" | "b";
 type RoomRole = PlayerRole | "spectator";
@@ -46,6 +55,7 @@ type PendingFriendInvite = {
   fromUserId: string;
   toUserId: string;
   roomId: string;
+  inviteToken: string;
   fromName: string;
   createdAt: number;
 };
@@ -126,7 +136,9 @@ type GameRoom = {
   id: string;
   chess: Chess;
   white?: string;
+  whiteUserId?: string | null;
   black?: string;
+  blackUserId?: string | null;
   ownerId?: string;
   ownerDisconnectedAt?: number;
   spectators: Set<string>;
@@ -153,6 +165,7 @@ type GameRoom = {
   clockLastUpdatedAt: number;
   voiceWAcceptsB: boolean;
   voiceBAcceptsW: boolean;
+  access: RoomAccessState;
 };
 
 const app = express();
@@ -523,7 +536,7 @@ function createRoomCode(): string {
   return code;
 }
 
-function buildShareUrl(socketId: string, roomId: string): string {
+function buildShareUrl(socketId: string, roomId: string, inviteToken: string | null = null): string {
   const socket = io.sockets.sockets.get(socketId);
   const host = socket?.handshake.headers.host;
   const forwardedProto = socket?.handshake.headers["x-forwarded-proto"];
@@ -532,10 +545,22 @@ function buildShareUrl(socketId: string, roomId: string): string {
     : forwardedProto ?? (host?.includes("localhost") ? "http" : "https");
 
   if (!host) {
-    return `/?room=${roomId}`;
+    if (!inviteToken) {
+      return `/?room=${roomId}`;
+    }
+
+    return `/?${buildRoomInviteQuery(roomId, inviteToken)}`;
   }
 
-  return `${protocol}://${host}/?room=${roomId}`;
+  if (!inviteToken) {
+    return `${protocol}://${host}/?room=${roomId}`;
+  }
+
+  return `${protocol}://${host}/?${buildRoomInviteQuery(roomId, inviteToken)}`;
+}
+
+function roomTrace(event: string, details: Record<string, unknown>): void {
+  console.info(`[room:${event}]`, details);
 }
 
 function getSocketDisplayName(socketId: string | undefined): string {
@@ -648,6 +673,7 @@ function pruneDisconnectedRoomSeats(room: GameRoom, now = Date.now()): boolean {
       delete room.pendingUndoRequester;
     }
     delete room.white;
+    delete room.whiteUserId;
     delete room.whiteDisconnectedAt;
     changed = true;
   }
@@ -666,6 +692,7 @@ function pruneDisconnectedRoomSeats(room: GameRoom, now = Date.now()): boolean {
       delete room.pendingUndoRequester;
     }
     delete room.black;
+    delete room.blackUserId;
     delete room.blackDisconnectedAt;
     changed = true;
   }
@@ -1069,8 +1096,8 @@ return {
       spectatorCount: getSpectatorCount(room.id, room),
       whiteName: getSocketDisplayName(room.white),
       blackName: getSocketDisplayName(room.black),
-      whiteUserId: room.white ? getSocketUserId(room.white) : null,
-      blackUserId: room.black ? getSocketUserId(room.black) : null,
+      whiteUserId: room.whiteUserId ?? (room.white ? getSocketUserId(room.white) : null),
+      blackUserId: room.blackUserId ?? (room.black ? getSocketUserId(room.black) : null),
       whiteFriendId: room.white ? getSocketFriendId(room.white) : null,
       blackFriendId: room.black ? getSocketFriendId(room.black) : null,
     },
@@ -1206,6 +1233,100 @@ function emitChatMessages(socketId: string, room: GameRoom): void {
   });
 }
 
+function buildRoomShareUrl(socketId: string, room: GameRoom): string {
+  return buildShareUrl(socketId, room.id, room.access.inviteLinkToken);
+}
+
+function reconcileRoomPregameState(room: GameRoom): void {
+  sanitizePregameSeatState({
+    white: room.white,
+    black: room.black,
+    isStarted: room.isStarted,
+    colorChoices: room.colorChoices,
+    readyPlayers: room.readyPlayers,
+  });
+}
+
+function emitSessionJoinForSeatedPlayers(room: GameRoom): void {
+  if (room.white) {
+    io.sockets.sockets.get(room.white)?.emit("session:joined", {
+      roomId: room.id,
+      role: "w",
+      shareUrl: buildRoomShareUrl(room.white, room),
+    });
+  }
+
+  if (room.black) {
+    io.sockets.sockets.get(room.black)?.emit("session:joined", {
+      roomId: room.id,
+      role: "b",
+      shareUrl: buildRoomShareUrl(room.black, room),
+    });
+  }
+}
+
+function maybeStartPregameMatch(room: GameRoom): boolean {
+  if (!canStartPregameMatch({
+    white: room.white,
+    black: room.black,
+    isStarted: room.isStarted,
+    colorChoices: room.colorChoices,
+    readyPlayers: room.readyPlayers,
+  })) {
+    return false;
+  }
+
+  room.isStarted = true;
+  roomTrace("pregame-start", {
+    roomId: room.id,
+    white: room.white,
+    black: room.black,
+    whiteUserId: room.whiteUserId ?? null,
+    blackUserId: room.blackUserId ?? null,
+    whiteChoice: room.white ? room.colorChoices.get(room.white) ?? null : null,
+    blackChoice: room.black ? room.colorChoices.get(room.black) ?? null : null,
+  });
+  resetRoomClock(room);
+
+  const currentWhite = room.white;
+  const currentBlack = room.black;
+  const whiteChoice = currentWhite ? room.colorChoices.get(currentWhite) : null;
+  if (whiteChoice === "b" && currentWhite && currentBlack) {
+    room.white = currentBlack;
+    room.black = currentWhite;
+
+    const whiteUserId = room.whiteUserId ?? null;
+    room.whiteUserId = room.blackUserId ?? null;
+    room.blackUserId = whiteUserId;
+  }
+
+  if (room.white) {
+    const whiteState = io.sockets.sockets.get(room.white)?.data as ClientState | undefined;
+    if (whiteState) {
+      whiteState.role = "w";
+    }
+  }
+
+  if (room.black) {
+    const blackState = io.sockets.sockets.get(room.black)?.data as ClientState | undefined;
+    if (blackState) {
+      blackState.role = "b";
+    }
+  }
+
+  emitSessionJoinForSeatedPlayers(room);
+  resetRoomChatConsent(room);
+  emitChatState(room);
+  if (room.white) {
+    emitChatMessages(room.white, room);
+  }
+  if (room.black) {
+    emitChatMessages(room.black, room);
+  }
+  startClock(room);
+  return true;
+}
+
 function purgeRoomChatData(room: GameRoom, reason: "abandoned" | "room-closed"): void {
   const deletedCount = liveChatStore.deleteRoomMessages(room.id);
   resetRoomChatConsent(room);
@@ -1215,6 +1336,10 @@ function purgeRoomChatData(room: GameRoom, reason: "abandoned" | "room-closed"):
 
 function emitRoomState(room: GameRoom): void {
   syncActiveClock(room);
+  reconcileRoomPregameState(room);
+  if (!room.isStarted) {
+    maybeStartPregameMatch(room);
+  }
 
   if (isLiveCompetitiveMatch(room) && (room.analysisEnabled || room.analysisVotes.size > 0)) {
     room.analysisEnabled = false;
@@ -1273,22 +1398,26 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
     // Si es desconexión normal (no inmediata), marcar como "desconectado temporalmente"
     // permitiendo reconexión dentro del grace period
     if (room.white === socketId) {
-      if (shouldHoldSeat) {
+      const canHoldWhiteSeat = shouldHoldSeat && Boolean(room.whiteUserId);
+      if (canHoldWhiteSeat) {
         room.whiteDisconnectedAt = Date.now();
       } else {
         room.colorChoices.delete(socketId);
         delete room.white;
+        delete room.whiteUserId;
         delete room.whiteDisconnectedAt;
       }
       changed = true;
     }
 
     if (room.black === socketId) {
-      if (shouldHoldSeat) {
+      const canHoldBlackSeat = shouldHoldSeat && Boolean(room.blackUserId);
+      if (canHoldBlackSeat) {
         room.blackDisconnectedAt = Date.now();
       } else {
         room.colorChoices.delete(socketId);
         delete room.black;
+        delete room.blackUserId;
         delete room.blackDisconnectedAt;
       }
       changed = true;
@@ -1370,10 +1499,17 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
   }
 }
 
-function assignRole(room: GameRoom, socketId: string): RoomRole {
+function assignRole(room: GameRoom, socketId: string, allowSeatClaim = true): RoomRole {
+  if (!allowSeatClaim) {
+    room.spectators.add(socketId);
+    return "spectator";
+  }
+
+  const socketUserId = getSocketUserId(socketId);
   if (!room.white) {
     room.spectators.delete(socketId);
     room.white = socketId;
+    room.whiteUserId = socketUserId;
     resetRoomChatConsent(room);
     return "w";
   }
@@ -1381,6 +1517,7 @@ function assignRole(room: GameRoom, socketId: string): RoomRole {
   if (!room.black) {
     room.spectators.delete(socketId);
     room.black = socketId;
+    room.blackUserId = socketUserId;
     resetRoomChatConsent(room);
     return "b";
   }
@@ -1535,6 +1672,12 @@ io.on("connection", (socket) => {
 
     const room = getRoomForSocket(socket.id);
     if (room) {
+      if (room.white === socket.id) {
+        room.whiteUserId = normalizedUserId ?? null;
+      }
+      if (room.black === socket.id) {
+        room.blackUserId = normalizedUserId ?? null;
+      }
       emitRoomState(room);
     }
   });
@@ -1619,6 +1762,11 @@ io.on("connection", (socket) => {
       return;
     }
 
+    if (room.white !== socket.id && room.black !== socket.id) {
+      socket.emit("room:error", { message: "Only seated players can invite users to this room." });
+      return;
+    }
+
     const toUserId = normalizeUserId(payload?.toUserId);
     if (!toUserId) {
       socket.emit("room:error", { message: "Invalid friend ID." });
@@ -1632,12 +1780,23 @@ io.on("connection", (socket) => {
 
     const inviteId = randomUUID();
     const fromName = getSocketDisplayName(socket.id);
-    const shareUrl = buildShareUrl(socket.id, room.id);
+    const inviteToken = room.access.inviteLinkToken;
+    const shareUrl = buildShareUrl(socket.id, room.id, inviteToken);
+    roomTrace("invite-send", {
+      roomId: room.id,
+      inviteId,
+      fromUserId: senderUserId,
+      toUserId,
+      inviteToken,
+      senderSocketId: socket.id,
+    });
+    grantDirectRoomInvite(room.access, toUserId, true);
     pendingFriendInvites.set(inviteId, {
       inviteId,
       fromUserId: senderUserId,
       toUserId,
       roomId: room.id,
+      inviteToken,
       fromName,
       createdAt: Date.now(),
     });
@@ -1650,10 +1809,18 @@ io.on("connection", (socket) => {
           fromUserId: senderUserId,
           fromName,
           roomId: room.id,
+          inviteToken,
         });
       }
 
       socket.emit("friends:invite:sent", { toUserId, delivery: "realtime" });
+      roomTrace("invite-send-delivery", {
+        roomId: room.id,
+        inviteId,
+        toUserId,
+        delivery: "realtime",
+        recipientSocketCount: recipientSockets.length,
+      });
       return;
     }
 
@@ -1676,9 +1843,21 @@ io.on("connection", (socket) => {
         shareUrl,
       });
       socket.emit("friends:invite:sent", { toUserId, delivery: "email" });
+      roomTrace("invite-send-delivery", {
+        roomId: room.id,
+        inviteId,
+        toUserId,
+        delivery: "email",
+      });
     } catch (error) {
       const details = error instanceof Error ? error.message.trim() : "";
       socket.emit("room:error", { message: details ? `Could not send Gmail invite: ${details}` : "Could not send Gmail invite right now." });
+      roomTrace("invite-send-error", {
+        roomId: room.id,
+        inviteId,
+        toUserId,
+        details,
+      });
     }
   });
 
@@ -1697,10 +1876,30 @@ io.on("connection", (socket) => {
 
     const receiverUserId = getSocketUserId(socket.id);
     const pendingInvite = pendingFriendInvites.get(inviteId);
+    roomTrace("invite-respond", {
+      inviteId,
+      fromUserId,
+      receiverUserId,
+      accepted: payload.accepted,
+      hasPendingInvite: Boolean(pendingInvite),
+    });
     if (pendingInvite && receiverUserId) {
       if (pendingInvite.toUserId !== receiverUserId || pendingInvite.fromUserId !== fromUserId) {
         socket.emit("room:error", { message: "Invitation does not match this account." });
         return;
+      }
+
+      if (payload.accepted) {
+        const room = rooms.get(pendingInvite.roomId);
+        if (room) {
+          grantDirectRoomInvite(room.access, receiverUserId, true);
+          roomTrace("invite-respond-grant", {
+            roomId: room.id,
+            inviteId,
+            receiverUserId,
+            fromUserId,
+          });
+        }
       }
 
       pendingFriendInvites.delete(inviteId);
@@ -1840,6 +2039,7 @@ io.on("connection", (socket) => {
       id: roomId,
       chess: new Chess(),
       white: socket.id,
+      whiteUserId: getSocketUserId(socket.id),
       ownerId: socket.id,
       spectators: new Set(),
       rematchVotes: new Set(),
@@ -1859,6 +2059,7 @@ io.on("connection", (socket) => {
       clockLastUpdatedAt: Date.now(),
       voiceWAcceptsB: false,
       voiceBAcceptsW: false,
+      access: createRoomAccessState(),
     };
 
     rooms.set(roomId, room);
@@ -1872,7 +2073,13 @@ io.on("connection", (socket) => {
     socket.emit("session:joined", {
       roomId,
       role: "w",
-      shareUrl: buildShareUrl(socket.id, roomId),
+      shareUrl: buildRoomShareUrl(socket.id, room),
+    });
+    roomTrace("create", {
+      roomId,
+      ownerSocketId: socket.id,
+      ownerUserId: getSocketUserId(socket.id),
+      inviteToken: room.access.inviteLinkToken,
     });
 
     emitRoomState(room);
@@ -1880,7 +2087,7 @@ io.on("connection", (socket) => {
     emitChatMessages(socket.id, room);
   });
 
-  socket.on("room:join", (payload?: { roomId?: string }) => {
+  socket.on("room:join", (payload?: { roomId?: string; inviteToken?: string }) => {
     const roomId = payload?.roomId?.trim();
     if (!roomId) {
       socket.emit("room:error", { message: "Enter a room code first." });
@@ -1898,6 +2105,44 @@ io.on("connection", (socket) => {
       return;
     }
 
+    const joinInviteToken = typeof payload?.inviteToken === "string"
+      ? payload.inviteToken.trim() || null
+      : null;
+    const requesterUserId = getSocketUserId(socket.id);
+    const isSocketMember = room.white === socket.id || room.black === socket.id || room.spectators.has(socket.id);
+    const isSeatedIdentityMember = Boolean(
+      requesterUserId
+      && (requesterUserId === room.whiteUserId || requesterUserId === room.blackUserId),
+    );
+    const isInvitedPlayerCandidate = Boolean(
+      requesterUserId && room.access.invitedUserIds.has(requesterUserId),
+    );
+    const isAlreadyMember = Boolean(isSocketMember || isSeatedIdentityMember);
+    const joinAuthorization = evaluateRoomJoinAuthorization({
+      access: room.access,
+      userId: requesterUserId,
+      inviteToken: joinInviteToken,
+      isAlreadyMember,
+    });
+    roomTrace("join-auth", {
+      roomId,
+      socketId: socket.id,
+      requesterUserId,
+      isSocketMember,
+      isSeatedIdentityMember,
+      isInvitedPlayerCandidate,
+      authAllowed: joinAuthorization.allowed,
+      authSource: joinAuthorization.source,
+    });
+    if (!joinAuthorization.allowed || !joinAuthorization.source) {
+      socket.emit("room:error", { message: joinAuthorization.reason ?? "You are not allowed to join this room." });
+      return;
+    }
+
+    if (requesterUserId && joinAuthorization.source === "invite-link") {
+      grantDirectRoomInvite(room.access, requesterUserId, true);
+    }
+
     pruneDisconnectedRoomSeats(room, Date.now());
 
     // Joining another room is also an intentional leave from the current one.
@@ -1905,13 +2150,29 @@ io.on("connection", (socket) => {
 
     socket.join(roomId);
     
-    // Intentar reconectarse si está dentro del grace period
+    // Intentar reconectarse si está dentro del grace period y con la misma identidad.
     let role: RoomRole = "spectator";
     const ownerWasWhite = room.ownerId && room.white === room.ownerId;
     const ownerWasBlack = room.ownerId && room.black === room.ownerId;
 
     const now = Date.now();
-    if (room.whiteDisconnectedAt && now - room.whiteDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS) {
+    const canReclaimWhite = Boolean(
+      room.white
+      && room.whiteDisconnectedAt
+      && now - room.whiteDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS
+      && room.whiteUserId
+      && requesterUserId
+      && requesterUserId === room.whiteUserId,
+    );
+    const canReclaimBlack = Boolean(
+      room.black
+      && room.blackDisconnectedAt
+      && now - room.blackDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS
+      && room.blackUserId
+      && requesterUserId
+      && requesterUserId === room.blackUserId,
+    );
+    if (canReclaimWhite) {
       role = "w";
       room.white = socket.id;
       if (ownerWasWhite) {
@@ -1920,7 +2181,7 @@ io.on("connection", (socket) => {
       }
       room.spectators.delete(socket.id);
       delete room.whiteDisconnectedAt;
-    } else if (room.blackDisconnectedAt && now - room.blackDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS) {
+    } else if (canReclaimBlack) {
       role = "b";
       room.black = socket.id;
       if (ownerWasBlack) {
@@ -1930,7 +2191,43 @@ io.on("connection", (socket) => {
       room.spectators.delete(socket.id);
       delete room.blackDisconnectedAt;
     } else {
-      role = assignRole(room, socket.id);
+      const allowSeatClaim = Boolean(
+        joinAuthorization.source === "invite-link"
+        || joinAuthorization.source === "direct-invite"
+        || isSeatedIdentityMember
+        || isInvitedPlayerCandidate
+        || room.ownerId === socket.id,
+      );
+      role = assignRole(room, socket.id, allowSeatClaim);
+    }
+
+    roomTrace("join-role", {
+      roomId,
+      socketId: socket.id,
+      requesterUserId,
+      role,
+      allowSeatByInvite: isInvitedPlayerCandidate,
+      white: room.white,
+      black: room.black,
+      whiteUserId: room.whiteUserId,
+      blackUserId: room.blackUserId,
+    });
+
+    if (role === "spectator") {
+      const canSpectate = canJoinAsSpectator({
+        access: room.access,
+        userId: requesterUserId,
+        authSource: joinAuthorization.source,
+      });
+      if (!canSpectate) {
+        room.spectators.delete(socket.id);
+        socket.leave(roomId);
+        socket.emit("room:error", { message: "Spectator access requires explicit approval from a seated player." });
+        return;
+      }
+      if (requesterUserId) {
+        room.access.allowedSpectatorUserIds.add(requesterUserId);
+      }
     }
 
     const clientState = socket.data as ClientState;
@@ -1941,7 +2238,19 @@ io.on("connection", (socket) => {
     socket.emit("session:joined", {
       roomId,
       role,
-      shareUrl: buildShareUrl(socket.id, roomId),
+      shareUrl: buildRoomShareUrl(socket.id, room),
+    });
+    roomTrace("join-final", {
+      roomId,
+      socketId: socket.id,
+      requesterUserId,
+      role,
+      authSource: joinAuthorization.source,
+      white: room.white,
+      black: room.black,
+      whiteUserId: room.whiteUserId,
+      blackUserId: room.blackUserId,
+      spectatorCount: room.spectators.size,
     });
 
     emitRoomState(room);
@@ -2494,42 +2803,7 @@ io.on("connection", (socket) => {
     }
 
     room.readyPlayers.add(socket.id);
-
-    if (room.white && room.black && room.readyPlayers.has(room.white) && room.readyPlayers.has(room.black)) {
-      const c1 = room.colorChoices.get(room.white);
-      const c2 = room.colorChoices.get(room.black);
-      if (c1 && c2 && c1 !== c2) {
-        room.isStarted = true;
-        resetRoomClock(room);
-        
-        // If the creator actually chose black, swap their seats globally
-      if (c1 === "b" && room.white && room.black) {
-          const w = room.white;
-          const b = room.black;
-          room.white = b;
-          room.black = w;
-
-          io.sockets.sockets.get(room.white)?.emit("session:joined", { roomId: room.id, role: "w", shareUrl: buildShareUrl(room.white, room.id) });
-          io.sockets.sockets.get(room.black)?.emit("session:joined", { roomId: room.id, role: "b", shareUrl: buildShareUrl(room.black, room.id) });
-
-          const wData = io.sockets.sockets.get(room.white)?.data as ClientState | undefined;
-          if (wData) wData.role = "w";
-          const bData = io.sockets.sockets.get(room.black)?.data as ClientState | undefined;
-          if (bData) bData.role = "b";
-        }
-
-        resetRoomChatConsent(room);
-        emitChatState(room);
-        if (room.white) {
-          emitChatMessages(room.white, room);
-        }
-        if (room.black) {
-          emitChatMessages(room.black, room);
-        }
-
-        startClock(room);
-      }
-    }
+    maybeStartPregameMatch(room);
     emitRoomState(room);
   });
 
@@ -2567,6 +2841,10 @@ socket.on("game:rematch", () => {
         const b = room.black;
         room.white = b;
         room.black = w;
+
+        const whiteUserId = room.whiteUserId ?? null;
+        room.whiteUserId = room.blackUserId ?? null;
+        room.blackUserId = whiteUserId;
       }
 
       resetRoomChatConsent(room);
@@ -2574,12 +2852,12 @@ socket.on("game:rematch", () => {
       if (room.white) {
         const wData = io.sockets.sockets.get(room.white)?.data as ClientState | undefined;
         if (wData) wData.role = "w";
-        io.sockets.sockets.get(room.white)?.emit("session:joined", { roomId: room.id, role: "w", shareUrl: buildShareUrl(room.white, room.id) });
+        io.sockets.sockets.get(room.white)?.emit("session:joined", { roomId: room.id, role: "w", shareUrl: buildRoomShareUrl(room.white, room) });
       }
       if (room.black) {
         const bData = io.sockets.sockets.get(room.black)?.data as ClientState | undefined;
         if (bData) bData.role = "b";
-        io.sockets.sockets.get(room.black)?.emit("session:joined", { roomId: room.id, role: "b", shareUrl: buildShareUrl(room.black, room.id) });
+        io.sockets.sockets.get(room.black)?.emit("session:joined", { roomId: room.id, role: "b", shareUrl: buildRoomShareUrl(room.black, room) });
       }
 
       if (room.white) {
