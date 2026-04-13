@@ -601,6 +601,103 @@ function getSocketFriendId(socketId: string): string | null {
   return normalizeFriendId(state?.friendId);
 }
 
+function isSocketConnected(socketId: string | undefined): socketId is string {
+  return typeof socketId === "string" && io.sockets.sockets.has(socketId);
+}
+
+function getConnectedUserSocketIds(userId: string): string[] {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    return [];
+  }
+
+  const socketSet = activeUserSockets.get(normalizedUserId);
+  if (!socketSet || socketSet.size === 0) {
+    return [];
+  }
+
+  const connectedSocketIds: string[] = [];
+  for (const socketId of socketSet) {
+    if (!isSocketConnected(socketId)) {
+      socketSet.delete(socketId);
+      socketUserIds.delete(socketId);
+      continue;
+    }
+
+    connectedSocketIds.push(socketId);
+  }
+
+  if (socketSet.size === 0) {
+    activeUserSockets.delete(normalizedUserId);
+  }
+
+  return connectedSocketIds;
+}
+
+function pruneDisconnectedRoomSeats(room: GameRoom, now = Date.now()): boolean {
+  let changed = false;
+
+  const shouldReleaseWhite = Boolean(
+    room.white && (
+      (room.whiteDisconnectedAt && now - room.whiteDisconnectedAt > PLAYER_DISCONNECT_GRACE_MS)
+      || (!isSocketConnected(room.white) && !room.whiteDisconnectedAt)
+    ),
+  );
+
+  if (shouldReleaseWhite && room.white) {
+    room.colorChoices.delete(room.white);
+    room.readyPlayers.delete(room.white);
+    if (room.pendingUndoRequester === room.white) {
+      delete room.pendingUndoRequester;
+    }
+    delete room.white;
+    delete room.whiteDisconnectedAt;
+    changed = true;
+  }
+
+  const shouldReleaseBlack = Boolean(
+    room.black && (
+      (room.blackDisconnectedAt && now - room.blackDisconnectedAt > PLAYER_DISCONNECT_GRACE_MS)
+      || (!isSocketConnected(room.black) && !room.blackDisconnectedAt)
+    ),
+  );
+
+  if (shouldReleaseBlack && room.black) {
+    room.colorChoices.delete(room.black);
+    room.readyPlayers.delete(room.black);
+    if (room.pendingUndoRequester === room.black) {
+      delete room.pendingUndoRequester;
+    }
+    delete room.black;
+    delete room.blackDisconnectedAt;
+    changed = true;
+  }
+
+  const shouldReleaseOwner = Boolean(
+    room.ownerId && (
+      (room.ownerDisconnectedAt && now - room.ownerDisconnectedAt > PLAYER_DISCONNECT_GRACE_MS)
+      || (!isSocketConnected(room.ownerId) && !room.ownerDisconnectedAt)
+    ),
+  );
+
+  if (shouldReleaseOwner) {
+    delete room.ownerId;
+    delete room.ownerDisconnectedAt;
+    changed = true;
+  }
+
+  if (!room.ownerId) {
+    const nextOwner = room.white ?? room.black;
+    if (nextOwner) {
+      room.ownerId = nextOwner;
+      delete room.ownerDisconnectedAt;
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
 function clearSocketUserIdentity(socketId: string): void {
   const previousUserId = socketUserIds.get(socketId);
   if (!previousUserId) {
@@ -667,12 +764,12 @@ function clearFriendWatchForSocket(socketId: string): void {
 }
 
 function getFriendPresenceStatus(userId: string): FriendPresenceStatus {
-  const sockets = activeUserSockets.get(userId);
-  if (!sockets || sockets.size === 0) {
+  const connectedSocketIds = getConnectedUserSocketIds(userId);
+  if (connectedSocketIds.length === 0) {
     return "offline";
   }
 
-  for (const socketId of sockets) {
+  for (const socketId of connectedSocketIds) {
     const socket = io.sockets.sockets.get(socketId);
     const state = socket?.data as ClientState | undefined;
     if (state?.roomId) {
@@ -926,8 +1023,8 @@ return {
     moves: verboseHistory,
     lastMove: verboseHistory.at(-1) ?? null,
     players: {
-      whiteConnected: Boolean(room.white),
-      blackConnected: Boolean(room.black),
+      whiteConnected: isSocketConnected(room.white),
+      blackConnected: isSocketConnected(room.black),
       spectatorCount: getSpectatorCount(room.id, room),
       whiteName: getSocketDisplayName(room.white),
       blackName: getSocketDisplayName(room.black),
@@ -1129,33 +1226,39 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
 
   for (const room of rooms.values()) {
     let changed = false;
+    const shouldHoldSeat = !immediate && room.isStarted && !room.winner && !room.chess.isGameOver();
 
     // Si es desconexión normal (no inmediata), marcar como "desconectado temporalmente"
     // permitiendo reconexión dentro del grace period
-    if (room.white === socketId && !immediate) {
-      room.whiteDisconnectedAt = Date.now();
-      changed = true;
-    } else if (room.white === socketId && immediate) {
-      delete room.white;
-      delete room.whiteDisconnectedAt;
-      changed = true;
-    }
-
-    if (room.black === socketId && !immediate) {
-      room.blackDisconnectedAt = Date.now();
-      changed = true;
-    } else if (room.black === socketId && immediate) {
-      delete room.black;
-      delete room.blackDisconnectedAt;
+    if (room.white === socketId) {
+      if (shouldHoldSeat) {
+        room.whiteDisconnectedAt = Date.now();
+      } else {
+        room.colorChoices.delete(socketId);
+        delete room.white;
+        delete room.whiteDisconnectedAt;
+      }
       changed = true;
     }
 
-    if (room.ownerId === socketId && !immediate) {
-      room.ownerDisconnectedAt = Date.now();
+    if (room.black === socketId) {
+      if (shouldHoldSeat) {
+        room.blackDisconnectedAt = Date.now();
+      } else {
+        room.colorChoices.delete(socketId);
+        delete room.black;
+        delete room.blackDisconnectedAt;
+      }
       changed = true;
-    } else if (room.ownerId === socketId && immediate) {
-      delete room.ownerId;
-      delete room.ownerDisconnectedAt;
+    }
+
+    if (room.ownerId === socketId) {
+      if (shouldHoldSeat) {
+        room.ownerDisconnectedAt = Date.now();
+      } else {
+        delete room.ownerId;
+        delete room.ownerDisconnectedAt;
+      }
       changed = true;
     }
 
@@ -1192,6 +1295,10 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
 
     if (!room.white || !room.black) {
       pauseClock(room);
+      changed = true;
+    }
+
+    if (pruneDisconnectedRoomSeats(room, Date.now())) {
       changed = true;
     }
 
@@ -1251,7 +1358,7 @@ function getRoomForSocket(socketId: string): GameRoom | undefined {
 }
 
 function getActivePlayerSockets(room: GameRoom): string[] {
-  return [room.white, room.black].filter((value): value is string => Boolean(value));
+  return [room.white, room.black].filter((value): value is string => isSocketConnected(value));
 }
 
 function getLiveRoomRole(room: GameRoom, socketId: string): RoomRole | null {
@@ -1280,22 +1387,7 @@ const cleanupTimer = setInterval(() => {
   for (const [roomId, room] of rooms.entries()) {
     let changed = false;
 
-    // Limpiar grace periods expirados
-    if (room.whiteDisconnectedAt && now - room.whiteDisconnectedAt > PLAYER_DISCONNECT_GRACE_MS) {
-      delete room.white;
-      delete room.whiteDisconnectedAt;
-      changed = true;
-    }
-
-    if (room.blackDisconnectedAt && now - room.blackDisconnectedAt > PLAYER_DISCONNECT_GRACE_MS) {
-      delete room.black;
-      delete room.blackDisconnectedAt;
-      changed = true;
-    }
-
-    if (room.ownerDisconnectedAt && now - room.ownerDisconnectedAt > PLAYER_DISCONNECT_GRACE_MS) {
-      delete room.ownerId;
-      delete room.ownerDisconnectedAt;
+    if (pruneDisconnectedRoomSeats(room, now)) {
       changed = true;
     }
 
@@ -1446,8 +1538,8 @@ io.on("connection", (socket) => {
       createdAt: Date.now(),
     });
 
-    const recipientSockets = activeUserSockets.get(toUserId);
-    if (recipientSockets && recipientSockets.size > 0) {
+    const recipientSockets = getConnectedUserSocketIds(toUserId);
+    if (recipientSockets.length > 0) {
       for (const recipientSocketId of recipientSockets) {
         io.to(recipientSocketId).emit("friends:invite:incoming", {
           inviteId,
@@ -1509,8 +1601,8 @@ io.on("connection", (socket) => {
       pendingFriendInvites.delete(inviteId);
     }
 
-    const senderSockets = activeUserSockets.get(fromUserId);
-    if (!senderSockets || senderSockets.size === 0) {
+    const senderSockets = getConnectedUserSocketIds(fromUserId);
+    if (senderSockets.length === 0) {
       return;
     }
 
@@ -1618,8 +1710,8 @@ io.on("connection", (socket) => {
 
     pendingFriendRequests.delete(requestId);
 
-    const senderSockets = activeUserSockets.get(fromUserId);
-    if (!senderSockets || senderSockets.size === 0) {
+    const senderSockets = getConnectedUserSocketIds(fromUserId);
+    if (senderSockets.length === 0) {
       return;
     }
 
@@ -1701,6 +1793,8 @@ io.on("connection", (socket) => {
       return;
     }
 
+    pruneDisconnectedRoomSeats(room, Date.now());
+
     // Joining another room is also an intentional leave from the current one.
     removeFromRoom(socket.id, true);
 
@@ -1711,7 +1805,8 @@ io.on("connection", (socket) => {
     const ownerWasWhite = room.ownerId && room.white === room.ownerId;
     const ownerWasBlack = room.ownerId && room.black === room.ownerId;
 
-    if (room.whiteDisconnectedAt && Date.now() - room.whiteDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS) {
+    const now = Date.now();
+    if (room.whiteDisconnectedAt && now - room.whiteDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS) {
       role = "w";
       room.white = socket.id;
       if (ownerWasWhite) {
@@ -1720,7 +1815,7 @@ io.on("connection", (socket) => {
       }
       room.spectators.delete(socket.id);
       delete room.whiteDisconnectedAt;
-    } else if (room.blackDisconnectedAt && Date.now() - room.blackDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS) {
+    } else if (room.blackDisconnectedAt && now - room.blackDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS) {
       role = "b";
       room.black = socket.id;
       if (ownerWasBlack) {
