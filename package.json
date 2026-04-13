@@ -21,6 +21,7 @@
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
+    "@types/nodemailer": "^8.0.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
@@ -32,6 +33,7 @@
     "esbuild": "^0.27.4",
     "express": "^5.2.1",
     "firebase": "^12.12.0",
+    "nodemailer": "^8.0.5",
     "shx": "^0.4.0",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",

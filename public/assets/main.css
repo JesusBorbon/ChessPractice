@@ -3527,6 +3527,180 @@ body.focus-mode.focus-analyze .nav-row button:hover {
   padding: 0 14px;
   background: #fffaf1;
 }
+.friends-section {
+  border-top: 1px solid rgba(25, 35, 32, 0.1);
+  padding-top: 10px;
+  display: grid;
+  gap: 10px;
+}
+.friends-title {
+  margin: 0;
+  font-size: 1rem;
+}
+.friends-status {
+  margin: 0;
+}
+.friends-player-id-wrap {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(25, 35, 32, 0.1);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--paper);
+}
+.friends-player-id-label {
+  font-size: 0.74rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.friends-player-id {
+  margin: 0;
+  font-weight: 700;
+  font-size: 0.82rem;
+  word-break: break-all;
+}
+.friends-add-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.friends-toggle {
+  width: 100%;
+  border: 1px solid rgba(25, 35, 32, 0.12);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: var(--paper);
+  color: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+.friends-toggle:hover,
+.friends-toggle:focus-visible,
+.friends-toggle.expanded {
+  border-color: rgba(25, 63, 48, 0.32);
+  background: color-mix(in srgb, var(--paper) 90%, #1c2b24);
+  outline: none;
+}
+.friends-toggle-copy {
+  display: grid;
+  gap: 3px;
+}
+.friends-toggle-title {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.friends-toggle-description {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+.friends-toggle-indicator {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+}
+.friends-composer {
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 220ms ease;
+}
+.friends-composer .friends-add-row {
+  padding-top: 2px;
+}
+.friends-list {
+  display: grid;
+  gap: 8px;
+  max-height: min(34vh, 280px);
+  overflow: auto;
+  padding-right: 4px;
+}
+.friend-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid rgba(25, 35, 32, 0.12);
+  border-radius: 12px;
+  padding: 9px;
+  background: rgba(255, 250, 241, 0.85);
+}
+.friend-identity {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.friend-identity strong {
+  font-size: 0.9rem;
+}
+.friend-id-line {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  word-break: break-all;
+}
+.friend-status {
+  width: fit-content;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px 8px;
+}
+.friend-status--online {
+  background: rgba(45, 146, 85, 0.18);
+  color: #1e6e41;
+}
+.friend-status--in-room {
+  background: rgba(44, 113, 196, 0.2);
+  color: #1a4f8f;
+}
+.friend-status--offline {
+  background: rgba(138, 138, 138, 0.2);
+  color: #545454;
+}
+.friend-invite-button {
+  min-width: 122px;
+  font-size: 0.75rem;
+}
+.friend-invite-prompt {
+  position: fixed;
+  right: 18px;
+  bottom: 24px;
+  z-index: 2400;
+  min-width: min(360px, calc(100vw - 32px));
+  max-width: min(420px, calc(100vw - 32px));
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: color-mix(in srgb, var(--paper-strong) 92%, #0f1815 8%);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.28);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  opacity: 0;
+  transform: translateY(16px) scale(0.97);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+.friend-invite-prompt.is-visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.friend-invite-prompt-text {
+  margin: 0;
+  font-weight: 700;
+}
+.friend-invite-prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .saved-games-list {
   max-height: min(58vh, 580px);
   overflow: auto;
@@ -3638,6 +3812,19 @@ body.focus-mode .sidebar-backdrop {
   }
   .auth-name-input {
     min-width: 100%;
+  }
+  .friend-item {
+    grid-template-columns: 1fr;
+  }
+  .friend-invite-button {
+    width: 100%;
+  }
+  .friend-invite-prompt {
+    right: 10px;
+    left: 10px;
+    bottom: 12px;
+    min-width: 0;
+    max-width: none;
   }
 }
 

@@ -2,9 +2,13 @@ import type { User } from "firebase/auth";
 import { Chess } from "chess.js";
 
 import {
+  addFriendForUserByLookup,
   deleteStoredGameForUser,
+  FriendListEntry,
   formatGoogleAuthError,
   getFirebaseAuthDisabledReason,
+  getFriendListForUser,
+  getPublicUserProfile,
   getStoredGameCount,
   getStoredGameHistory,
   initializeFirebaseClient,
@@ -14,11 +18,20 @@ import {
   saveGamePgnForUser,
   signInWithGoogle,
   signOutCurrentUser,
+  syncUserProfile,
 } from "./firebase";
 
 type SocketLike = {
   connected: boolean;
-  emit: (event: string, payload: unknown) => void;
+  emit: (event: string, payload?: unknown) => void;
+  on: (event: string, listener: (payload?: unknown) => void) => void;
+  off: (event: string, listener: (payload?: unknown) => void) => void;
+};
+
+type FriendPresenceStatus = "online" | "in-room" | "offline";
+
+type SidebarFriendEntry = FriendListEntry & {
+  status: FriendPresenceStatus;
 };
 
 export type AccountSidebarDomRefs = { // this is for the sake of better readability and maintainability, grouping all DOM refs related to the account sidebar in a single typez
@@ -37,6 +50,14 @@ export type AccountSidebarDomRefs = { // this is for the sake of better readabil
   storedGamesMeta: HTMLParagraphElement;
   usernameInput: HTMLInputElement;
   saveUsernameButton: HTMLButtonElement;
+  friendsToggleButton: HTMLButtonElement;
+  friendsComposer: HTMLDivElement;
+  friendPlayerId: HTMLParagraphElement;
+  copyPlayerIdButton: HTMLButtonElement;
+  friendIdInput: HTMLInputElement;
+  addFriendButton: HTMLButtonElement;
+  friendsStatus: HTMLParagraphElement;
+  friendsList: HTMLDivElement;
   guestModeButton: HTMLButtonElement;
   signInGoogleButton: HTMLButtonElement;
   signOutButton: HTMLButtonElement;
@@ -68,6 +89,7 @@ export type AccountSidebarController = {
 const USERNAME_STORAGE_PREFIX = "chess-custom-username:"; // prefix for localStorage keys where custom usernames are stored, namespaced by user ID
 const MOBILE_BREAKPOINT_PX = 640;
 const MOBILE_SCROLL_LOCK_CLASS = "sidebar-open-mobile";
+const FRIEND_NUMERIC_ID_LENGTH = 5;
 
 export function createAccountSidebarController({
   socket,
@@ -93,6 +115,12 @@ export function createAccountSidebarController({
   let importBusy = false;
   let savedGamesTouchStartY: number | null = null;
 
+  let friends: SidebarFriendEntry[] = [];
+  let friendsLoading = false;
+  let addFriendBusy = false;
+  let friendsComposerOpen = false;
+  let currentFriendId: string | null = null;
+
   let savingGameSignature: string | null = null;
   let savedGameSignature: string | null = null;
   let failedGameSignature: string | null = null;
@@ -117,6 +145,18 @@ export function createAccountSidebarController({
 
   const onSidebarProfileTabClick = (): void => {
     setActiveSidebarTab("profile");
+  };
+
+  const onFriendsToggleClick = (): void => {
+    setFriendsComposerOpen(!friendsComposerOpen);
+  };
+
+  const onFriendsComposerTransitionEnd = (event: TransitionEvent): void => {
+    if (event.propertyName !== "max-height" || !friendsComposerOpen) {
+      return;
+    }
+
+    refs.friendsComposer.style.maxHeight = "none";
   };
 
   const onSidebarHistoryTabClick = (): void => {
@@ -172,9 +212,125 @@ export function createAccountSidebarController({
     localStorage.setItem(usernameStorageKey(authenticatedUser.uid), normalized);
     editableUsername = normalized;
     emitCurrentProfileName();
+    if (authenticatedUser && isFirebaseAuthEnabled()) {
+      void syncUserProfile(authenticatedUser, normalized);
+    }
     renderAuthPanel();
     onIdentityUpdated();
     showToast("Username updated.");
+  };
+
+  const onFriendIdInput = (): void => {
+    if (friendsComposerOpen && refs.friendsComposer.style.maxHeight !== "none") {
+      refs.friendsComposer.style.maxHeight = `${refs.friendsComposer.scrollHeight}px`;
+    }
+    renderFriendsPanel();
+  };
+
+  const onCopyPlayerIdClick = async (): Promise<void> => {
+    if (!authenticatedUser) {
+      showToast("Sign in to get your Friend ID.");
+      return;
+    }
+
+    if (!currentFriendId) {
+      showToast("Your Friend ID is still being generated. Try again in a moment.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(currentFriendId);
+      showToast("Friend ID copied.");
+    } catch {
+      showToast("Could not copy Friend ID.");
+    }
+  };
+
+  const onAddFriendClick = async (): Promise<void> => {
+    if (!authenticatedUser || !isFirebaseAuthEnabled()) {
+      showToast("Sign in to add friends.");
+      return;
+    }
+
+    const lookupQuery = normalizeFriendLookupQuery(refs.friendIdInput.value);
+    if (!lookupQuery || lookupQuery.length < 2) {
+      showToast("Enter a username or 5-digit Friend ID.");
+      return;
+    }
+
+    if (isNumericFriendLookup(lookupQuery) && lookupQuery.length !== FRIEND_NUMERIC_ID_LENGTH) {
+      showToast("Friend ID must be exactly 5 digits.");
+      return;
+    }
+
+    if (addFriendBusy) {
+      return;
+    }
+
+    addFriendBusy = true;
+    renderFriendsPanel();
+
+    try {
+      await addFriendForUserByLookup(authenticatedUser.uid, lookupQuery);
+      refs.friendIdInput.value = "";
+      showToast("Friend added.");
+      await refreshFriendsPanel();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not find that friend by username or ID.";
+      showToast(message);
+    } finally {
+      addFriendBusy = false;
+      renderFriendsPanel();
+    }
+  };
+
+  const onFriendsPresence = (payload?: unknown): void => {
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+
+    const records = (payload as { friends?: unknown }).friends;
+    if (!Array.isArray(records)) {
+      return;
+    }
+
+    const statusById = new Map<string, FriendPresenceStatus>();
+    for (const item of records) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+
+      const record = item as { userId?: unknown; status?: unknown };
+      const userId = normalizeSocketUserId(record.userId);
+      const status = normalizePresenceStatus(record.status);
+      if (!userId) {
+        continue;
+      }
+
+      statusById.set(userId, status);
+    }
+
+    friends = friends.map((entry) => ({
+      ...entry,
+      status: statusById.get(entry.userId) ?? "offline",
+    }));
+    renderFriendsPanel();
+  };
+
+  const onFriendInviteSent = (payload?: unknown): void => {
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+
+    const delivery = (payload as { delivery?: unknown }).delivery;
+    if (delivery === "email") {
+      showToast("Friend offline: invitation email sent.");
+      return;
+    }
+
+    if (delivery === "realtime") {
+      showToast("Live invitation sent.");
+    }
   };
 
   const onGuestModeClick = async (): Promise<void> => {
@@ -232,6 +388,103 @@ export function createAccountSidebarController({
     return value.trim().replace(/\s+/g, " ").slice(0, 24);
   }
 
+  function normalizeSocketUserId(value: unknown): string {
+    if (typeof value !== "string") {
+      return "";
+    }
+
+    return value.trim();
+  }
+
+  function normalizeFriendLookupQuery(value: unknown): string {
+    if (typeof value !== "string") {
+      return "";
+    }
+
+    return value.trim().replace(/\s+/g, " ");
+  }
+
+  function isNumericFriendLookup(value: string): boolean {
+    return /^\d+$/.test(value.trim());
+  }
+
+  function normalizePresenceStatus(value: unknown): FriendPresenceStatus {
+    if (value === "online" || value === "in-room") {
+      return value;
+    }
+
+    return "offline";
+  }
+
+  function setFriendsComposerOpen(nextOpen: boolean, shouldAnimate = true): void {
+    friendsComposerOpen = nextOpen;
+    refs.friendsToggleButton.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+    refs.friendsToggleButton.classList.toggle("expanded", nextOpen);
+
+    const description = refs.friendsToggleButton.querySelector<HTMLElement>(".friends-toggle-description");
+    const indicator = refs.friendsToggleButton.querySelector<HTMLElement>(".friends-toggle-indicator");
+
+    if (description) {
+      description.textContent = nextOpen
+        ? "Add a friend by username or 5-digit Friend ID."
+        : "Tap to manage friends by username or Friend ID.";
+    }
+
+    if (indicator) {
+      indicator.textContent = nextOpen ? "Hide" : "Open";
+    }
+
+    if (!shouldAnimate) {
+      refs.friendsComposer.style.maxHeight = nextOpen ? "none" : "0px";
+      return;
+    }
+
+    if (nextOpen) {
+      refs.friendsComposer.style.maxHeight = "0px";
+      requestAnimationFrame(() => {
+        refs.friendsComposer.style.maxHeight = `${refs.friendsComposer.scrollHeight}px`;
+      });
+      window.setTimeout(() => refs.friendIdInput.focus(), 160);
+      return;
+    }
+
+    if (refs.friendsComposer.style.maxHeight === "none") {
+      refs.friendsComposer.style.maxHeight = `${refs.friendsComposer.scrollHeight}px`;
+    }
+
+    refs.friendsComposer.style.maxHeight = `${refs.friendsComposer.scrollHeight}px`;
+    requestAnimationFrame(() => {
+      refs.friendsComposer.style.maxHeight = "0px";
+    });
+  }
+
+  async function refreshCurrentFriendId(): Promise<void> {
+    if (!authenticatedUser || !isFirebaseAuthEnabled()) {
+      currentFriendId = null;
+      renderFriendsPanel();
+      return;
+    }
+
+    try {
+      const profile = await getPublicUserProfile(authenticatedUser.uid);
+      currentFriendId = profile?.friendId || null;
+    } catch {
+      currentFriendId = null;
+    }
+
+    renderFriendsPanel();
+  }
+
+  function syncFriendPresenceWatch(): void {
+    if (!authenticatedUser || !socket.connected) {
+      socket.emit("friends:watch", { friendIds: [] });
+      return;
+    }
+
+    const friendIds = friends.map((entry) => entry.userId);
+    socket.emit("friends:watch", { friendIds });
+  }
+
   function getCurrentPlayerName(): string {
     if (!authenticatedUser) {
       return "Guest";
@@ -255,7 +508,140 @@ export function createAccountSidebarController({
       return;
     }
 
-    socket.emit("profile:setName", { name: getCurrentPlayerName() });
+    socket.emit("profile:setName", {
+      name: getCurrentPlayerName(),
+      userId: authenticatedUser?.uid ?? null,
+      email: authenticatedUser?.email ?? null,
+    });
+
+    syncFriendPresenceWatch();
+  }
+
+  function getPresenceLabel(status: FriendPresenceStatus): string {
+    if (status === "in-room") {
+      return "In Room";
+    }
+
+    if (status === "online") {
+      return "Online";
+    }
+
+    return "Offline";
+  }
+
+  function renderFriendItem(entry: SidebarFriendEntry): HTMLElement {
+    const item = document.createElement("article");
+    item.className = "friend-item";
+
+    const identity = document.createElement("div");
+    identity.className = "friend-identity";
+
+    const title = document.createElement("strong");
+    title.textContent = entry.displayName;
+
+    const idLine = document.createElement("p");
+    idLine.className = "friend-id-line";
+    idLine.textContent = `Friend ID: ${entry.friendId ?? "Unavailable"}`;
+
+    const status = document.createElement("span");
+    status.className = `friend-status friend-status--${entry.status}`;
+    status.textContent = getPresenceLabel(entry.status);
+
+    identity.appendChild(title);
+    identity.appendChild(idLine);
+    identity.appendChild(status);
+
+    const inviteButton = document.createElement("button");
+    inviteButton.type = "button";
+    inviteButton.className = "chip friend-invite-button";
+    inviteButton.disabled = !socket.connected;
+    inviteButton.textContent = entry.status === "offline" ? "Send Gmail Invite" : "Invite";
+    inviteButton.addEventListener("click", () => {
+      socket.emit("friends:invite:send", {
+        toUserId: entry.userId,
+        toEmail: entry.email,
+      });
+    });
+
+    item.appendChild(identity);
+    item.appendChild(inviteButton);
+
+    return item;
+  }
+
+  function renderFriendsPanel(): void {
+    const canUseFriends = Boolean(authenticatedUser && isFirebaseAuthEnabled());
+    const lookupValue = normalizeFriendLookupQuery(refs.friendIdInput.value);
+    const numericLookup = isNumericFriendLookup(lookupValue);
+
+    refs.friendPlayerId.textContent = currentFriendId ?? (authenticatedUser ? "Generating..." : "Sign in to reveal your Friend ID");
+    refs.copyPlayerIdButton.disabled = !authenticatedUser || !currentFriendId;
+    refs.friendIdInput.disabled = !canUseFriends || addFriendBusy;
+
+    const hasValidLookup =
+      lookupValue.length >= 2
+      && (!numericLookup || lookupValue.length === FRIEND_NUMERIC_ID_LENGTH);
+
+    refs.addFriendButton.disabled = !canUseFriends || addFriendBusy || !hasValidLookup;
+    refs.addFriendButton.textContent = addFriendBusy ? "Adding..." : "Add";
+    refs.friendsList.innerHTML = "";
+
+    if (!authenticatedUser) {
+      refs.friendsStatus.textContent = "Sign in to add friends by username or 5-digit Friend ID.";
+      return;
+    }
+
+    if (!isFirebaseAuthEnabled()) {
+      refs.friendsStatus.textContent = "Friends unavailable because Firebase is not configured.";
+      return;
+    }
+
+    if (friendsLoading) {
+      refs.friendsStatus.textContent = "Loading friends...";
+      return;
+    }
+
+    if (friends.length === 0) {
+      refs.friendsStatus.textContent = "No friends yet. Add one using username or Friend ID.";
+      return;
+    }
+
+    refs.friendsStatus.textContent = `Friends: ${friends.length}`;
+    for (const friend of friends) {
+      refs.friendsList.appendChild(renderFriendItem(friend));
+    }
+
+    if (friendsComposerOpen && refs.friendsComposer.style.maxHeight !== "none") {
+      refs.friendsComposer.style.maxHeight = `${refs.friendsComposer.scrollHeight}px`;
+    }
+  }
+
+  async function refreshFriendsPanel(): Promise<void> {
+    if (!authenticatedUser || !isFirebaseAuthEnabled()) {
+      friends = [];
+      friendsLoading = false;
+      renderFriendsPanel();
+      syncFriendPresenceWatch();
+      return;
+    }
+
+    friendsLoading = true;
+    renderFriendsPanel();
+
+    try {
+      const loadedFriends = await getFriendListForUser(authenticatedUser.uid);
+      friends = loadedFriends.map((entry) => ({
+        ...entry,
+        status: "offline",
+      }));
+    } catch {
+      friends = [];
+      showToast("Could not load friends list.");
+    } finally {
+      friendsLoading = false;
+      renderFriendsPanel();
+      syncFriendPresenceWatch();
+    }
   }
 
   function setSidebarOpen(nextOpen: boolean): void {
@@ -754,6 +1140,7 @@ export function createAccountSidebarController({
       refs.signInGoogleButton.disabled = true;
       refs.signInGoogleButton.textContent = "Loading...";
       refs.signOutButton.hidden = true;
+      renderFriendsPanel();
       return;
     }
 
@@ -769,6 +1156,7 @@ export function createAccountSidebarController({
       refs.signInGoogleButton.disabled = true;
       refs.signInGoogleButton.textContent = "Firebase unavailable";
       refs.signOutButton.hidden = true;
+      renderFriendsPanel();
       return;
     }
 
@@ -789,6 +1177,7 @@ export function createAccountSidebarController({
       refs.signInGoogleButton.hidden = true;
       refs.signOutButton.hidden = false;
       refs.signOutButton.disabled = authBusy;
+      renderFriendsPanel();
       return;
     }
 
@@ -802,6 +1191,7 @@ export function createAccountSidebarController({
     refs.signInGoogleButton.disabled = authBusy;
     refs.signInGoogleButton.textContent = authBusy ? "Signing in..." : "Sign in / Sign up";
     refs.signOutButton.hidden = true;
+    renderFriendsPanel();
   }
 
   async function refreshStoredGamesCount(): Promise<void> {
@@ -873,6 +1263,8 @@ export function createAccountSidebarController({
     refs.sidebarBackdrop.addEventListener("click", onSidebarBackdropClick);
     refs.sidebarProfileTab.addEventListener("click", onSidebarProfileTabClick);
     refs.sidebarHistoryTab.addEventListener("click", onSidebarHistoryTabClick);
+    refs.friendsToggleButton.addEventListener("click", onFriendsToggleClick);
+    refs.friendsComposer.addEventListener("transitionend", onFriendsComposerTransitionEnd);
     window.addEventListener("keydown", onEscapeCloseSidebar);
     window.addEventListener("resize", onViewportResize);
     refs.savedGamesList.addEventListener("touchstart", onSavedGamesTouchStart, { passive: true });
@@ -881,8 +1273,13 @@ export function createAccountSidebarController({
     refs.signInGoogleButton.addEventListener("click", onSignInGoogleClick);
     refs.usernameInput.addEventListener("input", onUsernameInput);
     refs.saveUsernameButton.addEventListener("click", onSaveUsernameClick);
+    refs.friendIdInput.addEventListener("input", onFriendIdInput);
+    refs.copyPlayerIdButton.addEventListener("click", onCopyPlayerIdClick);
+    refs.addFriendButton.addEventListener("click", onAddFriendClick);
     refs.guestModeButton.addEventListener("click", onGuestModeClick);
     refs.signOutButton.addEventListener("click", onSignOutClick);
+    socket.on("friends:presence", onFriendsPresence);
+    socket.on("friends:invite:sent", onFriendInviteSent);
 
     listenersWired = true;
   }
@@ -897,6 +1294,8 @@ export function createAccountSidebarController({
     refs.sidebarBackdrop.removeEventListener("click", onSidebarBackdropClick);
     refs.sidebarProfileTab.removeEventListener("click", onSidebarProfileTabClick);
     refs.sidebarHistoryTab.removeEventListener("click", onSidebarHistoryTabClick);
+    refs.friendsToggleButton.removeEventListener("click", onFriendsToggleClick);
+    refs.friendsComposer.removeEventListener("transitionend", onFriendsComposerTransitionEnd);
     window.removeEventListener("keydown", onEscapeCloseSidebar);
     window.removeEventListener("resize", onViewportResize);
     refs.savedGamesList.removeEventListener("touchstart", onSavedGamesTouchStart);
@@ -905,8 +1304,13 @@ export function createAccountSidebarController({
     refs.signInGoogleButton.removeEventListener("click", onSignInGoogleClick);
     refs.usernameInput.removeEventListener("input", onUsernameInput);
     refs.saveUsernameButton.removeEventListener("click", onSaveUsernameClick);
+    refs.friendIdInput.removeEventListener("input", onFriendIdInput);
+    refs.copyPlayerIdButton.removeEventListener("click", onCopyPlayerIdClick);
+    refs.addFriendButton.removeEventListener("click", onAddFriendClick);
     refs.guestModeButton.removeEventListener("click", onGuestModeClick);
     refs.signOutButton.removeEventListener("click", onSignOutClick);
+    socket.off("friends:presence", onFriendsPresence);
+    socket.off("friends:invite:sent", onFriendInviteSent);
 
     listenersWired = false;
   }
@@ -914,6 +1318,7 @@ export function createAccountSidebarController({
   async function initialize(): Promise<void> {
     setSidebarOpen(false);
     setActiveSidebarTab("profile");
+    setFriendsComposerOpen(false, false);
     renderSavedHistoryPanel();
     wireEventListeners();
 
@@ -933,6 +1338,10 @@ export function createAccountSidebarController({
       savedGameHistory = [];
       historyLoading = false;
       deletingGameId = null;
+      friends = [];
+      friendsLoading = false;
+      addFriendBusy = false;
+      currentFriendId = null;
 
       editableUsername = getCurrentPlayerName();
 
@@ -942,8 +1351,17 @@ export function createAccountSidebarController({
       onIdentityUpdated();
 
       if (user) {
+        void (async () => {
+          const profile = await syncUserProfile(user, getCurrentPlayerName());
+          currentFriendId = profile.friendId ?? null;
+          renderFriendsPanel();
+        })();
         void refreshStoredGamesCount();
         void refreshSavedHistoryPanel();
+        void refreshFriendsPanel();
+      } else {
+        void refreshCurrentFriendId();
+        void refreshFriendsPanel();
       }
     });
   }

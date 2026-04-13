@@ -1,9 +1,11 @@
 import "dotenv/config";
 import path from "node:path";
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 
 import express from "express";
 import { Chess, Move, Square } from "chess.js";
+import nodemailer from "nodemailer";
 import { Server } from "socket.io";
 import { ChatRole, ChatStoredMessage, createLiveChatStore } from "./live-chat-store";
 
@@ -22,6 +24,19 @@ type ClientState = {
   roomId?: string;
   role?: RoomRole;
   displayName?: string;
+  userId?: string;
+  email?: string;
+};
+
+type FriendPresenceStatus = "online" | "in-room" | "offline";
+
+type PendingFriendInvite = {
+  inviteId: string;
+  fromUserId: string;
+  toUserId: string;
+  roomId: string;
+  fromName: string;
+  createdAt: number;
 };
 
 type MoveSummary = {
@@ -128,6 +143,11 @@ const io = new Server(server, {
 });
 
 const rooms = new Map<string, GameRoom>();
+const activeUserSockets = new Map<string, Set<string>>();
+const socketUserIds = new Map<string, string>();
+const watchedFriendIdsBySocket = new Map<string, Set<string>>();
+const friendWatchersByUserId = new Map<string, Set<string>>();
+const pendingFriendInvites = new Map<string, PendingFriendInvite>();
 const ROOM_ALPHABET = "0123456789";
 const ROOM_CODE_LENGTH = 4;
 const ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
@@ -139,6 +159,21 @@ const VOICE_MAX_DURATION_MS = 20_000;
 const VOICE_MIN_DURATION_MS = 250;
 const VOICE_ALLOWED_MIME_PREFIX = "audio/";
 const CHAT_MAX_TEXT_LENGTH = 420;
+const FRIEND_INVITE_EXPIRY_MS = 1000 * 60 * 30;
+
+const EMAIL_SMTP_USER = process.env.GMAIL_SMTP_USER?.trim() ?? "";
+const EMAIL_SMTP_PASS = process.env.GMAIL_SMTP_PASS?.trim() ?? "";
+const EMAIL_FROM = process.env.GMAIL_SMTP_FROM?.trim() || EMAIL_SMTP_USER;
+
+const friendInviteMailer = EMAIL_SMTP_USER && EMAIL_SMTP_PASS
+  ? nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: EMAIL_SMTP_USER,
+        pass: EMAIL_SMTP_PASS,
+      },
+    })
+  : null;
 
 type FirebaseClientConfig = {
   apiKey: string;
@@ -502,6 +537,200 @@ function getSocketDisplayName(socketId: string | undefined): string {
   return name;
 }
 
+function normalizeUserId(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim();
+}
+
+function normalizeEmail(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized.includes("@")) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function getSocketUserId(socketId: string): string | null {
+  const state = io.sockets.sockets.get(socketId)?.data as ClientState | undefined;
+  const normalized = normalizeUserId(state?.userId);
+  return normalized || null;
+}
+
+function clearSocketUserIdentity(socketId: string): void {
+  const previousUserId = socketUserIds.get(socketId);
+  if (!previousUserId) {
+    return;
+  }
+
+  socketUserIds.delete(socketId);
+
+  const socketSet = activeUserSockets.get(previousUserId);
+  if (socketSet) {
+    socketSet.delete(socketId);
+    if (socketSet.size === 0) {
+      activeUserSockets.delete(previousUserId);
+    }
+  }
+
+  notifyFriendWatchers(previousUserId);
+}
+
+function registerSocketUserIdentity(socketId: string, userId: string): void {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    clearSocketUserIdentity(socketId);
+    return;
+  }
+
+  const previousUserId = socketUserIds.get(socketId);
+  if (previousUserId && previousUserId !== normalizedUserId) {
+    const previousSet = activeUserSockets.get(previousUserId);
+    if (previousSet) {
+      previousSet.delete(socketId);
+      if (previousSet.size === 0) {
+        activeUserSockets.delete(previousUserId);
+      }
+    }
+    notifyFriendWatchers(previousUserId);
+  }
+
+  socketUserIds.set(socketId, normalizedUserId);
+  const socketSet = activeUserSockets.get(normalizedUserId) ?? new Set<string>();
+  socketSet.add(socketId);
+  activeUserSockets.set(normalizedUserId, socketSet);
+  notifyFriendWatchers(normalizedUserId);
+}
+
+function clearFriendWatchForSocket(socketId: string): void {
+  const watchedIds = watchedFriendIdsBySocket.get(socketId);
+  if (!watchedIds) {
+    return;
+  }
+
+  watchedFriendIdsBySocket.delete(socketId);
+  for (const watchedUserId of watchedIds) {
+    const watchers = friendWatchersByUserId.get(watchedUserId);
+    if (!watchers) {
+      continue;
+    }
+
+    watchers.delete(socketId);
+    if (watchers.size === 0) {
+      friendWatchersByUserId.delete(watchedUserId);
+    }
+  }
+}
+
+function getFriendPresenceStatus(userId: string): FriendPresenceStatus {
+  const sockets = activeUserSockets.get(userId);
+  if (!sockets || sockets.size === 0) {
+    return "offline";
+  }
+
+  for (const socketId of sockets) {
+    const socket = io.sockets.sockets.get(socketId);
+    const state = socket?.data as ClientState | undefined;
+    if (state?.roomId) {
+      return "in-room";
+    }
+  }
+
+  return "online";
+}
+
+function emitFriendPresenceToSocket(socketId: string): void {
+  const watchedIds = watchedFriendIdsBySocket.get(socketId) ?? new Set<string>();
+  const friends = [...watchedIds].map((userId) => ({
+    userId,
+    status: getFriendPresenceStatus(userId),
+  }));
+
+  io.to(socketId).emit("friends:presence", { friends });
+}
+
+function notifyFriendWatchers(userId: string): void {
+  const watchers = friendWatchersByUserId.get(userId);
+  if (!watchers || watchers.size === 0) {
+    return;
+  }
+
+  for (const watcherSocketId of watchers) {
+    emitFriendPresenceToSocket(watcherSocketId);
+  }
+}
+
+function setFriendWatchForSocket(socketId: string, friendIds: string[]): void {
+  clearFriendWatchForSocket(socketId);
+
+  const uniqueFriendIds = [...new Set(friendIds.map((id) => normalizeUserId(id)).filter(Boolean))];
+  const watchedSet = new Set<string>(uniqueFriendIds);
+  watchedFriendIdsBySocket.set(socketId, watchedSet);
+
+  for (const friendId of watchedSet) {
+    const watchers = friendWatchersByUserId.get(friendId) ?? new Set<string>();
+    watchers.add(socketId);
+    friendWatchersByUserId.set(friendId, watchers);
+  }
+
+  emitFriendPresenceToSocket(socketId);
+}
+
+function notifySocketOwnerPresence(socketId: string): void {
+  const userId = getSocketUserId(socketId);
+  if (!userId) {
+    return;
+  }
+
+  notifyFriendWatchers(userId);
+}
+
+function canSendFriendInviteEmail(): boolean {
+  return Boolean(friendInviteMailer && EMAIL_FROM);
+}
+
+async function sendOfflineFriendInviteEmail(input: {
+  toEmail: string;
+  inviterName: string;
+  roomId: string;
+  shareUrl: string;
+}): Promise<void> {
+  if (!friendInviteMailer || !EMAIL_FROM) {
+    throw new Error("Friend invite email transport is not configured.");
+  }
+
+  const subject = `${input.inviterName} invited you to a ChessPractice room`;
+  const text = [
+    `${input.inviterName} invited you to join room ${input.roomId}.`,
+    "",
+    `Accept invitation: ${input.shareUrl}`,
+  ].join("\n");
+
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.45;color:#1e2b24;max-width:560px;margin:0 auto;">
+      <h2 style="margin:0 0 12px;">You have a chess invitation</h2>
+      <p style="margin:0 0 14px;"><strong>${input.inviterName}</strong> invited you to room <strong>${input.roomId}</strong>.</p>
+      <p style="margin:0 0 20px;">Tap accept to open the app and join the correct room automatically.</p>
+      <a href="${input.shareUrl}" style="display:inline-block;padding:10px 16px;border-radius:999px;background:#1f7a53;color:#ffffff;text-decoration:none;font-weight:700;">Accept invitation</a>
+    </div>
+  `;
+
+  await friendInviteMailer.sendMail({
+    from: EMAIL_FROM,
+    to: input.toEmail,
+    subject,
+    text,
+    html,
+  });
+}
+
 function getSpectatorCount(roomId: string, room: GameRoom): number {
   return room.spectators.size;
 }
@@ -845,8 +1074,13 @@ function resetSocketState(socketId: string): void {
   }
 
   const clientState = socket.data as ClientState;
+  const hadRoom = Boolean(clientState.roomId);
   delete clientState.roomId;
   delete clientState.role;
+
+  if (hadRoom) {
+    notifySocketOwnerPresence(socketId);
+  }
 }
 
 function removeFromRoom(socketId: string, immediate: boolean = false): void {
@@ -1049,6 +1283,12 @@ const cleanupTimer = setInterval(() => {
 
     closeRoom(room, "abandoned");
   }
+
+  for (const [inviteId, invite] of pendingFriendInvites.entries()) {
+    if (now - invite.createdAt > FRIEND_INVITE_EXPIRY_MS) {
+      pendingFriendInvites.delete(inviteId);
+    }
+  }
 }, 60_000);
 
 cleanupTimer.unref();
@@ -1073,7 +1313,7 @@ io.on("connection", (socket) => {
 
   socket.emit("connection:status", { connected: true });
 
-  socket.on("profile:setName", (payload?: { name?: string }) => {
+  socket.on("profile:setName", (payload?: { name?: string; userId?: string | null; email?: string | null }) => {
     const rawName = payload?.name;
     if (typeof rawName !== "string") {
       socket.emit("room:error", { message: "Invalid player name." });
@@ -1088,10 +1328,144 @@ io.on("connection", (socket) => {
 
     const state = socket.data as ClientState;
     state.displayName = trimmed;
+    const normalizedUserId = normalizeUserId(payload?.userId);
+    const normalizedEmail = normalizeEmail(payload?.email);
+
+    if (normalizedUserId) {
+      state.userId = normalizedUserId;
+      if (normalizedEmail) {
+        state.email = normalizedEmail;
+      } else {
+        delete state.email;
+      }
+      registerSocketUserIdentity(socket.id, normalizedUserId);
+    } else {
+      delete state.userId;
+      delete state.email;
+      clearSocketUserIdentity(socket.id);
+    }
 
     const room = getRoomForSocket(socket.id);
     if (room) {
       emitRoomState(room);
+    }
+  });
+
+  socket.on("friends:watch", (payload?: { friendIds?: string[] }) => {
+    const friendIds = Array.isArray(payload?.friendIds) ? payload.friendIds : [];
+    setFriendWatchForSocket(socket.id, friendIds);
+  });
+
+  socket.on("friends:invite:send", async (payload?: { toUserId?: string; toEmail?: string | null }) => {
+    const senderUserId = getSocketUserId(socket.id);
+    if (!senderUserId) {
+      socket.emit("room:error", { message: "Sign in to invite friends." });
+      return;
+    }
+
+    const room = getRoomForSocket(socket.id);
+    if (!room) {
+      socket.emit("room:error", { message: "Create or join a room before sending invites." });
+      return;
+    }
+
+    const toUserId = normalizeUserId(payload?.toUserId);
+    if (!toUserId) {
+      socket.emit("room:error", { message: "Invalid friend ID." });
+      return;
+    }
+
+    if (toUserId === senderUserId) {
+      socket.emit("room:error", { message: "You cannot invite yourself." });
+      return;
+    }
+
+    const inviteId = randomUUID();
+    const fromName = getSocketDisplayName(socket.id);
+    const shareUrl = buildShareUrl(socket.id, room.id);
+    pendingFriendInvites.set(inviteId, {
+      inviteId,
+      fromUserId: senderUserId,
+      toUserId,
+      roomId: room.id,
+      fromName,
+      createdAt: Date.now(),
+    });
+
+    const recipientSockets = activeUserSockets.get(toUserId);
+    if (recipientSockets && recipientSockets.size > 0) {
+      for (const recipientSocketId of recipientSockets) {
+        io.to(recipientSocketId).emit("friends:invite:incoming", {
+          inviteId,
+          fromUserId: senderUserId,
+          fromName,
+          roomId: room.id,
+        });
+      }
+
+      socket.emit("friends:invite:sent", { toUserId, delivery: "realtime" });
+      return;
+    }
+
+    const toEmail = normalizeEmail(payload?.toEmail);
+    if (!toEmail) {
+      socket.emit("room:error", { message: "Friend is offline and has no Gmail available for email invites." });
+      return;
+    }
+
+    if (!canSendFriendInviteEmail()) {
+      socket.emit("room:error", { message: "Gmail invite delivery is not configured on the server." });
+      return;
+    }
+
+    try {
+      await sendOfflineFriendInviteEmail({
+        toEmail,
+        inviterName: fromName,
+        roomId: room.id,
+        shareUrl,
+      });
+      socket.emit("friends:invite:sent", { toUserId, delivery: "email" });
+    } catch {
+      socket.emit("room:error", { message: "Could not send Gmail invite right now." });
+    }
+  });
+
+  socket.on("friends:invite:respond", (payload?: { inviteId?: string; fromUserId?: string; accepted?: boolean }) => {
+    if (typeof payload?.accepted !== "boolean") {
+      socket.emit("room:error", { message: "Invalid invitation response." });
+      return;
+    }
+
+    const inviteId = normalizeUserId(payload?.inviteId);
+    const fromUserId = normalizeUserId(payload?.fromUserId);
+    if (!inviteId || !fromUserId) {
+      socket.emit("room:error", { message: "Invalid invitation response." });
+      return;
+    }
+
+    const receiverUserId = getSocketUserId(socket.id);
+    const pendingInvite = pendingFriendInvites.get(inviteId);
+    if (pendingInvite && receiverUserId) {
+      if (pendingInvite.toUserId !== receiverUserId || pendingInvite.fromUserId !== fromUserId) {
+        socket.emit("room:error", { message: "Invitation does not match this account." });
+        return;
+      }
+
+      pendingFriendInvites.delete(inviteId);
+    }
+
+    const senderSockets = activeUserSockets.get(fromUserId);
+    if (!senderSockets || senderSockets.size === 0) {
+      return;
+    }
+
+    const friendName = getSocketDisplayName(socket.id);
+    for (const senderSocketId of senderSockets) {
+      io.to(senderSocketId).emit("friends:invite:response", {
+        accepted: payload.accepted,
+        friendName,
+      });
     }
   });
 
@@ -1131,6 +1505,7 @@ io.on("connection", (socket) => {
     const clientState = socket.data as ClientState;
     clientState.roomId = roomId;
     clientState.role = "w";
+    notifySocketOwnerPresence(socket.id);
 
     socket.emit("session:joined", {
       roomId,
@@ -1196,6 +1571,7 @@ io.on("connection", (socket) => {
     const clientState = socket.data as ClientState;
     clientState.roomId = roomId;
     clientState.role = role;
+    notifySocketOwnerPresence(socket.id);
 
     socket.emit("session:joined", {
       roomId,
@@ -1857,6 +2233,8 @@ socket.on("game:rematch", () => {
 
   socket.on("disconnect", () => {
     removeFromRoom(socket.id, false); // false = no es inmediato, aplicar grace period
+    clearFriendWatchForSocket(socket.id);
+    clearSocketUserIdentity(socket.id);
   });
 });
 

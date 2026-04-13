@@ -102,6 +102,13 @@ type PendingPromotion = {
   to: Square;
 };
 
+type IncomingFriendInvite = {
+  inviteId: string;
+  fromUserId: string;
+  fromName: string;
+  roomId: string;
+};
+
 type Premove = {
   from: Square;
   to: Square;
@@ -403,6 +410,7 @@ let activeLiveQualityCallout: HTMLDivElement | null = null;
 let botPickerHideTimer: number | null = null;
 let botPickerLockedScrollY: number | null = null;
 let botResponseTimer: number | null = null;
+let pendingFriendInvite: IncomingFriendInvite | null = null;
 
 const SMOOTH_MOVE_DURATION_MS = 620;
 const EPIC_MOVE_DURATION_MS = {
@@ -765,6 +773,30 @@ app.innerHTML = `
           <button class="action cta-rainbow" id="signInGoogleButton" type="button">Sign in / Sign up</button>
           <button class="chip" id="signOutButton" type="button" hidden>Sign out</button>
         </div>
+
+        <section class="friends-section" aria-label="Friends section">
+          <h3 class="friends-title">Friends</h3>
+          <p class="muted friends-status" id="friendsStatus">Sign in to add friends by username or Friend ID.</p>
+          <div class="friends-player-id-wrap">
+            <span class="friends-player-id-label">Your Friend ID</span>
+            <p class="friends-player-id" id="friendPlayerId">Sign in to reveal your Friend ID</p>
+            <button class="chip" id="copyPlayerIdButton" type="button">Copy Friend ID</button>
+          </div>
+          <button class="friends-toggle" id="friendsToggleButton" type="button" aria-expanded="false">
+            <div class="friends-toggle-copy">
+              <p class="friends-toggle-title">Add and Invite Friends</p>
+              <p class="friends-toggle-description">Tap to manage friends by username or Friend ID.</p>
+            </div>
+            <span class="friends-toggle-indicator" aria-hidden="true">Open</span>
+          </button>
+          <div class="friends-composer" id="friendsComposer">
+            <div class="friends-add-row">
+              <input class="auth-name-input" id="friendIdInput" type="text" placeholder="Username or 5-digit Friend ID" autocomplete="off" />
+              <button class="chip" id="addFriendButton" type="button">Add</button>
+            </div>
+          </div>
+          <div class="friends-list" id="friendsList"></div>
+        </section>
       </section>
 
       <section class="sidebar-panel" id="sidebarHistoryPanel" hidden>
@@ -1008,6 +1040,14 @@ app.innerHTML = `
   </section>
 
   <div class="toast" id="toast"></div>
+
+  <section class="friend-invite-prompt" id="friendInvitePrompt" hidden aria-live="polite">
+    <p class="friend-invite-prompt-text" id="friendInvitePromptText">New invitation</p>
+    <div class="friend-invite-prompt-actions">
+      <button class="chip" id="friendInviteDeclineButton" type="button">Decline</button>
+      <button class="action cta-turquoise" id="friendInviteAcceptButton" type="button">Accept</button>
+    </div>
+  </section>
 `;
 
 
@@ -1032,6 +1072,14 @@ const authStatus = must<HTMLParagraphElement>("#authStatus");
 const storedGamesMeta = must<HTMLParagraphElement>("#storedGamesMeta");
 const usernameInput = must<HTMLInputElement>("#usernameInput");
 const saveUsernameButton = must<HTMLButtonElement>("#saveUsernameButton");
+const friendsToggleButton = must<HTMLButtonElement>("#friendsToggleButton");
+const friendsComposer = must<HTMLDivElement>("#friendsComposer");
+const friendPlayerId = must<HTMLParagraphElement>("#friendPlayerId");
+const copyPlayerIdButton = must<HTMLButtonElement>("#copyPlayerIdButton");
+const friendIdInput = must<HTMLInputElement>("#friendIdInput");
+const addFriendButton = must<HTMLButtonElement>("#addFriendButton");
+const friendsStatus = must<HTMLParagraphElement>("#friendsStatus");
+const friendsList = must<HTMLDivElement>("#friendsList");
 const guestModeButton = must<HTMLButtonElement>("#guestModeButton");
 const signInGoogleButton = must<HTMLButtonElement>("#signInGoogleButton");
 const signOutButton = must<HTMLButtonElement>("#signOutButton");
@@ -1063,6 +1111,10 @@ const chatSendButton = must<HTMLButtonElement>("#chatSendButton");
 const chatVoiceButton = must<HTMLButtonElement>("#chatVoiceButton");
 const moveList = must<HTMLDivElement>("#moveList");
 const toast = must<HTMLDivElement>("#toast");
+const friendInvitePrompt = must<HTMLElement>("#friendInvitePrompt");
+const friendInvitePromptText = must<HTMLParagraphElement>("#friendInvitePromptText");
+const friendInviteDeclineButton = must<HTMLButtonElement>("#friendInviteDeclineButton");
+const friendInviteAcceptButton = must<HTMLButtonElement>("#friendInviteAcceptButton");
 const promotionDialog = must<HTMLDivElement>("#promotionDialog");
 const createRoomButton = must<HTMLButtonElement>("#createRoomButton");
 const backToMenuButton = must<HTMLButtonElement>("#backToMenuButton");
@@ -1209,6 +1261,14 @@ const accountSidebarController = createAccountSidebarController({
     storedGamesMeta,
     usernameInput,
     saveUsernameButton,
+    friendsToggleButton,
+    friendsComposer,
+    friendPlayerId,
+    copyPlayerIdButton,
+    friendIdInput,
+    addFriendButton,
+    friendsStatus,
+    friendsList,
     guestModeButton,
     signInGoogleButton,
     signOutButton,
@@ -2073,6 +2133,54 @@ promotionDialog.addEventListener("click", (event) => {
   }
 });
 
+function hideFriendInvitePrompt(): void {
+  pendingFriendInvite = null;
+  friendInvitePrompt.hidden = true;
+  friendInvitePrompt.classList.remove("is-visible");
+}
+
+function showFriendInvitePrompt(payload: IncomingFriendInvite): void {
+  pendingFriendInvite = payload;
+  friendInvitePromptText.textContent = `${payload.fromName} invited you to room ${payload.roomId}`;
+  friendInvitePrompt.hidden = false;
+  friendInvitePrompt.classList.remove("is-visible");
+  requestAnimationFrame(() => {
+    friendInvitePrompt.classList.add("is-visible");
+  });
+}
+
+friendInviteAcceptButton.addEventListener("click", () => {
+  if (!pendingFriendInvite) {
+    return;
+  }
+
+  const invite = pendingFriendInvite;
+  socket.emit("friends:invite:respond", {
+    inviteId: invite.inviteId,
+    fromUserId: invite.fromUserId,
+    accepted: true,
+  });
+  hideFriendInvitePrompt();
+  socket.emit("room:join", { roomId: invite.roomId });
+  showToast(`Joining room ${invite.roomId}...`);
+});
+
+friendInviteDeclineButton.addEventListener("click", () => {
+  if (!pendingFriendInvite) {
+    hideFriendInvitePrompt();
+    return;
+  }
+
+  const invite = pendingFriendInvite;
+  socket.emit("friends:invite:respond", {
+    inviteId: invite.inviteId,
+    fromUserId: invite.fromUserId,
+    accepted: false,
+  });
+  hideFriendInvitePrompt();
+  showToast("Invitation declined.");
+});
+
 // --- SOCKET.IO LISTENERS ---
 
 function onSocketConnect() {
@@ -2095,6 +2203,34 @@ socket.on("disconnect", () => {
 
 socket.on("connection:status", () => {
   state.connected = true;
+});
+
+socket.on("friends:invite:incoming", (payload?: {
+  inviteId?: string;
+  fromUserId?: string;
+  fromName?: string;
+  roomId?: string;
+}) => {
+  const inviteId = typeof payload?.inviteId === "string" ? payload.inviteId : "";
+  const fromUserId = typeof payload?.fromUserId === "string" ? payload.fromUserId : "";
+  const roomId = typeof payload?.roomId === "string" ? payload.roomId : "";
+  if (!inviteId || !fromUserId || !ROOM_ID_PATTERN.test(roomId)) {
+    return;
+  }
+
+  const fromName = typeof payload?.fromName === "string" && payload.fromName.trim()
+    ? payload.fromName.trim().slice(0, 24)
+    : "A friend";
+
+  showFriendInvitePrompt({ inviteId, fromUserId, fromName, roomId });
+});
+
+socket.on("friends:invite:response", (payload?: { accepted?: boolean; friendName?: string }) => {
+  const accepted = Boolean(payload?.accepted);
+  const friendName = typeof payload?.friendName === "string" && payload.friendName.trim()
+    ? payload.friendName.trim().slice(0, 24)
+    : "Friend";
+  showToast(accepted ? `${friendName} accepted your invitation.` : `${friendName} declined your invitation.`);
 });
 
 socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl: string }) => {

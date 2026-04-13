@@ -4093,8 +4093,8 @@ var init_transport = __esm({
        */
       pause(onPause) {
       }
-      createUri(schema, query = {}) {
-        return schema + "://" + this._hostname() + this._port() + this.opts.path + this._query(query);
+      createUri(schema, query2 = {}) {
+        return schema + "://" + this._hostname() + this._port() + this.opts.path + this._query(query2);
       }
       _hostname() {
         const hostname = this.opts.hostname;
@@ -4107,8 +4107,8 @@ var init_transport = __esm({
           return "";
         }
       }
-      _query(query) {
-        const encodedQuery = encode(query);
+      _query(query2) {
+        const encodedQuery = encode(query2);
         return encodedQuery.length ? "?" + encodedQuery : "";
       }
     };
@@ -4242,14 +4242,14 @@ var init_polling = __esm({
        */
       uri() {
         const schema = this.opts.secure ? "https" : "http";
-        const query = this.query || {};
+        const query2 = this.query || {};
         if (false !== this.opts.timestampRequests) {
-          query[this.opts.timestampParam] = randomString();
+          query2[this.opts.timestampParam] = randomString();
         }
-        if (!this.supportsBinary && !query.sid) {
-          query.b64 = 1;
+        if (!this.supportsBinary && !query2.sid) {
+          query2.b64 = 1;
         }
-        return this.createUri(schema, query);
+        return this.createUri(schema, query2);
       }
     };
   }
@@ -4600,14 +4600,14 @@ var init_websocket = __esm({
        */
       uri() {
         const schema = this.opts.secure ? "wss" : "ws";
-        const query = this.query || {};
+        const query2 = this.query || {};
         if (this.opts.timestampRequests) {
-          query[this.opts.timestampParam] = randomString();
+          query2[this.opts.timestampParam] = randomString();
         }
         if (!this.supportsBinary) {
-          query.b64 = 1;
+          query2.b64 = 1;
         }
-        return this.createUri(schema, query);
+        return this.createUri(schema, query2);
       }
     };
     WebSocketCtor = globalThisShim.WebSocket || globalThisShim.MozWebSocket;
@@ -4741,9 +4741,9 @@ function pathNames(obj, path) {
   }
   return names;
 }
-function queryKey(uri, query) {
+function queryKey(uri, query2) {
   const data = {};
-  query.replace(/(?:^|&)([^&=]*)=?([^&]*)/g, function($0, $1, $2) {
+  query2.replace(/(?:^|&)([^&=]*)=?([^&]*)/g, function($0, $1, $2) {
     if ($1) {
       data[$1] = $2;
     }
@@ -4886,13 +4886,13 @@ var init_socket = __esm({
        * @private
        */
       createTransport(name4) {
-        const query = Object.assign({}, this.opts.query);
-        query.EIO = protocol;
-        query.transport = name4;
+        const query2 = Object.assign({}, this.opts.query);
+        query2.EIO = protocol;
+        query2.transport = name4;
         if (this.id)
-          query.sid = this.id;
+          query2.sid = this.id;
         const opts = Object.assign({}, this.opts, {
-          query,
+          query: query2,
           socket: this,
           hostname: this.hostname,
           secure: this.secure,
@@ -9367,7 +9367,7 @@ async function _performApiRequest(auth2, method, path, request, customErrorMap =
         };
       }
     }
-    const query = querystring({
+    const query2 = querystring({
       key: auth2.config.apiKey,
       ...params
     }).slice(1);
@@ -9393,7 +9393,7 @@ async function _performApiRequest(auth2, method, path, request, customErrorMap =
     if (auth2.emulatorConfig && isCloudWorkstation(auth2.emulatorConfig.host)) {
       fetchArgs.credentials = "include";
     }
-    return FetchProvider.fetch()(await _getFinalTarget(auth2, auth2.config.apiHost, path, query), fetchArgs);
+    return FetchProvider.fetch()(await _getFinalTarget(auth2, auth2.config.apiHost, path, query2), fetchArgs);
   });
 }
 async function _performFetchWithErrorHandling(auth2, customErrorMap, fetchFn) {
@@ -9445,8 +9445,8 @@ async function _performSignInRequest(auth2, method, path, request, customErrorMa
   }
   return serverResponse;
 }
-async function _getFinalTarget(auth2, host, path, query) {
-  const base = `${host}${path}?${query}`;
+async function _getFinalTarget(auth2, host, path, query2) {
+  const base = `${host}${path}?${query2}`;
   const authInternal = auth2;
   const finalTarget = authInternal.config.emulator ? _emulatorUrl(auth2.config, base) : `${auth2.config.apiScheme}://${base}`;
   if (CookieAuthProxiedEndpoints.includes(path)) {
@@ -17872,6 +17872,9 @@ function __PRIVATE_validateIsNotUsedTogether(e, t, n, r) {
 function __PRIVATE_validateDocumentPath(e) {
   if (!DocumentKey.isDocumentKey(e)) throw new FirestoreError(D.INVALID_ARGUMENT, `Invalid document reference. Document references must have an even number of segments, but ${e} has ${e.length}.`);
 }
+function __PRIVATE_validateCollectionPath(e) {
+  if (DocumentKey.isDocumentKey(e)) throw new FirestoreError(D.INVALID_ARGUMENT, `Invalid collection reference. Collection references must have an odd number of segments, but ${e} has ${e.length}.`);
+}
 function __PRIVATE_isPlainObject(e) {
   return "object" == typeof e && null !== e && (Object.getPrototypeOf(e) === Object.prototype || null === Object.getPrototypeOf(e));
 }
@@ -17908,6 +17911,9 @@ function __PRIVATE_cast(e, t) {
     }
   }
   return e;
+}
+function __PRIVATE_validatePositiveNumber(e, t) {
+  if (t <= 0) throw new FirestoreError(D.INVALID_ARGUMENT, `Function ${e}() requires a positive number, but it was: ${t}.`);
 }
 function property(e, t) {
   const n = {
@@ -18264,6 +18270,11 @@ function __PRIVATE_estimateByteSize(e) {
       });
   }
 }
+function __PRIVATE_refValue(e, t) {
+  return {
+    referenceValue: `projects/${e.projectId}/databases/${e.database}/documents/${t.path.canonicalString()}`
+  };
+}
 function isInteger2(e) {
   return !!e && "integerValue" in e;
 }
@@ -18470,6 +18481,10 @@ function __PRIVATE__queryToTarget(e, t) {
     const n = e.endAt ? new Bound(e.endAt.position, e.endAt.inclusive) : null, r = e.startAt ? new Bound(e.startAt.position, e.startAt.inclusive) : null;
     return __PRIVATE_newTarget(e.path, e.collectionGroup, t, e.filters, e.limit, n, r);
   }
+}
+function __PRIVATE_queryWithAddedFilter(e, t) {
+  const n = e.filters.concat([t]);
+  return new __PRIVATE_QueryImpl(e.path, e.collectionGroup, e.explicitOrderBy.slice(), n, e.limit, e.limitType, e.startAt, e.endAt);
 }
 function __PRIVATE_queryWithLimit(e, t, n) {
   return new __PRIVATE_QueryImpl(e.path, e.collectionGroup, e.explicitOrderBy.slice(), e.filters.slice(), t, n, e.startAt, e.endAt);
@@ -20338,6 +20353,21 @@ function __PRIVATE_firestoreClientGetDocumentViaSnapshotListener(e, t, n = {}) {
     return __PRIVATE_eventManagerListen(e2, o);
   })(await __PRIVATE_getEventManager(e), e.asyncQueue, t, n, r))), r.promise;
 }
+function __PRIVATE_firestoreClientGetDocumentsViaSnapshotListener(e, t, n = {}) {
+  const r = new __PRIVATE_Deferred();
+  return e.asyncQueue.enqueueAndForget((async () => (function __PRIVATE_executeQueryViaSnapshotListener(e2, t2, n2, r2, i) {
+    const s = new __PRIVATE_AsyncObserver({
+      next: (n3) => {
+        s.Nu(), t2.enqueueAndForget((() => __PRIVATE_eventManagerUnlisten(e2, o))), n3.fromCache && "server" === r2.source ? i.reject(new FirestoreError(D.UNAVAILABLE, 'Failed to get documents from server. (However, these documents may exist in the local cache. Run again without setting source to "server" to retrieve the cached documents.)')) : i.resolve(n3);
+      },
+      error: (e3) => i.reject(e3)
+    }), o = new __PRIVATE_QueryListener(n2, s, {
+      includeMetadataChanges: true,
+      qa: true
+    });
+    return __PRIVATE_eventManagerListen(e2, o);
+  })(await __PRIVATE_getEventManager(e), e.asyncQueue, t, n, r))), r.promise;
+}
 function __PRIVATE_firestoreClientWrite(e, t) {
   const n = new __PRIVATE_Deferred();
   return e.asyncQueue.enqueueAndForget((async () => __PRIVATE_syncEngineWrite(await __PRIVATE_getSyncEngine(e), t, n))), n.promise;
@@ -20372,6 +20402,27 @@ function connectFirestoreEmulator(e, t, n, r = {}) {
       n2 = new User(i2);
     }
     e._authCredentials = new __PRIVATE_EmulatorAuthCredentialsProvider(new __PRIVATE_OAuthToken(t2, n2));
+  }
+}
+function collection(e, t, ...n) {
+  if (e = getModularInstance(e), __PRIVATE_validateNonEmptyArgument("collection", "path", t), e instanceof Firestore$1) {
+    const r = ResourcePath.fromString(t, ...n);
+    return __PRIVATE_validateCollectionPath(r), new CollectionReference(
+      e,
+      /* converter= */
+      null,
+      r
+    );
+  }
+  {
+    if (!(e instanceof DocumentReference || e instanceof CollectionReference)) throw new FirestoreError(D.INVALID_ARGUMENT, "Expected first argument to collection() to be a CollectionReference, a DocumentReference or FirebaseFirestore");
+    const r = e._path.child(ResourcePath.fromString(t, ...n));
+    return __PRIVATE_validateCollectionPath(r), new CollectionReference(
+      e.firestore,
+      /* converter= */
+      null,
+      r
+    );
   }
 }
 function doc(e, t, ...n) {
@@ -20460,6 +20511,9 @@ function __PRIVATE_parseSetData(e, t, n, r, i, s = {}) {
     a = new FieldMask(e2), u = o.fieldTransforms.filter(((e3) => a.covers(e3.field)));
   } else a = null, u = o.fieldTransforms;
   return new ParsedSetData(new ObjectValue(_), a, u);
+}
+function __PRIVATE_parseQueryValue(e, t, n, r = false) {
+  return __PRIVATE_parseData(n, e.I(r ? 4 : 3, t));
 }
 function __PRIVATE_parseData(e, t) {
   if (__PRIVATE_looksLikeJsonObject(
@@ -27184,6 +27238,77 @@ This typically indicates that your device does not have a healthy Internet conne
 });
 
 // node_modules/@firebase/firestore/dist/index.esm.js
+function __PRIVATE_validateHasExplicitOrderByForLimitToLast(t) {
+  if ("L" === t.limitType && 0 === t.explicitOrderBy.length) throw new FirestoreError(D.UNIMPLEMENTED, "limitToLast() queries require specifying at least one orderBy() clause");
+}
+function query(t, e, ...n) {
+  let r = [];
+  e instanceof AppliableConstraint && r.push(e), r = r.concat(n), (function __PRIVATE_validateQueryConstraintArray(t2) {
+    const e2 = t2.filter(((t3) => t3 instanceof QueryCompositeFilterConstraint)).length, n2 = t2.filter(((t3) => t3 instanceof QueryFieldFilterConstraint)).length;
+    if (e2 > 1 || e2 > 0 && n2 > 0) throw new FirestoreError(D.INVALID_ARGUMENT, "InvalidQuery. When using composite filters, you cannot use more than one filter at the top level. Consider nesting the multiple filters within an `and(...)` statement. For example: change `query(query, where(...), or(...))` to `query(query, and(where(...), or(...)))`.");
+  })(r);
+  for (const e2 of r) t = e2._apply(t);
+  return t;
+}
+function where(t, e, n) {
+  const r = e, s = __PRIVATE_fieldPathFromArgument("where", t);
+  return QueryFieldFilterConstraint._create(s, r, n);
+}
+function limit(t) {
+  return __PRIVATE_validatePositiveNumber("limit", t), QueryLimitConstraint._create(
+    "limit",
+    t,
+    "F"
+    /* LimitType.First */
+  );
+}
+function __PRIVATE_parseDocumentIdValue(t, e, n) {
+  if ("string" == typeof (n = getModularInstance(n))) {
+    if ("" === n) throw new FirestoreError(D.INVALID_ARGUMENT, "Invalid query. When querying with documentId(), you must provide a valid document ID, but it was an empty string.");
+    if (!__PRIVATE_isCollectionGroupQuery(e) && -1 !== n.indexOf("/")) throw new FirestoreError(D.INVALID_ARGUMENT, `Invalid query. When querying a collection by documentId(), you must provide a plain document ID, but '${n}' contains a '/' character.`);
+    const r = e.path.child(ResourcePath.fromString(n));
+    if (!DocumentKey.isDocumentKey(r)) throw new FirestoreError(D.INVALID_ARGUMENT, `Invalid query. When querying a collection group by documentId(), the value provided must result in a valid document path, but '${r}' is not because it has an odd number of segments (${r.length}).`);
+    return __PRIVATE_refValue(t, new DocumentKey(r));
+  }
+  if (n instanceof DocumentReference) return __PRIVATE_refValue(t, n._key);
+  throw new FirestoreError(D.INVALID_ARGUMENT, `Invalid query. When querying with documentId(), you must provide a valid string or a DocumentReference, but it was: ${__PRIVATE_valueDescription(n)}.`);
+}
+function __PRIVATE_validateDisjunctiveFilterElements(t, e) {
+  if (!Array.isArray(t) || 0 === t.length) throw new FirestoreError(D.INVALID_ARGUMENT, `Invalid Query. A non-empty array is required for '${e.toString()}' filters.`);
+}
+function __PRIVATE_validateNewFieldFilter(t, e) {
+  const n = (function __PRIVATE_findOpInsideFilters(t2, e2) {
+    for (const n2 of t2) for (const t3 of n2.getFlattenedFilters()) if (e2.indexOf(t3.op) >= 0) return t3.op;
+    return null;
+  })(t.filters, (function __PRIVATE_conflictingOps(t2) {
+    switch (t2) {
+      case "!=":
+        return [
+          "!=",
+          "not-in"
+          /* Operator.NOT_IN */
+        ];
+      case "array-contains-any":
+      case "in":
+        return [
+          "not-in"
+          /* Operator.NOT_IN */
+        ];
+      case "not-in":
+        return [
+          "array-contains-any",
+          "in",
+          "not-in",
+          "!="
+          /* Operator.NOT_EQUAL */
+        ];
+      default:
+        return [];
+    }
+  })(e.op));
+  if (null !== n)
+    throw n === e.op ? new FirestoreError(D.INVALID_ARGUMENT, `Invalid query. You cannot use more than one '${e.op.toString()}' filter.`) : new FirestoreError(D.INVALID_ARGUMENT, `Invalid query. You cannot use '${e.op.toString()}' filters with '${n.toString()}' filters.`);
+}
 function __PRIVATE_applyFirestoreDataConverter(t, e, n) {
   let r;
   return r = t ? n && (n.merge || n.mergeFields) ? t.toFirestore(e, n) : t.toFirestore(e) : e, r;
@@ -27208,6 +27333,11 @@ function getDoc(t) {
   const e = __PRIVATE_cast(t.firestore, Firestore), n = ensureFirestoreConfigured(e);
   return __PRIVATE_firestoreClientGetDocumentViaSnapshotListener(n, t._key).then(((n2) => __PRIVATE_convertToDocSnapshot(e, t, n2)));
 }
+function getDocs(t) {
+  t = __PRIVATE_cast(t, Query);
+  const e = __PRIVATE_cast(t.firestore, Firestore), n = ensureFirestoreConfigured(e), r = new __PRIVATE_ExpUserDataWriter(e);
+  return __PRIVATE_validateHasExplicitOrderByForLimitToLast(t._query), __PRIVATE_firestoreClientGetDocumentsViaSnapshotListener(n, t._query).then(((n2) => new QuerySnapshot(e, r, t, n2)));
+}
 function setDoc(t, e, n) {
   t = __PRIVATE_cast(t, DocumentReference);
   const r = __PRIVATE_cast(t.firestore, Firestore), s = __PRIVATE_applyFirestoreDataConverter(t.converter, e, n), o = __PRIVATE_newUserDataReader(r);
@@ -27221,7 +27351,7 @@ function __PRIVATE_convertToDocSnapshot(t, e, n) {
   const r = n.docs.get(e._key), s = new __PRIVATE_ExpUserDataWriter(t);
   return new DocumentSnapshot(t, s, e._key, r, new SnapshotMetadata(n.hasPendingWrites, n.fromCache), e.converter);
 }
-var Ut2, Ht2, DocumentSnapshot$1, QueryDocumentSnapshot$1, SnapshotMetadata, DocumentSnapshot, QueryDocumentSnapshot, QuerySnapshot;
+var Ut2, Ht2, DocumentSnapshot$1, QueryDocumentSnapshot$1, AppliableConstraint, QueryConstraint, QueryFieldFilterConstraint, QueryCompositeFilterConstraint, QueryLimitConstraint, SnapshotMetadata, DocumentSnapshot, QueryDocumentSnapshot, QuerySnapshot;
 var init_index_esm7 = __esm({
   "node_modules/@firebase/firestore/dist/index.esm.js"() {
     init_index_esm4();
@@ -27324,6 +27454,96 @@ var init_index_esm7 = __esm({
        */
       data() {
         return super.data();
+      }
+    };
+    AppliableConstraint = class {
+    };
+    QueryConstraint = class extends AppliableConstraint {
+    };
+    QueryFieldFilterConstraint = class _QueryFieldFilterConstraint extends QueryConstraint {
+      /**
+       * @internal
+       */
+      constructor(t, e, n) {
+        super(), this._field = t, this._op = e, this._value = n, /** The type of this query constraint */
+        this.type = "where";
+      }
+      static _create(t, e, n) {
+        return new _QueryFieldFilterConstraint(t, e, n);
+      }
+      _apply(t) {
+        const e = this._parse(t);
+        return __PRIVATE_validateNewFieldFilter(t._query, e), new Query(t.firestore, t.converter, __PRIVATE_queryWithAddedFilter(t._query, e));
+      }
+      _parse(t) {
+        const e = __PRIVATE_newUserDataReader(t.firestore), n = (function __PRIVATE_newQueryFilter(t2, e2, n2, r, s, a, o) {
+          let i;
+          if (s.isKeyField()) {
+            if ("array-contains" === a || "array-contains-any" === a) throw new FirestoreError(D.INVALID_ARGUMENT, `Invalid Query. You can't perform '${a}' queries on documentId().`);
+            if ("in" === a || "not-in" === a) {
+              __PRIVATE_validateDisjunctiveFilterElements(o, a);
+              const e3 = [];
+              for (const n3 of o) e3.push(__PRIVATE_parseDocumentIdValue(r, t2, n3));
+              i = {
+                arrayValue: {
+                  values: e3
+                }
+              };
+            } else i = __PRIVATE_parseDocumentIdValue(r, t2, o);
+          } else "in" !== a && "not-in" !== a && "array-contains-any" !== a || __PRIVATE_validateDisjunctiveFilterElements(o, a), i = __PRIVATE_parseQueryValue(
+            n2,
+            e2,
+            o,
+            /* allowArrays= */
+            "in" === a || "not-in" === a
+          );
+          const c = FieldFilter.create(s, a, i);
+          return c;
+        })(t._query, "where", e, t.firestore._databaseId, this._field, this._op, this._value);
+        return n;
+      }
+    };
+    QueryCompositeFilterConstraint = class _QueryCompositeFilterConstraint extends AppliableConstraint {
+      /**
+       * @internal
+       */
+      constructor(t, e) {
+        super(), this.type = t, this._queryConstraints = e;
+      }
+      static _create(t, e) {
+        return new _QueryCompositeFilterConstraint(t, e);
+      }
+      _parse(t) {
+        const e = this._queryConstraints.map(((e2) => e2._parse(t))).filter(((t2) => t2.getFilters().length > 0));
+        return 1 === e.length ? e[0] : CompositeFilter.create(e, this._getOperator());
+      }
+      _apply(t) {
+        const e = this._parse(t);
+        return 0 === e.getFilters().length ? t : ((function __PRIVATE_validateNewFilter(t2, e2) {
+          let n = t2;
+          const r = e2.getFlattenedFilters();
+          for (const t3 of r) __PRIVATE_validateNewFieldFilter(n, t3), n = __PRIVATE_queryWithAddedFilter(n, t3);
+        })(t._query, e), new Query(t.firestore, t.converter, __PRIVATE_queryWithAddedFilter(t._query, e)));
+      }
+      _getQueryConstraints() {
+        return this._queryConstraints;
+      }
+      _getOperator() {
+        return "and" === this.type ? "and" : "or";
+      }
+    };
+    QueryLimitConstraint = class _QueryLimitConstraint extends QueryConstraint {
+      /**
+       * @internal
+       */
+      constructor(t, e, n) {
+        super(), this.type = t, this._limit = e, this._limitType = n;
+      }
+      static _create(t, e, n) {
+        return new _QueryLimitConstraint(t, e, n);
+      }
+      _apply(t) {
+        return new Query(t.firestore, t.converter, __PRIVATE_queryWithLimit(t._query, this._limit, this._limitType));
       }
     };
     SnapshotMetadata = class {
@@ -27589,6 +27809,99 @@ function normalizeSavedAt(value2) {
   }
   return date.toISOString();
 }
+function normalizeUserId(value2) {
+  if (typeof value2 !== "string") {
+    return "";
+  }
+  return value2.trim();
+}
+function normalizeDisplayName(value2) {
+  if (typeof value2 !== "string") {
+    return "";
+  }
+  return value2.trim().replace(/\s+/g, " ").slice(0, 24);
+}
+function normalizeEmail(value2) {
+  if (typeof value2 !== "string") {
+    return null;
+  }
+  const normalized = value2.trim().toLowerCase();
+  if (!normalized.includes("@")) {
+    return null;
+  }
+  return normalized;
+}
+function normalizeFriendId(value2) {
+  if (typeof value2 !== "string") {
+    return "";
+  }
+  const trimmed = value2.trim();
+  return /^\d{5}$/.test(trimmed) ? trimmed : "";
+}
+function normalizeDisplayNameKey(value2) {
+  return normalizeDisplayName(value2).toLowerCase();
+}
+function isNumericFriendLookup(value2) {
+  return /^\d+$/.test(value2.trim());
+}
+function generateRandomFriendId() {
+  const next = Math.floor(Math.random() * (FRIEND_ID_MAX - FRIEND_ID_MIN + 1)) + FRIEND_ID_MIN;
+  return String(next).padStart(FRIEND_ID_DIGITS, "0");
+}
+function normalizeFriendList(value2) {
+  if (!Array.isArray(value2)) {
+    return [];
+  }
+  const uniqueIds = /* @__PURE__ */ new Set();
+  const normalized = [];
+  for (const entry of value2) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const record = entry;
+    const userId = normalizeUserId(record.userId);
+    if (!userId || uniqueIds.has(userId)) {
+      continue;
+    }
+    uniqueIds.add(userId);
+    normalized.push({
+      userId,
+      friendId: normalizeFriendId(record.friendId),
+      displayName: normalizeDisplayName(record.displayName) || "Player",
+      email: normalizeEmail(record.email)
+    });
+  }
+  return normalized.slice(0, MAX_FRIENDS);
+}
+function serializeFriendList(friends) {
+  return friends.map((friend) => ({
+    userId: friend.userId,
+    friendId: friend.friendId,
+    displayName: friend.displayName,
+    email: friend.email
+  }));
+}
+function normalizePublicUserProfile(userId, value2) {
+  if (!value2 || typeof value2 !== "object") {
+    return null;
+  }
+  const record = value2;
+  const normalizedUserId = normalizeUserId(record.userId) || userId;
+  if (!normalizedUserId) {
+    return null;
+  }
+  return {
+    userId: normalizedUserId,
+    friendId: normalizeFriendId(record.friendId),
+    displayName: normalizeDisplayName(record.displayName) || "Player",
+    email: normalizeEmail(record.email)
+  };
+}
+function upsertFriendEntry(list, entry) {
+  const next = list.filter((friend) => friend.userId !== entry.userId);
+  next.unshift(entry);
+  return next.slice(0, MAX_FRIENDS);
+}
 function normalizeStoredGameHistory(value2) {
   if (!Array.isArray(value2)) {
     return [];
@@ -27809,7 +28122,200 @@ async function deleteStoredGameForUser(userId, gameId) {
   );
   return updatedGames.length;
 }
-var REQUIRED_CONFIG_KEYS, GOOGLE_PROVIDER, POPUP_RECOVERY_CODES, auth, db, disabledReason, initPromise;
+async function assignUniqueFriendId(database, userId) {
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const candidate = generateRandomFriendId();
+    const indexRef = doc(database, "userFriendIdIndex", candidate);
+    const indexSnapshot = await getDoc(indexRef);
+    const existingUserId = normalizeUserId(indexSnapshot.data()?.userId);
+    if (existingUserId && existingUserId !== userId) {
+      continue;
+    }
+    await setDoc(
+      indexRef,
+      {
+        userId,
+        updatedAt: serverTimestamp()
+      },
+      { merge: true }
+    );
+    return candidate;
+  }
+  throw new Error("Could not generate a unique 5-digit Friend ID.");
+}
+async function resolveUserProfileByLookup(database, lookup3) {
+  const normalizedLookup = lookup3.trim();
+  if (!normalizedLookup) {
+    return null;
+  }
+  const normalizedFriendId = normalizeFriendId(normalizedLookup);
+  if (normalizedFriendId) {
+    const indexRef = doc(database, "userFriendIdIndex", normalizedFriendId);
+    const indexSnapshot = await getDoc(indexRef);
+    const indexedUserId = normalizeUserId(indexSnapshot.data()?.userId);
+    if (indexedUserId) {
+      const profileRef = doc(database, "userProfiles", indexedUserId);
+      const profileSnapshot = await getDoc(profileRef);
+      if (profileSnapshot.exists()) {
+        return normalizePublicUserProfile(indexedUserId, profileSnapshot.data());
+      }
+    }
+  }
+  if (isNumericFriendLookup(normalizedLookup)) {
+    return null;
+  }
+  const normalizedNameKey = normalizeDisplayNameKey(normalizedLookup);
+  if (!normalizedNameKey) {
+    return null;
+  }
+  const profilesRef = collection(database, "userProfiles");
+  const profileQuery = query(profilesRef, where("displayNameKey", "==", normalizedNameKey), limit(1));
+  const profileResults = await getDocs(profileQuery);
+  const firstResult = profileResults.docs[0];
+  if (!firstResult) {
+    return null;
+  }
+  return normalizePublicUserProfile(firstResult.id, firstResult.data());
+}
+async function syncUserProfile(user, displayName) {
+  const userId = normalizeUserId(user.uid);
+  if (!userId) {
+    throw new Error("Invalid authenticated user ID.");
+  }
+  const database = requireDb();
+  const profileRef = doc(database, "userProfiles", userId);
+  const normalizedDisplayName = normalizeDisplayName(displayName) || "Player";
+  const profileSnapshot = await getDoc(profileRef);
+  const existingProfile = profileSnapshot.exists() ? normalizePublicUserProfile(userId, profileSnapshot.data()) : null;
+  const friendId = existingProfile?.friendId || await assignUniqueFriendId(database, userId);
+  await setDoc(
+    profileRef,
+    {
+      userId,
+      friendId,
+      displayName: normalizedDisplayName,
+      displayNameKey: normalizeDisplayNameKey(normalizedDisplayName),
+      email: normalizeEmail(user.email),
+      updatedAt: serverTimestamp()
+    },
+    { merge: true }
+  );
+  await setDoc(
+    doc(database, "userFriendIdIndex", friendId),
+    {
+      userId,
+      updatedAt: serverTimestamp()
+    },
+    { merge: true }
+  );
+  return {
+    userId,
+    friendId,
+    displayName: normalizedDisplayName,
+    email: normalizeEmail(user.email)
+  };
+}
+async function getPublicUserProfile(userId) {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    return null;
+  }
+  const database = requireDb();
+  const profileRef = doc(database, "userProfiles", normalizedUserId);
+  const snapshot = await getDoc(profileRef);
+  if (!snapshot.exists()) {
+    return null;
+  }
+  return normalizePublicUserProfile(normalizedUserId, snapshot.data());
+}
+async function getFriendListForUser(userId) {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    return [];
+  }
+  const database = requireDb();
+  const friendsRef = doc(database, "userFriends", normalizedUserId);
+  const snapshot = await getDoc(friendsRef);
+  if (!snapshot.exists()) {
+    return [];
+  }
+  return normalizeFriendList(snapshot.data().friends);
+}
+async function addFriendForUserByLookup(userId, friendLookup) {
+  const ownerId = normalizeUserId(userId);
+  const normalizedLookup = friendLookup.trim();
+  if (!ownerId || !normalizedLookup) {
+    throw new Error("Enter a username or Friend ID.");
+  }
+  const database = requireDb();
+  const targetProfileFromLookup = await resolveUserProfileByLookup(database, normalizedLookup);
+  if (!targetProfileFromLookup) {
+    throw new Error("No player found with that username or Friend ID.");
+  }
+  const targetId = targetProfileFromLookup.userId;
+  if (ownerId === targetId) {
+    throw new Error("You cannot add yourself as a friend.");
+  }
+  const ownerProfileRef = doc(database, "userProfiles", ownerId);
+  const targetProfileRef = doc(database, "userProfiles", targetId);
+  const ownerFriendsRef = doc(database, "userFriends", ownerId);
+  const targetFriendsRef = doc(database, "userFriends", targetId);
+  const [ownerProfileSnapshot, targetProfileSnapshot, ownerFriendsSnapshot, targetFriendsSnapshot] = await Promise.all([
+    getDoc(ownerProfileRef),
+    getDoc(targetProfileRef),
+    getDoc(ownerFriendsRef),
+    getDoc(targetFriendsRef)
+  ]);
+  if (!ownerProfileSnapshot.exists()) {
+    throw new Error("Your profile is not ready yet. Please sign out and sign in again.");
+  }
+  if (!targetProfileSnapshot.exists() || !targetProfileFromLookup) {
+    throw new Error("No player found with that username or Friend ID.");
+  }
+  const ownerProfile = normalizePublicUserProfile(ownerId, ownerProfileSnapshot.data());
+  const targetProfile = normalizePublicUserProfile(targetId, targetProfileSnapshot.data()) ?? targetProfileFromLookup;
+  if (!ownerProfile || !targetProfile) {
+    throw new Error("Could not read player profile data.");
+  }
+  const ownerEntry = {
+    userId: targetProfile.userId,
+    friendId: targetProfile.friendId,
+    displayName: targetProfile.displayName,
+    email: targetProfile.email
+  };
+  const reciprocalEntry = {
+    userId: ownerProfile.userId,
+    friendId: ownerProfile.friendId,
+    displayName: ownerProfile.displayName,
+    email: ownerProfile.email
+  };
+  const ownerFriends = ownerFriendsSnapshot.exists() ? normalizeFriendList(ownerFriendsSnapshot.data().friends) : [];
+  const targetFriends = targetFriendsSnapshot.exists() ? normalizeFriendList(targetFriendsSnapshot.data().friends) : [];
+  const updatedOwnerFriends = upsertFriendEntry(ownerFriends, ownerEntry);
+  const updatedTargetFriends = upsertFriendEntry(targetFriends, reciprocalEntry);
+  await Promise.all([
+    setDoc(
+      ownerFriendsRef,
+      {
+        userId: ownerId,
+        friends: serializeFriendList(updatedOwnerFriends),
+        updatedAt: serverTimestamp()
+      },
+      { merge: true }
+    ),
+    setDoc(
+      targetFriendsRef,
+      {
+        userId: targetId,
+        friends: serializeFriendList(updatedTargetFriends),
+        updatedAt: serverTimestamp()
+      },
+      { merge: true }
+    )
+  ]);
+  return ownerEntry;
+}
+var REQUIRED_CONFIG_KEYS, GOOGLE_PROVIDER, POPUP_RECOVERY_CODES, MAX_FRIENDS, FRIEND_ID_DIGITS, FRIEND_ID_MIN, FRIEND_ID_MAX, auth, db, disabledReason, initPromise;
 var init_firebase = __esm({
   "src/client/firebase.ts"() {
     "use strict";
@@ -27830,6 +28336,10 @@ var init_firebase = __esm({
       "auth/cancelled-popup-request",
       "auth/operation-not-supported-in-this-environment"
     ]);
+    MAX_FRIENDS = 200;
+    FRIEND_ID_DIGITS = 5;
+    FRIEND_ID_MIN = 1e4;
+    FRIEND_ID_MAX = 99999;
     auth = null;
     db = null;
     disabledReason = null;
@@ -27860,6 +28370,11 @@ function createAccountSidebarController({
   let importComposerOpen = false;
   let importBusy = false;
   let savedGamesTouchStartY = null;
+  let friends = [];
+  let friendsLoading = false;
+  let addFriendBusy = false;
+  let friendsComposerOpen = false;
+  let currentFriendId = null;
   let savingGameSignature = null;
   let savedGameSignature = null;
   let failedGameSignature = null;
@@ -27879,6 +28394,15 @@ function createAccountSidebarController({
   };
   const onSidebarProfileTabClick = () => {
     setActiveSidebarTab("profile");
+  };
+  const onFriendsToggleClick = () => {
+    setFriendsComposerOpen(!friendsComposerOpen);
+  };
+  const onFriendsComposerTransitionEnd = (event) => {
+    if (event.propertyName !== "max-height" || !friendsComposerOpen) {
+      return;
+    }
+    refs.friendsComposer.style.maxHeight = "none";
   };
   const onSidebarHistoryTabClick = () => {
     setActiveSidebarTab("history");
@@ -27924,9 +28448,106 @@ function createAccountSidebarController({
     localStorage.setItem(usernameStorageKey(authenticatedUser.uid), normalized);
     editableUsername = normalized;
     emitCurrentProfileName();
+    if (authenticatedUser && isFirebaseAuthEnabled()) {
+      void syncUserProfile(authenticatedUser, normalized);
+    }
     renderAuthPanel();
     onIdentityUpdated();
     showToast("Username updated.");
+  };
+  const onFriendIdInput = () => {
+    if (friendsComposerOpen && refs.friendsComposer.style.maxHeight !== "none") {
+      refs.friendsComposer.style.maxHeight = `${refs.friendsComposer.scrollHeight}px`;
+    }
+    renderFriendsPanel();
+  };
+  const onCopyPlayerIdClick = async () => {
+    if (!authenticatedUser) {
+      showToast("Sign in to get your Friend ID.");
+      return;
+    }
+    if (!currentFriendId) {
+      showToast("Your Friend ID is still being generated. Try again in a moment.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(currentFriendId);
+      showToast("Friend ID copied.");
+    } catch {
+      showToast("Could not copy Friend ID.");
+    }
+  };
+  const onAddFriendClick = async () => {
+    if (!authenticatedUser || !isFirebaseAuthEnabled()) {
+      showToast("Sign in to add friends.");
+      return;
+    }
+    const lookupQuery = normalizeFriendLookupQuery(refs.friendIdInput.value);
+    if (!lookupQuery || lookupQuery.length < 2) {
+      showToast("Enter a username or 5-digit Friend ID.");
+      return;
+    }
+    if (isNumericFriendLookup2(lookupQuery) && lookupQuery.length !== FRIEND_NUMERIC_ID_LENGTH) {
+      showToast("Friend ID must be exactly 5 digits.");
+      return;
+    }
+    if (addFriendBusy) {
+      return;
+    }
+    addFriendBusy = true;
+    renderFriendsPanel();
+    try {
+      await addFriendForUserByLookup(authenticatedUser.uid, lookupQuery);
+      refs.friendIdInput.value = "";
+      showToast("Friend added.");
+      await refreshFriendsPanel();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not find that friend by username or ID.";
+      showToast(message);
+    } finally {
+      addFriendBusy = false;
+      renderFriendsPanel();
+    }
+  };
+  const onFriendsPresence = (payload) => {
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+    const records = payload.friends;
+    if (!Array.isArray(records)) {
+      return;
+    }
+    const statusById = /* @__PURE__ */ new Map();
+    for (const item of records) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const record = item;
+      const userId = normalizeSocketUserId(record.userId);
+      const status = normalizePresenceStatus(record.status);
+      if (!userId) {
+        continue;
+      }
+      statusById.set(userId, status);
+    }
+    friends = friends.map((entry) => ({
+      ...entry,
+      status: statusById.get(entry.userId) ?? "offline"
+    }));
+    renderFriendsPanel();
+  };
+  const onFriendInviteSent = (payload) => {
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+    const delivery = payload.delivery;
+    if (delivery === "email") {
+      showToast("Friend offline: invitation email sent.");
+      return;
+    }
+    if (delivery === "realtime") {
+      showToast("Live invitation sent.");
+    }
   };
   const onGuestModeClick = async () => {
     if (authBusy) {
@@ -27973,6 +28594,81 @@ function createAccountSidebarController({
   function normalizeUsername(value2) {
     return value2.trim().replace(/\s+/g, " ").slice(0, 24);
   }
+  function normalizeSocketUserId(value2) {
+    if (typeof value2 !== "string") {
+      return "";
+    }
+    return value2.trim();
+  }
+  function normalizeFriendLookupQuery(value2) {
+    if (typeof value2 !== "string") {
+      return "";
+    }
+    return value2.trim().replace(/\s+/g, " ");
+  }
+  function isNumericFriendLookup2(value2) {
+    return /^\d+$/.test(value2.trim());
+  }
+  function normalizePresenceStatus(value2) {
+    if (value2 === "online" || value2 === "in-room") {
+      return value2;
+    }
+    return "offline";
+  }
+  function setFriendsComposerOpen(nextOpen, shouldAnimate = true) {
+    friendsComposerOpen = nextOpen;
+    refs.friendsToggleButton.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+    refs.friendsToggleButton.classList.toggle("expanded", nextOpen);
+    const description = refs.friendsToggleButton.querySelector(".friends-toggle-description");
+    const indicator = refs.friendsToggleButton.querySelector(".friends-toggle-indicator");
+    if (description) {
+      description.textContent = nextOpen ? "Add a friend by username or 5-digit Friend ID." : "Tap to manage friends by username or Friend ID.";
+    }
+    if (indicator) {
+      indicator.textContent = nextOpen ? "Hide" : "Open";
+    }
+    if (!shouldAnimate) {
+      refs.friendsComposer.style.maxHeight = nextOpen ? "none" : "0px";
+      return;
+    }
+    if (nextOpen) {
+      refs.friendsComposer.style.maxHeight = "0px";
+      requestAnimationFrame(() => {
+        refs.friendsComposer.style.maxHeight = `${refs.friendsComposer.scrollHeight}px`;
+      });
+      window.setTimeout(() => refs.friendIdInput.focus(), 160);
+      return;
+    }
+    if (refs.friendsComposer.style.maxHeight === "none") {
+      refs.friendsComposer.style.maxHeight = `${refs.friendsComposer.scrollHeight}px`;
+    }
+    refs.friendsComposer.style.maxHeight = `${refs.friendsComposer.scrollHeight}px`;
+    requestAnimationFrame(() => {
+      refs.friendsComposer.style.maxHeight = "0px";
+    });
+  }
+  async function refreshCurrentFriendId() {
+    if (!authenticatedUser || !isFirebaseAuthEnabled()) {
+      currentFriendId = null;
+      renderFriendsPanel();
+      return;
+    }
+    try {
+      const profile = await getPublicUserProfile(authenticatedUser.uid);
+      currentFriendId = profile?.friendId || null;
+    } catch {
+      currentFriendId = null;
+    }
+    renderFriendsPanel();
+  }
+  function syncFriendPresenceWatch() {
+    if (!authenticatedUser || !socket.connected) {
+      socket.emit("friends:watch", { friendIds: [] });
+      return;
+    }
+    const friendIds = friends.map((entry) => entry.userId);
+    socket.emit("friends:watch", { friendIds });
+  }
   function getCurrentPlayerName() {
     if (!authenticatedUser) {
       return "Guest";
@@ -27991,7 +28687,112 @@ function createAccountSidebarController({
     if (!socket.connected) {
       return;
     }
-    socket.emit("profile:setName", { name: getCurrentPlayerName() });
+    socket.emit("profile:setName", {
+      name: getCurrentPlayerName(),
+      userId: authenticatedUser?.uid ?? null,
+      email: authenticatedUser?.email ?? null
+    });
+    syncFriendPresenceWatch();
+  }
+  function getPresenceLabel(status) {
+    if (status === "in-room") {
+      return "In Room";
+    }
+    if (status === "online") {
+      return "Online";
+    }
+    return "Offline";
+  }
+  function renderFriendItem(entry) {
+    const item = document.createElement("article");
+    item.className = "friend-item";
+    const identity = document.createElement("div");
+    identity.className = "friend-identity";
+    const title = document.createElement("strong");
+    title.textContent = entry.displayName;
+    const idLine = document.createElement("p");
+    idLine.className = "friend-id-line";
+    idLine.textContent = `Friend ID: ${entry.friendId ?? "Unavailable"}`;
+    const status = document.createElement("span");
+    status.className = `friend-status friend-status--${entry.status}`;
+    status.textContent = getPresenceLabel(entry.status);
+    identity.appendChild(title);
+    identity.appendChild(idLine);
+    identity.appendChild(status);
+    const inviteButton = document.createElement("button");
+    inviteButton.type = "button";
+    inviteButton.className = "chip friend-invite-button";
+    inviteButton.disabled = !socket.connected;
+    inviteButton.textContent = entry.status === "offline" ? "Send Gmail Invite" : "Invite";
+    inviteButton.addEventListener("click", () => {
+      socket.emit("friends:invite:send", {
+        toUserId: entry.userId,
+        toEmail: entry.email
+      });
+    });
+    item.appendChild(identity);
+    item.appendChild(inviteButton);
+    return item;
+  }
+  function renderFriendsPanel() {
+    const canUseFriends = Boolean(authenticatedUser && isFirebaseAuthEnabled());
+    const lookupValue = normalizeFriendLookupQuery(refs.friendIdInput.value);
+    const numericLookup = isNumericFriendLookup2(lookupValue);
+    refs.friendPlayerId.textContent = currentFriendId ?? (authenticatedUser ? "Generating..." : "Sign in to reveal your Friend ID");
+    refs.copyPlayerIdButton.disabled = !authenticatedUser || !currentFriendId;
+    refs.friendIdInput.disabled = !canUseFriends || addFriendBusy;
+    const hasValidLookup = lookupValue.length >= 2 && (!numericLookup || lookupValue.length === FRIEND_NUMERIC_ID_LENGTH);
+    refs.addFriendButton.disabled = !canUseFriends || addFriendBusy || !hasValidLookup;
+    refs.addFriendButton.textContent = addFriendBusy ? "Adding..." : "Add";
+    refs.friendsList.innerHTML = "";
+    if (!authenticatedUser) {
+      refs.friendsStatus.textContent = "Sign in to add friends by username or 5-digit Friend ID.";
+      return;
+    }
+    if (!isFirebaseAuthEnabled()) {
+      refs.friendsStatus.textContent = "Friends unavailable because Firebase is not configured.";
+      return;
+    }
+    if (friendsLoading) {
+      refs.friendsStatus.textContent = "Loading friends...";
+      return;
+    }
+    if (friends.length === 0) {
+      refs.friendsStatus.textContent = "No friends yet. Add one using username or Friend ID.";
+      return;
+    }
+    refs.friendsStatus.textContent = `Friends: ${friends.length}`;
+    for (const friend of friends) {
+      refs.friendsList.appendChild(renderFriendItem(friend));
+    }
+    if (friendsComposerOpen && refs.friendsComposer.style.maxHeight !== "none") {
+      refs.friendsComposer.style.maxHeight = `${refs.friendsComposer.scrollHeight}px`;
+    }
+  }
+  async function refreshFriendsPanel() {
+    if (!authenticatedUser || !isFirebaseAuthEnabled()) {
+      friends = [];
+      friendsLoading = false;
+      renderFriendsPanel();
+      syncFriendPresenceWatch();
+      return;
+    }
+    friendsLoading = true;
+    renderFriendsPanel();
+    try {
+      const loadedFriends = await getFriendListForUser(authenticatedUser.uid);
+      friends = loadedFriends.map((entry) => ({
+        ...entry,
+        status: "offline"
+      }));
+    } catch {
+      friends = [];
+      showToast("Could not load friends list.");
+    } finally {
+      friendsLoading = false;
+      renderFriendsPanel();
+      syncFriendPresenceWatch();
+    }
   }
   function setSidebarOpen(nextOpen) {
     sidebarOpen = nextOpen;
@@ -28392,6 +29193,7 @@ function createAccountSidebarController({
       refs.signInGoogleButton.disabled = true;
       refs.signInGoogleButton.textContent = "Loading...";
       refs.signOutButton.hidden = true;
+      renderFriendsPanel();
       return;
     }
     if (!isFirebaseAuthEnabled()) {
@@ -28406,6 +29208,7 @@ function createAccountSidebarController({
       refs.signInGoogleButton.disabled = true;
       refs.signInGoogleButton.textContent = "Firebase unavailable";
       refs.signOutButton.hidden = true;
+      renderFriendsPanel();
       return;
     }
     if (authenticatedUser) {
@@ -28425,6 +29228,7 @@ function createAccountSidebarController({
       refs.signInGoogleButton.hidden = true;
       refs.signOutButton.hidden = false;
       refs.signOutButton.disabled = authBusy;
+      renderFriendsPanel();
       return;
     }
     refs.quickIdentity.textContent = "Guest";
@@ -28437,6 +29241,7 @@ function createAccountSidebarController({
     refs.signInGoogleButton.disabled = authBusy;
     refs.signInGoogleButton.textContent = authBusy ? "Signing in..." : "Sign in / Sign up";
     refs.signOutButton.hidden = true;
+    renderFriendsPanel();
   }
   async function refreshStoredGamesCount() {
     if (!authenticatedUser || !isFirebaseAuthEnabled()) {
@@ -28493,6 +29298,8 @@ function createAccountSidebarController({
     refs.sidebarBackdrop.addEventListener("click", onSidebarBackdropClick);
     refs.sidebarProfileTab.addEventListener("click", onSidebarProfileTabClick);
     refs.sidebarHistoryTab.addEventListener("click", onSidebarHistoryTabClick);
+    refs.friendsToggleButton.addEventListener("click", onFriendsToggleClick);
+    refs.friendsComposer.addEventListener("transitionend", onFriendsComposerTransitionEnd);
     window.addEventListener("keydown", onEscapeCloseSidebar);
     window.addEventListener("resize", onViewportResize);
     refs.savedGamesList.addEventListener("touchstart", onSavedGamesTouchStart, { passive: true });
@@ -28500,8 +29307,13 @@ function createAccountSidebarController({
     refs.signInGoogleButton.addEventListener("click", onSignInGoogleClick);
     refs.usernameInput.addEventListener("input", onUsernameInput);
     refs.saveUsernameButton.addEventListener("click", onSaveUsernameClick);
+    refs.friendIdInput.addEventListener("input", onFriendIdInput);
+    refs.copyPlayerIdButton.addEventListener("click", onCopyPlayerIdClick);
+    refs.addFriendButton.addEventListener("click", onAddFriendClick);
     refs.guestModeButton.addEventListener("click", onGuestModeClick);
     refs.signOutButton.addEventListener("click", onSignOutClick);
+    socket.on("friends:presence", onFriendsPresence);
+    socket.on("friends:invite:sent", onFriendInviteSent);
     listenersWired = true;
   }
   function unWireEventListeners() {
@@ -28513,6 +29325,8 @@ function createAccountSidebarController({
     refs.sidebarBackdrop.removeEventListener("click", onSidebarBackdropClick);
     refs.sidebarProfileTab.removeEventListener("click", onSidebarProfileTabClick);
     refs.sidebarHistoryTab.removeEventListener("click", onSidebarHistoryTabClick);
+    refs.friendsToggleButton.removeEventListener("click", onFriendsToggleClick);
+    refs.friendsComposer.removeEventListener("transitionend", onFriendsComposerTransitionEnd);
     window.removeEventListener("keydown", onEscapeCloseSidebar);
     window.removeEventListener("resize", onViewportResize);
     refs.savedGamesList.removeEventListener("touchstart", onSavedGamesTouchStart);
@@ -28520,13 +29334,19 @@ function createAccountSidebarController({
     refs.signInGoogleButton.removeEventListener("click", onSignInGoogleClick);
     refs.usernameInput.removeEventListener("input", onUsernameInput);
     refs.saveUsernameButton.removeEventListener("click", onSaveUsernameClick);
+    refs.friendIdInput.removeEventListener("input", onFriendIdInput);
+    refs.copyPlayerIdButton.removeEventListener("click", onCopyPlayerIdClick);
+    refs.addFriendButton.removeEventListener("click", onAddFriendClick);
     refs.guestModeButton.removeEventListener("click", onGuestModeClick);
     refs.signOutButton.removeEventListener("click", onSignOutClick);
+    socket.off("friends:presence", onFriendsPresence);
+    socket.off("friends:invite:sent", onFriendInviteSent);
     listenersWired = false;
   }
   async function initialize() {
     setSidebarOpen(false);
     setActiveSidebarTab("profile");
+    setFriendsComposerOpen(false, false);
     renderSavedHistoryPanel();
     wireEventListeners();
     renderAuthPanel();
@@ -28543,14 +29363,27 @@ function createAccountSidebarController({
       savedGameHistory = [];
       historyLoading = false;
       deletingGameId = null;
+      friends = [];
+      friendsLoading = false;
+      addFriendBusy = false;
+      currentFriendId = null;
       editableUsername = getCurrentPlayerName();
       renderAuthPanel();
       renderSavedHistoryPanel();
       emitCurrentProfileName();
       onIdentityUpdated();
       if (user) {
+        void (async () => {
+          const profile = await syncUserProfile(user, getCurrentPlayerName());
+          currentFriendId = profile.friendId ?? null;
+          renderFriendsPanel();
+        })();
         void refreshStoredGamesCount();
         void refreshSavedHistoryPanel();
+        void refreshFriendsPanel();
+      } else {
+        void refreshCurrentFriendId();
+        void refreshFriendsPanel();
       }
     });
   }
@@ -28570,7 +29403,7 @@ function createAccountSidebarController({
     handleFinishedGamePersist
   };
 }
-var USERNAME_STORAGE_PREFIX, MOBILE_BREAKPOINT_PX, MOBILE_SCROLL_LOCK_CLASS;
+var USERNAME_STORAGE_PREFIX, MOBILE_BREAKPOINT_PX, MOBILE_SCROLL_LOCK_CLASS, FRIEND_NUMERIC_ID_LENGTH;
 var init_account_sidebar2 = __esm({
   "src/client/account-sidebar.ts"() {
     "use strict";
@@ -28579,6 +29412,7 @@ var init_account_sidebar2 = __esm({
     USERNAME_STORAGE_PREFIX = "chess-custom-username:";
     MOBILE_BREAKPOINT_PX = 640;
     MOBILE_SCROLL_LOCK_CLASS = "sidebar-open-mobile";
+    FRIEND_NUMERIC_ID_LENGTH = 5;
   }
 });
 
@@ -29531,6 +30365,7 @@ var require_main = __commonJS({
     var botPickerHideTimer = null;
     var botPickerLockedScrollY = null;
     var botResponseTimer = null;
+    var pendingFriendInvite = null;
     var SMOOTH_MOVE_DURATION_MS = 620;
     var EPIC_MOVE_DURATION_MS = {
       smash: 860,
@@ -29821,6 +30656,30 @@ var require_main = __commonJS({
           <button class="action cta-rainbow" id="signInGoogleButton" type="button">Sign in / Sign up</button>
           <button class="chip" id="signOutButton" type="button" hidden>Sign out</button>
         </div>
+
+        <section class="friends-section" aria-label="Friends section">
+          <h3 class="friends-title">Friends</h3>
+          <p class="muted friends-status" id="friendsStatus">Sign in to add friends by username or Friend ID.</p>
+          <div class="friends-player-id-wrap">
+            <span class="friends-player-id-label">Your Friend ID</span>
+            <p class="friends-player-id" id="friendPlayerId">Sign in to reveal your Friend ID</p>
+            <button class="chip" id="copyPlayerIdButton" type="button">Copy Friend ID</button>
+          </div>
+          <button class="friends-toggle" id="friendsToggleButton" type="button" aria-expanded="false">
+            <div class="friends-toggle-copy">
+              <p class="friends-toggle-title">Add and Invite Friends</p>
+              <p class="friends-toggle-description">Tap to manage friends by username or Friend ID.</p>
+            </div>
+            <span class="friends-toggle-indicator" aria-hidden="true">Open</span>
+          </button>
+          <div class="friends-composer" id="friendsComposer">
+            <div class="friends-add-row">
+              <input class="auth-name-input" id="friendIdInput" type="text" placeholder="Username or 5-digit Friend ID" autocomplete="off" />
+              <button class="chip" id="addFriendButton" type="button">Add</button>
+            </div>
+          </div>
+          <div class="friends-list" id="friendsList"></div>
+        </section>
       </section>
 
       <section class="sidebar-panel" id="sidebarHistoryPanel" hidden>
@@ -30064,6 +30923,14 @@ var require_main = __commonJS({
   </section>
 
   <div class="toast" id="toast"></div>
+
+  <section class="friend-invite-prompt" id="friendInvitePrompt" hidden aria-live="polite">
+    <p class="friend-invite-prompt-text" id="friendInvitePromptText">New invitation</p>
+    <div class="friend-invite-prompt-actions">
+      <button class="chip" id="friendInviteDeclineButton" type="button">Decline</button>
+      <button class="action cta-turquoise" id="friendInviteAcceptButton" type="button">Accept</button>
+    </div>
+  </section>
 `;
     var board = must("#board");
     var boardWrap = board.parentElement;
@@ -30085,6 +30952,14 @@ var require_main = __commonJS({
     var storedGamesMeta = must("#storedGamesMeta");
     var usernameInput = must("#usernameInput");
     var saveUsernameButton = must("#saveUsernameButton");
+    var friendsToggleButton = must("#friendsToggleButton");
+    var friendsComposer = must("#friendsComposer");
+    var friendPlayerId = must("#friendPlayerId");
+    var copyPlayerIdButton = must("#copyPlayerIdButton");
+    var friendIdInput = must("#friendIdInput");
+    var addFriendButton = must("#addFriendButton");
+    var friendsStatus = must("#friendsStatus");
+    var friendsList = must("#friendsList");
     var guestModeButton = must("#guestModeButton");
     var signInGoogleButton = must("#signInGoogleButton");
     var signOutButton = must("#signOutButton");
@@ -30116,6 +30991,10 @@ var require_main = __commonJS({
     var chatVoiceButton = must("#chatVoiceButton");
     var moveList = must("#moveList");
     var toast = must("#toast");
+    var friendInvitePrompt = must("#friendInvitePrompt");
+    var friendInvitePromptText = must("#friendInvitePromptText");
+    var friendInviteDeclineButton = must("#friendInviteDeclineButton");
+    var friendInviteAcceptButton = must("#friendInviteAcceptButton");
     var promotionDialog = must("#promotionDialog");
     var createRoomButton = must("#createRoomButton");
     var backToMenuButton = must("#backToMenuButton");
@@ -30247,6 +31126,14 @@ var require_main = __commonJS({
         storedGamesMeta,
         usernameInput,
         saveUsernameButton,
+        friendsToggleButton,
+        friendsComposer,
+        friendPlayerId,
+        copyPlayerIdButton,
+        friendIdInput,
+        addFriendButton,
+        friendsStatus,
+        friendsList,
         guestModeButton,
         signInGoogleButton,
         signOutButton
@@ -30932,6 +31819,48 @@ var require_main = __commonJS({
         promotionDialog.hidden = true;
       }
     });
+    function hideFriendInvitePrompt() {
+      pendingFriendInvite = null;
+      friendInvitePrompt.hidden = true;
+      friendInvitePrompt.classList.remove("is-visible");
+    }
+    function showFriendInvitePrompt(payload) {
+      pendingFriendInvite = payload;
+      friendInvitePromptText.textContent = `${payload.fromName} invited you to room ${payload.roomId}`;
+      friendInvitePrompt.hidden = false;
+      friendInvitePrompt.classList.remove("is-visible");
+      requestAnimationFrame(() => {
+        friendInvitePrompt.classList.add("is-visible");
+      });
+    }
+    friendInviteAcceptButton.addEventListener("click", () => {
+      if (!pendingFriendInvite) {
+        return;
+      }
+      const invite = pendingFriendInvite;
+      socket.emit("friends:invite:respond", {
+        inviteId: invite.inviteId,
+        fromUserId: invite.fromUserId,
+        accepted: true
+      });
+      hideFriendInvitePrompt();
+      socket.emit("room:join", { roomId: invite.roomId });
+      showToast(`Joining room ${invite.roomId}...`);
+    });
+    friendInviteDeclineButton.addEventListener("click", () => {
+      if (!pendingFriendInvite) {
+        hideFriendInvitePrompt();
+        return;
+      }
+      const invite = pendingFriendInvite;
+      socket.emit("friends:invite:respond", {
+        inviteId: invite.inviteId,
+        fromUserId: invite.fromUserId,
+        accepted: false
+      });
+      hideFriendInvitePrompt();
+      showToast("Invitation declined.");
+    });
     function onSocketConnect() {
       state.connected = true;
       emitCurrentProfileName();
@@ -30949,6 +31878,21 @@ var require_main = __commonJS({
     });
     socket.on("connection:status", () => {
       state.connected = true;
+    });
+    socket.on("friends:invite:incoming", (payload) => {
+      const inviteId = typeof payload?.inviteId === "string" ? payload.inviteId : "";
+      const fromUserId = typeof payload?.fromUserId === "string" ? payload.fromUserId : "";
+      const roomId = typeof payload?.roomId === "string" ? payload.roomId : "";
+      if (!inviteId || !fromUserId || !ROOM_ID_PATTERN.test(roomId)) {
+        return;
+      }
+      const fromName2 = typeof payload?.fromName === "string" && payload.fromName.trim() ? payload.fromName.trim().slice(0, 24) : "A friend";
+      showFriendInvitePrompt({ inviteId, fromUserId, fromName: fromName2, roomId });
+    });
+    socket.on("friends:invite:response", (payload) => {
+      const accepted = Boolean(payload?.accepted);
+      const friendName = typeof payload?.friendName === "string" && payload.friendName.trim() ? payload.friendName.trim().slice(0, 24) : "Friend";
+      showToast(accepted ? `${friendName} accepted your invitation.` : `${friendName} declined your invitation.`);
     });
     socket.on("session:joined", (payload) => {
       state.roomId = payload.roomId;
