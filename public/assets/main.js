@@ -30193,6 +30193,34 @@ var require_main = __commonJS({
       { level: 9, label: "Level 9 - 2400 Elo", elo: 2400, skillLevel: 17, moveTimeMs: 1100, fullStrength: false },
       { level: 10, label: "Level 10 - Full Strength", elo: null, skillLevel: 20, moveTimeMs: 2200, fullStrength: true }
     ];
+    var TIME_CONTROL_PRESETS = [
+      { id: "bullet1", label: "1+0 Bullet", initialMs: 6e4, incrementMs: 0 },
+      { id: "bullet2p1", label: "2+1 Bullet", initialMs: 12e4, incrementMs: 1e3 },
+      { id: "blitz3", label: "3-minute Blitz", initialMs: 18e4, incrementMs: 0 },
+      { id: "blitz3p2", label: "3+2 Blitz", initialMs: 18e4, incrementMs: 2e3 },
+      { id: "blitz5", label: "5-minute Blitz", initialMs: 3e5, incrementMs: 0 },
+      { id: "rapid10", label: "10-minute Rapid", initialMs: 6e5, incrementMs: 0 },
+      { id: "rapid15p10", label: "15+10 Rapid", initialMs: 9e5, incrementMs: 1e4 }
+    ];
+    var DEFAULT_BOT_TIME_CONTROL_ID = "blitz3";
+    function isTimeControlPresetId(value2) {
+      return typeof value2 === "string" && TIME_CONTROL_PRESETS.some((entry) => entry.id === value2);
+    }
+    function normalizeBotTimeControlId(value2) {
+      if (typeof value2 !== "string") {
+        return DEFAULT_BOT_TIME_CONTROL_ID;
+      }
+      const normalized = value2.trim();
+      const preset = TIME_CONTROL_PRESETS.find((entry) => entry.id === normalized);
+      return preset?.id ?? DEFAULT_BOT_TIME_CONTROL_ID;
+    }
+    function getBotTimeControlPreset(id) {
+      const preset = TIME_CONTROL_PRESETS.find((entry) => entry.id === id);
+      return preset ?? TIME_CONTROL_PRESETS[0];
+    }
+    function getLowTimeThresholdMs(initialMs) {
+      return Math.min(2e4, Math.max(5e3, Math.floor(initialMs * 0.18)));
+    }
     function clampBotLevel(level) {
       if (!Number.isFinite(level)) {
         return 1;
@@ -30225,45 +30253,82 @@ var require_main = __commonJS({
       const legalReplies = chess.moves({ verbose: true }).length;
       const moveCount = state.snapshot?.moveCount ?? 0;
       const isOpening = moveCount <= 14;
+      const isMiddlegameOrLater = moveCount >= 16;
       const playerCaptured = Boolean(playerMove?.captured);
       const playerGaveCheck = Boolean(playerMove?.san.includes("+"));
       const forcedReply = legalReplies <= 2;
+      const botClockMs = state.snapshot?.clock.blackMs ?? null;
+      const lowTimeThresholdMs = state.snapshot?.clock.lowTimeThresholdMs ?? 1e4;
+      const inTimeTrouble = botClockMs !== null && botClockMs <= lowTimeThresholdMs;
+      const veryLowTime = botClockMs !== null && botClockMs <= Math.max(2500, Math.floor(lowTimeThresholdMs * 0.55));
+      const isFastTimeControl = (state.snapshot?.timeControl.initialMs ?? 0) <= 18e4;
       const roll = Math.random();
       let profile = "standard";
-      if (forcedReply || playerCaptured && roll < 0.45 || isOpening && roll < 0.22) {
+      let premoveChance = 0.05;
+      if (forcedReply) premoveChance += 0.08;
+      if (playerCaptured) premoveChance += 0.04;
+      if (isOpening) premoveChance += 0.02;
+      if (inTimeTrouble) premoveChance += 0.08;
+      if (veryLowTime) premoveChance += 0.12;
+      premoveChance = Math.min(0.4, premoveChance);
+      let quickChance = 0.27;
+      if (isOpening) quickChance += 0.03;
+      if (playerCaptured) quickChance += 0.03;
+      if (playerGaveCheck) quickChance += 0.02;
+      if (forcedReply) quickChance += 0.06;
+      if (inTimeTrouble) quickChance += 0.12;
+      if (veryLowTime) quickChance += 0.16;
+      quickChance = Math.min(0.65, quickChance);
+      let deepChance = 0.2;
+      if (isMiddlegameOrLater) deepChance += 0.06;
+      if (playerCaptured) deepChance += 0.02;
+      if (playerGaveCheck) deepChance -= 0.05;
+      if (forcedReply) deepChance -= 0.08;
+      if (inTimeTrouble) deepChance -= 0.12;
+      if (veryLowTime) deepChance -= 0.1;
+      deepChance = Math.max(0.04, Math.min(0.34, deepChance));
+      if (roll < premoveChance) {
         profile = "premove";
-      } else if (roll < 0.62) {
+      } else if (roll < premoveChance + quickChance) {
         profile = "quick";
-      } else if (!playerGaveCheck && !forcedReply && roll > 0.9) {
+      } else if (roll > 1 - deepChance) {
         profile = "deep";
       }
       const levelMultiplier = 0.82 + preset.level * 0.045;
       const baseThink = preset.moveTimeMs;
+      const premoveMinDelay = veryLowTime ? 14 : isFastTimeControl ? 30 : 55;
+      const premoveMaxDelay = veryLowTime ? 90 : isFastTimeControl ? 140 : 220;
+      const quickMinDelay = veryLowTime ? 75 : isFastTimeControl ? 145 : 240;
+      const quickMaxDelay = veryLowTime ? 260 : isFastTimeControl ? 470 : 820;
+      const standardMinDelay = veryLowTime ? 150 : isFastTimeControl ? 300 : 520;
+      const standardMaxDelay = veryLowTime ? 520 : isFastTimeControl ? 980 : 1700;
+      const deepMinDelay = veryLowTime ? 280 : isFastTimeControl ? 680 : 980;
+      const deepMaxDelay = veryLowTime ? 880 : isFastTimeControl ? 1850 : 3e3;
       if (profile === "premove") {
         return {
           profile,
-          preDelayMs: randomInt(16, 88),
-          engineMoveTimeMs: clampBotMoveTimeMs(baseThink * (0.2 + Math.random() * 0.25))
+          preDelayMs: randomInt(premoveMinDelay, premoveMaxDelay),
+          engineMoveTimeMs: clampBotMoveTimeMs(baseThink * (0.24 + Math.random() * 0.28))
         };
       }
       if (profile === "quick") {
         return {
           profile,
-          preDelayMs: randomInt(85, 250),
-          engineMoveTimeMs: clampBotMoveTimeMs(baseThink * (0.48 + Math.random() * 0.36))
+          preDelayMs: randomInt(quickMinDelay, quickMaxDelay),
+          engineMoveTimeMs: clampBotMoveTimeMs(baseThink * levelMultiplier * (0.48 + Math.random() * 0.44))
         };
       }
       if (profile === "deep") {
         return {
           profile,
-          preDelayMs: randomInt(340, 920),
-          engineMoveTimeMs: clampBotMoveTimeMs(baseThink * levelMultiplier * (1.08 + Math.random() * 0.52))
+          preDelayMs: randomInt(deepMinDelay, deepMaxDelay),
+          engineMoveTimeMs: clampBotMoveTimeMs(baseThink * levelMultiplier * (1.12 + Math.random() * 0.72))
         };
       }
       return {
         profile,
-        preDelayMs: randomInt(170, 460),
-        engineMoveTimeMs: clampBotMoveTimeMs(baseThink * levelMultiplier * (0.8 + Math.random() * 0.44))
+        preDelayMs: randomInt(standardMinDelay, standardMaxDelay),
+        engineMoveTimeMs: clampBotMoveTimeMs(baseThink * levelMultiplier * (0.76 + Math.random() * 0.62))
       };
     }
     function scoreMoveForHumanizedBot(move) {
@@ -30337,6 +30402,7 @@ var require_main = __commonJS({
     var savedRoomId = localStorage.getItem("chess_roomId");
     var autoJoinCode = initialRoomCode ?? (savedRoomId || null);
     var savedBotLevel = clampBotLevel(Number(localStorage.getItem("chess-bot-level")) || 1);
+    var savedBotTimeControlId = normalizeBotTimeControlId(localStorage.getItem("chess-bot-time-control"));
     var state = {
       connected: false,
       roomId: null,
@@ -30358,6 +30424,7 @@ var require_main = __commonJS({
       bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on",
       gameMode: "multiplayer",
       botLevel: savedBotLevel,
+      botTimeControlId: savedBotTimeControlId,
       botPickerOpen: false,
       viewCursor: null,
       trailFxEnabled: localStorage.getItem("chess-trail-fx") === "on",
@@ -30759,11 +30826,12 @@ var require_main = __commonJS({
           <div id="pregameSelection" hidden>
             <h2>Choose Your Color</h2>
             <div class="mode-row">
-              <strong>Game mode</strong>
-              <div class="mode-options" id="modeOptions">
-                <button class="mode-opt-btn" id="modeBlitz3" type="button">3-minute Blitz</button>
-                <button class="mode-opt-btn" id="modeRapid10" type="button">10-minute Rapid</button>
-                <button class="mode-opt-btn" id="modeBlitz3p2" type="button">3+2 Blitz</button>
+              <label class="mode-label" for="multiplayerTimeControlSelect">Game mode</label>
+              <div class="mode-select-wrap">
+                <select id="multiplayerTimeControlSelect" class="mode-select" aria-label="Choose multiplayer time control">
+                  ${TIME_CONTROL_PRESETS.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join("")}
+                </select>
+                <span class="mode-select-chevron" aria-hidden="true">\u25BE</span>
               </div>
               <p class="muted" id="modeHint">Room creator selects the timer. Color choice and ready are still required.</p>
             </div>
@@ -30887,11 +30955,18 @@ var require_main = __commonJS({
     <div class="bot-difficulty-backdrop" id="botDifficultyBackdrop" aria-hidden="true"></div>
     <div class="bot-difficulty-picker" id="botDifficultyPicker" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="botDifficultyTitle">
       <h2 class="bot-difficulty-title" id="botDifficultyTitle">Choose Bot Strength</h2>
-      <p class="bot-difficulty-subtitle">Pick a level and start your match with a single tap.</p>
-      <label class="bot-difficulty-label" for="botDifficultySelect">Bot level</label>
-      <div class="bot-difficulty-select-wrap">
+      <p class="bot-difficulty-subtitle">Pick bot strength and a clock mode before starting.</p>
+      <label class="bot-difficulty-label bot-difficulty-level-label" for="botDifficultySelect">Bot level</label>
+      <div class="bot-difficulty-select-wrap bot-difficulty-level-select-wrap">
         <select id="botDifficultySelect" class="bot-difficulty-select" aria-label="Choose bot difficulty">
           ${BOT_DIFFICULTY_PRESETS.map((preset) => `<option value="${preset.level}">${preset.label}</option>`).join("")}
+        </select>
+        <span class="bot-difficulty-select-chevron" aria-hidden="true">\u25BE</span>
+      </div>
+      <label class="bot-difficulty-label bot-difficulty-time-label" for="botTimeControlSelect">Time control</label>
+      <div class="bot-difficulty-select-wrap bot-difficulty-time-select-wrap">
+        <select id="botTimeControlSelect" class="bot-difficulty-select" aria-label="Choose bot time control">
+          ${TIME_CONTROL_PRESETS.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join("")}
         </select>
         <span class="bot-difficulty-select-chevron" aria-hidden="true">\u25BE</span>
       </div>
@@ -31047,6 +31122,7 @@ var require_main = __commonJS({
     var botDifficultyPicker = must("#botDifficultyPicker");
     var botDifficultyBackdrop = must("#botDifficultyBackdrop");
     var botDifficultySelect = must("#botDifficultySelect");
+    var botTimeControlSelect = must("#botTimeControlSelect");
     var startBotGameButton = must("#startBotGameButton");
     var confirmDialog = must("#confirmDialog");
     var confirmYesBtn = must("#confirmYesBtn");
@@ -31056,9 +31132,7 @@ var require_main = __commonJS({
     var gameNav = must("#gameNav");
     var pregameWaiting = must("#pregameWaiting");
     var pregameSelection = must("#pregameSelection");
-    var modeBlitz3 = must("#modeBlitz3");
-    var modeRapid10 = must("#modeRapid10");
-    var modeBlitz3p2 = must("#modeBlitz3p2");
+    var multiplayerTimeControlSelect = must("#multiplayerTimeControlSelect");
     var modeHint = must("#modeHint");
     var myPickWhite = must("#myPickWhite");
     var myPickBlack = must("#myPickBlack");
@@ -31070,9 +31144,13 @@ var require_main = __commonJS({
     var pregameConflictWarning = must("#pregameConflictWarning");
     var whiteClock = must("#whiteClock");
     var blackClock = must("#blackClock");
-    modeBlitz3.addEventListener("click", () => socket.emit("pregame:mode", { mode: "blitz3" }));
-    modeRapid10.addEventListener("click", () => socket.emit("pregame:mode", { mode: "rapid10" }));
-    modeBlitz3p2.addEventListener("click", () => socket.emit("pregame:mode", { mode: "blitz3p2" }));
+    multiplayerTimeControlSelect.addEventListener("change", () => {
+      const nextMode = multiplayerTimeControlSelect.value;
+      if (!isTimeControlPresetId(nextMode)) {
+        return;
+      }
+      socket.emit("pregame:mode", { mode: nextMode });
+    });
     myPickWhite.addEventListener("click", () => socket.emit("pregame:select", { color: "w" }));
     myPickBlack.addEventListener("click", () => socket.emit("pregame:select", { color: "b" }));
     pregameReadyBtn.addEventListener("click", () => socket.emit("pregame:ready"));
@@ -31237,10 +31315,10 @@ var require_main = __commonJS({
       voiceChatController.dispose();
     });
     function refreshBotDifficultyUi() {
-      const preset = getBotDifficultyPreset(state.botLevel);
-      playBotButton.textContent = state.botPickerOpen ? "Choose Bot Strength" : `Play vs Bot (${botDifficultySummary(preset)})`;
+      playBotButton.textContent = "Play vs Bot";
       playBotButton.classList.toggle("is-active", state.botPickerOpen);
-      botDifficultySelect.value = String(preset.level);
+      botDifficultySelect.value = String(getBotDifficultyPreset(state.botLevel).level);
+      botTimeControlSelect.value = state.botTimeControlId;
       if (state.botPickerOpen) {
         botDifficultyOverlay.hidden = false;
         if (botPickerHideTimer !== null) {
@@ -31320,6 +31398,16 @@ var require_main = __commonJS({
       refreshBotDifficultyUi();
       if (state.gameMode === "bot") {
         showToast(`Bot strength updated: ${botDifficultySummary(getBotDifficultyPreset(nextLevel))}.`);
+      }
+    });
+    botTimeControlSelect.addEventListener("change", () => {
+      const nextTimeControlId = normalizeBotTimeControlId(botTimeControlSelect.value);
+      state.botTimeControlId = nextTimeControlId;
+      localStorage.setItem("chess-bot-time-control", nextTimeControlId);
+      refreshBotDifficultyUi();
+      if (state.gameMode === "bot") {
+        const preset = getBotTimeControlPreset(nextTimeControlId);
+        showToast(`Bot timer set to ${preset.label} (applies to next bot game).`);
       }
     });
     refreshBotDifficultyUi();
@@ -31770,6 +31858,72 @@ var require_main = __commonJS({
         botResponseTimer = null;
       }
     }
+    function finishBotGameOnTime(timeoutColor) {
+      if (state.gameMode !== "bot" || !state.snapshot || state.snapshot.winner !== null || state.snapshot.checkmate || state.snapshot.draw) {
+        return;
+      }
+      const winner = timeoutColor === "w" ? "b" : "w";
+      const loserLabel = timeoutColor === "w" ? "White" : "Black";
+      const winnerLabel = winner === "w" ? "White" : "Black";
+      state.snapshot.winner = winner;
+      state.snapshot.status = `${loserLabel} flagged on time. ${winnerLabel} wins.`;
+      state.snapshot.clock.running = false;
+      state.snapshot.clock.active = null;
+      state.snapshot.clock.serverNowMs = Date.now();
+      clearScheduledBotResponse();
+      showToast(state.snapshot.status);
+    }
+    function syncBotClockToNow(now = Date.now()) {
+      if (state.gameMode !== "bot" || !state.snapshot) {
+        return;
+      }
+      const { clock } = state.snapshot;
+      if (!clock.running || !clock.active || state.snapshot.winner !== null || state.snapshot.checkmate || state.snapshot.draw) {
+        clock.serverNowMs = now;
+        return;
+      }
+      const elapsed = Math.max(0, now - clock.serverNowMs);
+      if (elapsed <= 0) {
+        return;
+      }
+      if (clock.active === "w") {
+        clock.whiteMs = Math.max(0, clock.whiteMs - elapsed);
+        if (clock.whiteMs === 0) {
+          finishBotGameOnTime("w");
+          return;
+        }
+      } else {
+        clock.blackMs = Math.max(0, clock.blackMs - elapsed);
+        if (clock.blackMs === 0) {
+          finishBotGameOnTime("b");
+          return;
+        }
+      }
+      clock.serverNowMs = now;
+    }
+    function finalizeBotClockAfterMove(mover) {
+      if (state.gameMode !== "bot" || !state.snapshot) {
+        return;
+      }
+      const now = Date.now();
+      const incrementMs = state.snapshot.timeControl.incrementMs;
+      if (incrementMs > 0) {
+        if (mover === "w") {
+          state.snapshot.clock.whiteMs += incrementMs;
+        } else {
+          state.snapshot.clock.blackMs += incrementMs;
+        }
+      }
+      if (state.snapshot.winner !== null || state.snapshot.checkmate || state.snapshot.draw) {
+        state.snapshot.clock.running = false;
+        state.snapshot.clock.active = null;
+        state.snapshot.clock.serverNowMs = now;
+        return;
+      }
+      state.snapshot.clock.running = true;
+      state.snapshot.clock.active = state.snapshot.turn;
+      state.snapshot.clock.serverNowMs = now;
+    }
     function scheduleBotResponse(playerMove) {
       clearScheduledBotResponse();
       if (!state.snapshot || state.gameMode !== "bot" || state.snapshot.checkmate || state.snapshot.draw) {
@@ -31783,7 +31937,8 @@ var require_main = __commonJS({
       }, timing.preDelayMs);
     }
     async function triggerBotResponse(engineMoveTimeMs) {
-      if (state.gameMode !== "bot" || !state.snapshot || state.snapshot.turn !== "b") {
+      syncBotClockToNow();
+      if (state.gameMode !== "bot" || !state.snapshot || state.snapshot.turn !== "b" || state.snapshot.winner !== null || state.snapshot.checkmate || state.snapshot.draw) {
         return;
       }
       if (!botAnalyzer) {
@@ -31791,7 +31946,8 @@ var require_main = __commonJS({
       }
       const botPreset = getBotDifficultyPreset(state.botLevel);
       const bestMoveUci = await botAnalyzer.getBotMove(chess.fen(), botPreset, engineMoveTimeMs);
-      if (state.gameMode !== "bot" || !state.snapshot || state.snapshot.turn !== "b") {
+      syncBotClockToNow();
+      if (state.gameMode !== "bot" || !state.snapshot || state.snapshot.turn !== "b" || state.snapshot.winner !== null || state.snapshot.checkmate || state.snapshot.draw) {
         return;
       }
       const selectedMoveUci = chooseBotMoveByDifficulty(bestMoveUci, botPreset);
@@ -31812,6 +31968,7 @@ var require_main = __commonJS({
       }
       if (bMove && state.snapshot) {
         updateManualSnapshot(bMove);
+        finalizeBotClockAfterMove("b");
         playSoundForSnapshot(state.snapshot);
         if (state.premoves.length > 0) {
           checkAndExecutePremove();
@@ -31834,6 +31991,14 @@ var require_main = __commonJS({
       const promotion = button.dataset.promotion;
       const { from, to } = state.pendingPromotion;
       if (state.gameMode === "bot") {
+        syncBotClockToNow();
+        if (state.snapshot?.winner !== null || state.snapshot?.checkmate || state.snapshot?.draw) {
+          state.pendingPromotion = null;
+          promotionDialog.hidden = true;
+          clearSelection();
+          render();
+          return;
+        }
         let moveResult = null;
         try {
           moveResult = chess.move({ from, to, promotion });
@@ -31844,6 +32009,7 @@ var require_main = __commonJS({
         promotionDialog.hidden = true;
         if (moveResult) {
           updateManualSnapshot(moveResult);
+          finalizeBotClockAfterMove("w");
           suppressAnimationForMove = { from, to };
           render();
           playSoundForSnapshot(state.snapshot);
@@ -32280,12 +32446,8 @@ var require_main = __commonJS({
           const opReady = isWhiteSeat ? snapshot.pregame.p2Ready : snapshot.pregame.p1Ready;
           const opponentConnected = isWhiteSeat ? snapshot.players.blackConnected : snapshot.players.whiteConnected;
           const selectedMode = snapshot.timeControl.id;
-          modeBlitz3.classList.toggle("selected", selectedMode === "blitz3");
-          modeRapid10.classList.toggle("selected", selectedMode === "rapid10");
-          modeBlitz3p2.classList.toggle("selected", selectedMode === "blitz3p2");
-          modeBlitz3.disabled = !isCreator;
-          modeRapid10.disabled = !isCreator;
-          modeBlitz3p2.disabled = !isCreator;
+          multiplayerTimeControlSelect.value = selectedMode;
+          multiplayerTimeControlSelect.disabled = !isCreator;
           if (isCreator) {
             modeHint.textContent = `You are the room creator. Current mode: ${snapshot.timeControl.label}.`;
           } else {
@@ -32315,9 +32477,7 @@ var require_main = __commonJS({
           pregameReadyBtn.hidden = true;
         }
       } else {
-        modeBlitz3.disabled = true;
-        modeRapid10.disabled = true;
-        modeBlitz3p2.disabled = true;
+        multiplayerTimeControlSelect.disabled = true;
         pregameReadyBtn.hidden = state.role === "spectator";
       }
       matchStatus.textContent = snapshot.status;
@@ -33524,9 +33684,15 @@ var require_main = __commonJS({
         const temp = new Chess(chess.fen());
         playerMoveResult = temp.move({ from, to, promotion: "q" });
       } else {
+        syncBotClockToNow();
+        if (!state.snapshot || state.snapshot.winner !== null || state.snapshot.checkmate || state.snapshot.draw) {
+          render();
+          return;
+        }
         playerMoveResult = chess.move({ from, to, promotion: "q" });
         if (!playerMoveResult) return;
         updateManualSnapshot(playerMoveResult);
+        finalizeBotClockAfterMove("w");
         render(true);
         playSoundForSnapshot(state.snapshot);
         if (!state.snapshot.checkmate && !state.snapshot.draw) {
@@ -33549,6 +33715,8 @@ var require_main = __commonJS({
       clearScheduledBotResponse();
       accountSidebarController.resetFinishedGameTracking();
       const botPreset = getBotDifficultyPreset(state.botLevel);
+      const botTimeControl = getBotTimeControlPreset(state.botTimeControlId);
+      const now = Date.now();
       state.gameMode = "bot";
       state.role = "w";
       state.roomId = "BOT";
@@ -33582,22 +33750,18 @@ var require_main = __commonJS({
         undo: { pending: false, requester: null },
         isStarted: true,
         pregame: { p1Choice: "w", p2Choice: "b", p1Ready: true, p2Ready: true },
-        timeControl: {
-          id: "blitz3",
-          label: "3-minute Blitz",
-          initialMs: 18e4,
-          incrementMs: 0
-        },
+        timeControl: { ...botTimeControl },
         clock: {
-          whiteMs: 18e4,
-          blackMs: 18e4,
-          active: null,
-          running: false,
-          lowTimeThresholdMs: 2e4,
-          serverNowMs: Date.now()
+          whiteMs: botTimeControl.initialMs,
+          blackMs: botTimeControl.initialMs,
+          active: "w",
+          running: true,
+          lowTimeThresholdMs: getLowTimeThresholdMs(botTimeControl.initialMs),
+          serverNowMs: now
         }
       };
-      showToast(`Bot mode active. You are White. ${botDifficultySummary(botPreset)}.`);
+      lastRoomStateReceivedAtMs = now;
+      showToast(`Bot mode active. ${botTimeControl.label}. You are White. ${botDifficultySummary(botPreset)}.`);
       render();
     }
     function updateManualSnapshot(move) {
@@ -33891,7 +34055,8 @@ var require_main = __commonJS({
       if (!snapshot.clock.running || snapshot.clock.active !== color) {
         return baseMs;
       }
-      const elapsed = Math.max(0, Date.now() - lastRoomStateReceivedAtMs);
+      const referenceNowMs = state.gameMode === "bot" ? snapshot.clock.serverNowMs : lastRoomStateReceivedAtMs;
+      const elapsed = Math.max(0, Date.now() - referenceNowMs);
       return Math.max(0, baseMs - elapsed);
     }
     function getFocusTimerText() {
@@ -34030,8 +34195,11 @@ var require_main = __commonJS({
     render();
     window.setInterval(updateFocusHud, 1e3);
     window.setInterval(() => {
-      if (state.gameMode !== "multiplayer" || !state.snapshot || !state.snapshot.clock.running) {
+      if (!state.snapshot || !state.snapshot.clock.running) {
         return;
+      }
+      if (state.gameMode === "bot") {
+        syncBotClockToNow();
       }
       renderSession();
     }, 250);

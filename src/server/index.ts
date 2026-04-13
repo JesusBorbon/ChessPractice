@@ -11,7 +11,7 @@ import { ChatRole, ChatStoredMessage, createLiveChatStore } from "./live-chat-st
 
 type PlayerRole = "w" | "b";
 type RoomRole = PlayerRole | "spectator";
-type TimeControlPresetId = "blitz3" | "rapid10" | "blitz3p2";
+type TimeControlPresetId = "bullet1" | "bullet2p1" | "blitz3" | "blitz3p2" | "blitz5" | "rapid10" | "rapid15p10";
 
 type TimeControlPreset = {
   id: TimeControlPresetId;
@@ -201,9 +201,13 @@ type FirebaseClientConfig = {
 };
 
 const TIME_CONTROL_PRESETS: Record<TimeControlPresetId, TimeControlPreset> = {
+  bullet1: { id: "bullet1", label: "1+0 Bullet", initialMs: 60_000, incrementMs: 0 },
+  bullet2p1: { id: "bullet2p1", label: "2+1 Bullet", initialMs: 120_000, incrementMs: 1_000 },
   blitz3: { id: "blitz3", label: "3-minute Blitz", initialMs: 3 * 60_000, incrementMs: 0 },
-  rapid10: { id: "rapid10", label: "10-minute Rapid", initialMs: 10 * 60_000, incrementMs: 0 },
   blitz3p2: { id: "blitz3p2", label: "3+2 Blitz", initialMs: 3 * 60_000, incrementMs: 2_000 },
+  blitz5: { id: "blitz5", label: "5-minute Blitz", initialMs: 5 * 60_000, incrementMs: 0 },
+  rapid10: { id: "rapid10", label: "10-minute Rapid", initialMs: 10 * 60_000, incrementMs: 0 },
+  rapid15p10: { id: "rapid15p10", label: "15+10 Rapid", initialMs: 15 * 60_000, incrementMs: 10_000 },
 };
 
 const projectRoot = process.cwd();

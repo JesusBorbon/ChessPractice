@@ -217,12 +217,15 @@ button {
   position: relative;
   width: min(94vw, 520px);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
-    "title title"
-    "subtitle subtitle"
-    "label label"
-    "select start";
+    "title"
+    "subtitle"
+    "level-label"
+    "level-select"
+    "time-label"
+    "time-select"
+    "start";
   align-items: center;
   column-gap: 12px;
   row-gap: 14px;
@@ -326,7 +329,6 @@ button {
 }
 
 .bot-difficulty-label {
-  grid-area: label;
   font-size: 0.74rem;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -341,8 +343,15 @@ button {
   transition: opacity 220ms ease, transform 260ms ease;
 }
 
+.bot-difficulty-level-label {
+  grid-area: level-label;
+}
+
+.bot-difficulty-time-label {
+  grid-area: time-label;
+}
+
 .bot-difficulty-select-wrap {
-  grid-area: select;
   position: relative;
   border-radius: 16px;
   overflow: hidden;
@@ -356,6 +365,14 @@ button {
     box-shadow 170ms ease,
     opacity 220ms ease,
     transform 280ms ease;
+}
+
+.bot-difficulty-level-select-wrap {
+  grid-area: level-select;
+}
+
+.bot-difficulty-time-select-wrap {
+  grid-area: time-select;
 }
 
 .bot-difficulty-select {
@@ -393,6 +410,7 @@ button {
   grid-area: start;
   min-height: 50px;
   height: 50px;
+  width: 100%;
   min-width: 136px;
   border-radius: 16px;
   padding: 0 18px;
@@ -442,8 +460,16 @@ button {
   transition-delay: 180ms;
 }
 
+.bot-difficulty-picker.is-open .bot-difficulty-time-label {
+  transition-delay: 210ms;
+}
+
+.bot-difficulty-picker.is-open .bot-difficulty-time-select-wrap {
+  transition-delay: 230ms;
+}
+
 .bot-difficulty-picker.is-open .bot-difficulty-start {
-  transition-delay: 240ms;
+  transition-delay: 260ms;
 }
 
 #playBotButton.is-active {
@@ -1549,8 +1575,10 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
     grid-template-areas:
       "title"
       "subtitle"
-      "label"
-      "select"
+      "level-label"
+      "level-select"
+      "time-label"
+      "time-select"
       "start";
     row-gap: 12px;
     border-radius: 24px;
@@ -2523,29 +2551,49 @@ body.focus-mode.focus-analyze .nav-row button:hover {
 /* ── Pregame Color Selection ── */
 #pregameSelection { text-align: center; }
 .mode-row { margin: 0 auto 18px; max-width: 560px; }
-.mode-options { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 10px; }
-.mode-opt-btn {
-  padding: 10px 16px;
-  border-radius: 12px;
-  border: 1px solid rgba(25, 35, 32, 0.14);
-  background: var(--accent);
-  backdrop-filter: blur(6px);
-  color: var(--ink);
+.mode-label {
+  display: inline-block;
+  margin-bottom: 10px;
   font-weight: 700;
-  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+  letter-spacing: 0.04em;
 }
-.mode-opt-btn:hover:enabled {
-  transform: translateY(-1px);
-  border-color: rgba(25, 35, 32, 0.28);
+.mode-select-wrap {
+  position: relative;
+  width: min(100%, 340px);
+  margin: 0 auto;
 }
-.mode-opt-btn.selected {
-  background: var(--accent-soft);
+.mode-select {
+  width: 100%;
+  appearance: none;
+  border-radius: 14px;
+  border: 1px solid rgba(25, 35, 32, 0.18);
+  background: color-mix(in srgb, var(--paper) 86%, white 14%);
+  color: var(--ink);
+  padding: 11px 44px 11px 14px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+.mode-select:hover:enabled {
+  border-color: rgba(25, 35, 32, 0.36);
+}
+.mode-select:focus-visible {
+  outline: none;
   border-color: var(--accent);
-  color: var(--accent-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 26%, transparent);
 }
-.mode-opt-btn:disabled {
-  opacity: 0.55;
+.mode-select:disabled {
+  opacity: 0.58;
   cursor: not-allowed;
+}
+.mode-select-chevron {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 0.85rem;
+  pointer-events: none;
 }
 .selection-grid { display: flex; gap: 40px; justify-content: center; margin-top: 20px; flex-wrap: wrap; }
 .selection-col { display: flex; flex-direction: column; gap: 10px; align-items: center; }
