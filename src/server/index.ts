@@ -43,6 +43,15 @@ type ClientState = {
   usernameChangeCount?: number;
 };
 
+type OnlineMultiplayerAccountRole = "guest" | "registered";
+
+type OnlineMultiplayerPermissions = {
+  accountRole: OnlineMultiplayerAccountRole;
+  canPlayOnlineMatches: boolean;
+  canUseInviteSystem: boolean;
+  canUseAccountFeatures: boolean;
+};
+
 type FriendPresenceStatus = "online" | "in-room" | "offline";
 
 type FriendPresenceInfo = {
@@ -634,6 +643,25 @@ function getSocketUserId(socketId: string): string | null {
 function getSocketFriendId(socketId: string): string | null {
   const state = io.sockets.sockets.get(socketId)?.data as ClientState | undefined;
   return normalizeFriendId(state?.friendId);
+}
+
+function getOnlineMultiplayerPermissions(socketId: string): OnlineMultiplayerPermissions {
+  const isRegistered = Boolean(getSocketUserId(socketId));
+  if (!isRegistered) {
+    return {
+      accountRole: "guest",
+      canPlayOnlineMatches: false,
+      canUseInviteSystem: false,
+      canUseAccountFeatures: false,
+    };
+  }
+
+  return {
+    accountRole: "registered",
+    canPlayOnlineMatches: true,
+    canUseInviteSystem: true,
+    canUseAccountFeatures: true,
+  };
 }
 
 function isSocketConnected(socketId: string | undefined): socketId is string {
@@ -1303,7 +1331,9 @@ function emitChatMessages(socketId: string, room: GameRoom): void {
 }
 
 function buildRoomShareUrl(socketId: string, room: GameRoom): string {
-  return buildShareUrl(socketId, room.id, room.access.inviteLinkToken);
+  const role = getLiveRoomRole(room, socketId);
+  const inviteToken = role === "w" || role === "b" ? room.access.inviteLinkToken : null;
+  return buildShareUrl(socketId, room.id, inviteToken);
 }
 
 function reconcileRoomPregameState(room: GameRoom): void {
@@ -1799,6 +1829,14 @@ io.on("connection", (socket) => {
 
     const room = getRoomForSocket(socket.id);
     if (room) {
+      const isSeatedPlayer = room.white === socket.id || room.black === socket.id;
+      if (!normalizedUserId && isSeatedPlayer) {
+        removeFromRoom(socket.id, true);
+        socket.emit("session:left");
+        socket.emit("room:error", { message: "Guest mode is spectator-only online. Sign in to play online PvP." });
+        return;
+      }
+
       if (room.white === socket.id) {
         room.whiteUserId = normalizedUserId ?? null;
       }
@@ -1898,6 +1936,12 @@ io.on("connection", (socket) => {
   });
 
   socket.on("friends:invite:send", async (payload?: { toUserId?: string; toEmail?: string | null }) => {
+    const onlinePermissions = getOnlineMultiplayerPermissions(socket.id);
+    if (!onlinePermissions.canUseInviteSystem) {
+      socket.emit("room:error", { message: "Guest accounts cannot send online invites." });
+      return;
+    }
+
     const senderUserId = getSocketUserId(socket.id);
     if (!senderUserId) {
       socket.emit("room:error", { message: "Sign in to invite friends." });
@@ -2010,6 +2054,12 @@ io.on("connection", (socket) => {
   });
 
   socket.on("friends:invite:respond", (payload?: { inviteId?: string; fromUserId?: string; accepted?: boolean }) => {
+    const onlinePermissions = getOnlineMultiplayerPermissions(socket.id);
+    if (!onlinePermissions.canUseInviteSystem) {
+      socket.emit("room:error", { message: "Guest accounts cannot respond to online invites." });
+      return;
+    }
+
     if (typeof payload?.accepted !== "boolean") {
       socket.emit("room:error", { message: "Invalid invitation response." });
       return;
@@ -2023,6 +2073,11 @@ io.on("connection", (socket) => {
     }
 
     const receiverUserId = getSocketUserId(socket.id);
+    if (!receiverUserId) {
+      socket.emit("room:error", { message: "Sign in to respond to invitations." });
+      return;
+    }
+
     const pendingInvite = pendingFriendInvites.get(inviteId);
     roomTrace("invite-respond", {
       inviteId,
@@ -2031,27 +2086,30 @@ io.on("connection", (socket) => {
       accepted: payload.accepted,
       hasPendingInvite: Boolean(pendingInvite),
     });
-    if (pendingInvite && receiverUserId) {
-      if (pendingInvite.toUserId !== receiverUserId || pendingInvite.fromUserId !== fromUserId) {
-        socket.emit("room:error", { message: "Invitation does not match this account." });
-        return;
-      }
-
-      if (payload.accepted) {
-        const room = rooms.get(pendingInvite.roomId);
-        if (room) {
-          grantDirectRoomInvite(room.access, receiverUserId, true);
-          roomTrace("invite-respond-grant", {
-            roomId: room.id,
-            inviteId,
-            receiverUserId,
-            fromUserId,
-          });
-        }
-      }
-
-      pendingFriendInvites.delete(inviteId);
+    if (!pendingInvite) {
+      socket.emit("room:error", { message: "Invitation has expired." });
+      return;
     }
+
+    if (pendingInvite.toUserId !== receiverUserId || pendingInvite.fromUserId !== fromUserId) {
+      socket.emit("room:error", { message: "Invitation does not match this account." });
+      return;
+    }
+
+    if (payload.accepted) {
+      const room = rooms.get(pendingInvite.roomId);
+      if (room) {
+        grantDirectRoomInvite(room.access, receiverUserId, true);
+        roomTrace("invite-respond-grant", {
+          roomId: room.id,
+          inviteId,
+          receiverUserId,
+          fromUserId,
+        });
+      }
+    }
+
+    pendingFriendInvites.delete(inviteId);
 
     const senderSockets = getConnectedUserSocketIds(fromUserId);
     if (senderSockets.length === 0) {
@@ -2184,6 +2242,12 @@ io.on("connection", (socket) => {
   });
 
   socket.on("room:create", () => {
+    const onlinePermissions = getOnlineMultiplayerPermissions(socket.id);
+    if (!onlinePermissions.canPlayOnlineMatches) {
+      socket.emit("room:error", { message: "Guest mode is spectator-only online. Sign in to create a PvP room." });
+      return;
+    }
+
     // Creating a new room is an intentional leave from any previous room.
     // Detach immediately to avoid stale seat/owner references across rooms.
     removeFromRoom(socket.id, true);
@@ -2240,15 +2304,15 @@ io.on("connection", (socket) => {
     emitChatMessages(socket.id, room);
   });
 
-  socket.on("room:join", (payload?: { roomId?: string; inviteToken?: string }) => {
+  socket.on("room:join", (payload?: { roomId?: string; inviteToken?: string; spectateOnly?: boolean }) => {
     const roomId = payload?.roomId?.trim();
     if (!roomId) {
-      socket.emit("room:error", { message: "Enter a room code first." });
+      socket.emit("room:error", { message: "Enter a room ID first." });
       return;
     }
 
     if (!ROOM_ID_PATTERN.test(roomId)) {
-      socket.emit("room:error", { message: "Room code must be exactly 4 digits." });
+      socket.emit("room:error", { message: "Room ID must be exactly 4 digits." });
       return;
     }
 
@@ -2261,6 +2325,9 @@ io.on("connection", (socket) => {
     const joinInviteToken = typeof payload?.inviteToken === "string"
       ? payload.inviteToken.trim() || null
       : null;
+    const requestedSpectateOnly = payload?.spectateOnly === true;
+    const onlinePermissions = getOnlineMultiplayerPermissions(socket.id);
+    const enforceSpectatorOnly = requestedSpectateOnly || !onlinePermissions.canPlayOnlineMatches;
     const requesterUserId = getSocketUserId(socket.id);
     const isSocketMember = room.white === socket.id || room.black === socket.id || room.spectators.has(socket.id);
     const isSeatedIdentityMember = Boolean(
@@ -2271,28 +2338,33 @@ io.on("connection", (socket) => {
       requesterUserId && room.access.invitedUserIds.has(requesterUserId),
     );
     const isAlreadyMember = Boolean(isSocketMember || isSeatedIdentityMember);
-    const joinAuthorization = evaluateRoomJoinAuthorization({
-      access: room.access,
-      userId: requesterUserId,
-      inviteToken: joinInviteToken,
-      isAlreadyMember,
-    });
+    const joinAuthorization = enforceSpectatorOnly
+      ? null
+      : evaluateRoomJoinAuthorization({
+          access: room.access,
+          userId: requesterUserId,
+          inviteToken: joinInviteToken,
+          isAlreadyMember,
+        });
     roomTrace("join-auth", {
       roomId,
       socketId: socket.id,
       requesterUserId,
+      requestedSpectateOnly,
+      enforceSpectatorOnly,
+      accountRole: onlinePermissions.accountRole,
       isSocketMember,
       isSeatedIdentityMember,
       isInvitedPlayerCandidate,
-      authAllowed: joinAuthorization.allowed,
-      authSource: joinAuthorization.source,
+      authAllowed: joinAuthorization?.allowed ?? true,
+      authSource: joinAuthorization?.source ?? null,
     });
-    if (!joinAuthorization.allowed || !joinAuthorization.source) {
-      socket.emit("room:error", { message: joinAuthorization.reason ?? "You are not allowed to join this room." });
+    if (!enforceSpectatorOnly && (!joinAuthorization?.allowed || !joinAuthorization.source)) {
+      socket.emit("room:error", { message: joinAuthorization?.reason ?? "You are not allowed to join this room." });
       return;
     }
 
-    if (requesterUserId && joinAuthorization.source === "invite-link") {
+    if (requesterUserId && joinAuthorization?.source === "invite-link") {
       grantDirectRoomInvite(room.access, requesterUserId, true);
     }
 
@@ -2305,59 +2377,66 @@ io.on("connection", (socket) => {
     
     // Intentar reconectarse si está dentro del grace period y con la misma identidad.
     let role: RoomRole = "spectator";
-    const ownerWasWhite = room.ownerId && room.white === room.ownerId;
-    const ownerWasBlack = room.ownerId && room.black === room.ownerId;
-
-    const now = Date.now();
-    const canReclaimWhite = Boolean(
-      room.white
-      && room.whiteDisconnectedAt
-      && now - room.whiteDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS
-      && room.whiteUserId
-      && requesterUserId
-      && requesterUserId === room.whiteUserId,
-    );
-    const canReclaimBlack = Boolean(
-      room.black
-      && room.blackDisconnectedAt
-      && now - room.blackDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS
-      && room.blackUserId
-      && requesterUserId
-      && requesterUserId === room.blackUserId,
-    );
-    if (canReclaimWhite) {
-      role = "w";
-      room.white = socket.id;
-      if (ownerWasWhite) {
-        room.ownerId = socket.id;
-        delete room.ownerDisconnectedAt;
-      }
-      room.spectators.delete(socket.id);
-      delete room.whiteDisconnectedAt;
-    } else if (canReclaimBlack) {
-      role = "b";
-      room.black = socket.id;
-      if (ownerWasBlack) {
-        room.ownerId = socket.id;
-        delete room.ownerDisconnectedAt;
-      }
-      room.spectators.delete(socket.id);
-      delete room.blackDisconnectedAt;
+    if (enforceSpectatorOnly) {
+      room.spectators.add(socket.id);
     } else {
-      const allowSeatClaim = Boolean(
-        joinAuthorization.source === "invite-link"
-        || joinAuthorization.source === "direct-invite"
-        || isSeatedIdentityMember
-        || isInvitedPlayerCandidate
-        || room.ownerId === socket.id,
+      const ownerWasWhite = room.ownerId && room.white === room.ownerId;
+      const ownerWasBlack = room.ownerId && room.black === room.ownerId;
+
+      const now = Date.now();
+      const canReclaimWhite = Boolean(
+        room.white
+        && room.whiteDisconnectedAt
+        && now - room.whiteDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS
+        && room.whiteUserId
+        && requesterUserId
+        && requesterUserId === room.whiteUserId,
       );
-      role = assignRole(room, socket.id, allowSeatClaim);
+      const canReclaimBlack = Boolean(
+        room.black
+        && room.blackDisconnectedAt
+        && now - room.blackDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS
+        && room.blackUserId
+        && requesterUserId
+        && requesterUserId === room.blackUserId,
+      );
+      if (canReclaimWhite) {
+        role = "w";
+        room.white = socket.id;
+        if (ownerWasWhite) {
+          room.ownerId = socket.id;
+          delete room.ownerDisconnectedAt;
+        }
+        room.spectators.delete(socket.id);
+        delete room.whiteDisconnectedAt;
+      } else if (canReclaimBlack) {
+        role = "b";
+        room.black = socket.id;
+        if (ownerWasBlack) {
+          room.ownerId = socket.id;
+          delete room.ownerDisconnectedAt;
+        }
+        room.spectators.delete(socket.id);
+        delete room.blackDisconnectedAt;
+      } else {
+        const allowSeatClaim = Boolean(
+          joinAuthorization?.source === "invite-link"
+          || joinAuthorization?.source === "direct-invite"
+          || isSeatedIdentityMember
+          || isInvitedPlayerCandidate
+          || room.ownerId === socket.id,
+        );
+        role = assignRole(room, socket.id, allowSeatClaim);
+      }
     }
 
     roomTrace("join-role", {
       roomId,
       socketId: socket.id,
       requesterUserId,
+      requestedSpectateOnly,
+      enforceSpectatorOnly,
+      accountRole: onlinePermissions.accountRole,
       role,
       allowSeatByInvite: isInvitedPlayerCandidate,
       white: room.white,
@@ -2366,11 +2445,19 @@ io.on("connection", (socket) => {
       blackUserId: room.blackUserId,
     });
 
-    if (role === "spectator") {
+    if (role === "spectator" && !enforceSpectatorOnly) {
+      const authSource = joinAuthorization?.source;
+      if (!authSource) {
+        room.spectators.delete(socket.id);
+        socket.leave(roomId);
+        socket.emit("room:error", { message: "Spectator access could not be validated." });
+        return;
+      }
+
       const canSpectate = canJoinAsSpectator({
         access: room.access,
         userId: requesterUserId,
-        authSource: joinAuthorization.source,
+        authSource,
       });
       if (!canSpectate) {
         room.spectators.delete(socket.id);
@@ -2397,8 +2484,11 @@ io.on("connection", (socket) => {
       roomId,
       socketId: socket.id,
       requesterUserId,
+      requestedSpectateOnly,
+      enforceSpectatorOnly,
+      accountRole: onlinePermissions.accountRole,
       role,
-      authSource: joinAuthorization.source,
+      authSource: joinAuthorization?.source ?? (enforceSpectatorOnly ? "spectate-only" : null),
       white: room.white,
       black: room.black,
       whiteUserId: room.whiteUserId,

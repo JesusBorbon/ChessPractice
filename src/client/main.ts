@@ -1021,14 +1021,14 @@ app.innerHTML = `
 
       <aside class="panel side-panel">
         <section class="control-card" id="inviteJoinCard">
-          <h2 class="card-title">Invite or join <span class="title-decor">!!</span></h2>
+          <h2 class="card-title">Invite or spectate <span class="title-decor">!!</span></h2>
           <div class="control-row">
             <button class="chip" id="copyLinkButton" type="button" hidden>Copy invite link</button>
             <button class="chip" id="leaveRoomButton" type="button" hidden>Leave room</button>
           </div>
           <div class="join-grid">
-            <input class="join-input" id="roomInput" maxlength="4" inputmode="numeric" pattern="\\d{4}" placeholder="4-digit code" />
-            <button class="action" id="joinRoomButton" type="button">Join</button>
+            <input class="join-input" id="roomInput" maxlength="4" inputmode="numeric" pattern="\\d{4}" placeholder="4-digit room ID" />
+            <button class="action" id="spectateRoomButton" type="button">Spectate</button>
           </div>
           <div class="link-row">
             <button class="chip" id="roomInviteButton" type="button" hidden>Invite</button>
@@ -1332,7 +1332,7 @@ window.addEventListener("legalmoveschange" , (event: Event) => {
 });
 
 
-const joinRoomButton = must<HTMLButtonElement>("#joinRoomButton");
+const spectateRoomButton = must<HTMLButtonElement>("#spectateRoomButton");
 const joinGrid = must<HTMLElement>(".join-grid");
 const copyLinkButton = must<HTMLButtonElement>("#copyLinkButton");
 const leaveRoomButton = must<HTMLButtonElement>("#leaveRoomButton");
@@ -1675,30 +1675,48 @@ window.addEventListener("resize", () => {
 
 createRoomButton.addEventListener("click", () => {
   closeBotDifficultyPicker();
+  if (!accountSidebarController.canPlayOnlineMultiplayer()) {
+    showToast("Guest mode is spectator-only online. Sign in to create a PvP room.");
+    return;
+  }
   state.gameMode = "multiplayer"; // forcing the mode to multiplayer to avoid "ghost bot" bugs when switching from bot games
   socket.emit("room:create");
   scrollToInviteJoinCardOnMobile();
 });
 
-joinRoomButton.addEventListener("click", () => {
+function requestSpectateFromRoomInput(): void {
   closeBotDifficultyPicker();
   const code = roomInput.value.trim();
   if (!code) {
-    showToast("Enter a room code first.");
+    showToast("Enter a room ID first.");
     return;
   }
 
   if (!ROOM_ID_PATTERN.test(code)) {
-    showToast("Room code must be exactly 4 digits.");
+    showToast("Room ID must be exactly 4 digits.");
     return;
   }
 
-  socket.emit("room:join", { roomId: code });
+  socket.emit("room:join", { roomId: code, spectateOnly: true });
+  showToast(`Joining room ${code} as spectator...`);
+}
+
+spectateRoomButton.addEventListener("click", () => {
+  requestSpectateFromRoomInput();
+});
+
+roomInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") {
+    return;
+  }
+
+  event.preventDefault();
+  requestSpectateFromRoomInput();
 });
 
 copyLinkButton.addEventListener("click", async () => {
-  if (!state.shareUrl) {
-    showToast("Create or join a room before copying a link.");
+  if (!state.shareUrl || !state.role || state.role === "spectator") {
+    showToast("Create or join as a player before copying an invite link.");
     return;
   }
 
@@ -1712,7 +1730,7 @@ copyLinkButton.addEventListener("click", async () => {
 
 roomInviteButton.addEventListener("click", () => {
   if (!accountSidebarController.canSendRoomInvites()) {
-    showToast("Create or join a room before inviting friends.");
+    showToast("Only registered seated players can invite friends.");
     return;
   }
 
@@ -2462,8 +2480,9 @@ friendInviteAcceptButton.addEventListener("click", () => {
     accepted: true,
   });
   hideFriendInvitePrompt();
-  socket.emit("room:join", { roomId: invite.roomId, inviteToken: invite.inviteToken });
-  showToast(`Joining room ${invite.roomId}...`);
+  const spectateOnly = !accountSidebarController.canPlayOnlineMultiplayer();
+  socket.emit("room:join", { roomId: invite.roomId, inviteToken: invite.inviteToken, spectateOnly });
+  showToast(spectateOnly ? `Joining room ${invite.roomId} as spectator...` : `Joining room ${invite.roomId}...`);
 });
 
 friendInviteDeclineButton.addEventListener("click", () => {
@@ -2585,9 +2604,11 @@ function onSocketConnect() {
 
   if (state.autoJoinCode) {
     if (ROOM_ID_PATTERN.test(state.autoJoinCode)) {
+      const hasInviteToken = Boolean(state.autoJoinInviteToken);
       socket.emit("room:join", {
         roomId: state.autoJoinCode,
         inviteToken: state.autoJoinInviteToken,
+        spectateOnly: !hasInviteToken,
       });
     }
     state.autoJoinCode = null;
@@ -2952,7 +2973,9 @@ function renderSession(): void {
   // 1. Core State Calculations
   const isMultiplayer = state.gameMode === "multiplayer";
   const bothConnected = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
+  const canPlayOnlineMultiplayer = accountSidebarController.canPlayOnlineMultiplayer();
   const canSendRoomInvites = hasRoom && isMultiplayer && accountSidebarController.canSendRoomInvites();
+  const hasPlayerInviteLink = Boolean(state.shareUrl && state.role && state.role !== "spectator");
   
   const isGameActive = Boolean(
     (isMultiplayer && bothConnected && snapshot?.isStarted) || 
@@ -2992,14 +3015,15 @@ function renderSession(): void {
   if (heroCopy) heroCopy.hidden = isGameActive;
 
   inviteJoinCard.hidden = isGameActive;
-  createRoomButton.hidden = isGameActive;
+  createRoomButton.hidden = isGameActive || !canPlayOnlineMultiplayer;
+  createRoomButton.disabled = !canPlayOnlineMultiplayer;
   playBotButton.hidden = isGameActive;
   botDifficultyOverlay.hidden = isGameActive;
 
   leaveRoomButton.hidden = !hasRoom;
-  // Join controls are main-menu only to avoid room-switch conflicts while already in a room.
+  // Spectate controls are main-menu only to avoid room-switch conflicts while already in a room.
   joinGrid.hidden = hasRoom;
-  copyLinkButton.hidden = !state.shareUrl || isGameActive;
+  copyLinkButton.hidden = !hasPlayerInviteLink || isGameActive;
   flipBoardButton.hidden = !isGameActive;
   focusModeButton.hidden = !isGameActive;
   gameNav.hidden = !isGameActive;
@@ -3026,7 +3050,9 @@ function renderSession(): void {
     pregamePlaceholder.hidden = false;
     pregameWaiting.hidden = false;
     pregameSelection.hidden = true;
-    matchStatus.textContent = "Create a room to start.";
+    matchStatus.textContent = canPlayOnlineMultiplayer
+      ? "Create a room to start."
+      : "Spectate a room or sign in to play online.";
     whiteSeat.textContent = "Waiting for player";
     blackSeat.textContent = "Waiting for player";
     turnMeta.textContent = "White";

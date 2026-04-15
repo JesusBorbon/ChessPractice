@@ -29197,6 +29197,7 @@ function createAccountSidebarController({
   const pendingFriendRemovals = /* @__PURE__ */ new Set();
   let currentFriendId = null;
   let currentRoomId = null;
+  let currentRoomRole = null;
   let savingGameSignature = null;
   let savedGameSignature = null;
   let failedGameSignature = null;
@@ -29470,14 +29471,17 @@ function createAccountSidebarController({
       return;
     }
     const roomId = normalizeRoomId2(payload.roomId);
+    const roomRole = normalizeRoomRole(payload.role);
     currentRoomId = roomId;
+    currentRoomRole = roomRole;
     renderFriendsPanel();
   };
   const onSessionLeft = () => {
-    if (currentRoomId === null) {
+    if (currentRoomId === null && currentRoomRole === null) {
       return;
     }
     currentRoomId = null;
+    currentRoomRole = null;
     renderFriendsPanel();
   };
   const onFriendInviteSent = (payload) => {
@@ -29559,6 +29563,12 @@ function createAccountSidebarController({
     }
     const normalized = value2.trim();
     return ROOM_ID_PATTERN2.test(normalized) ? normalized : null;
+  }
+  function normalizeRoomRole(value2) {
+    if (value2 === "w" || value2 === "b" || value2 === "spectator") {
+      return value2;
+    }
+    return null;
   }
   function setFriendsComposerOpen(nextOpen, shouldAnimate = true) {
     friendsComposerOpen = nextOpen;
@@ -29683,6 +29693,12 @@ function createAccountSidebarController({
   function getAuthenticatedUserId() {
     return authenticatedUser?.uid ?? null;
   }
+  function isRegisteredOnlineUser() {
+    return Boolean(authenticatedUser && isFirebaseAuthEnabled());
+  }
+  function canPlayOnlineMultiplayer() {
+    return isRegisteredOnlineUser();
+  }
   function getFriendshipStatusWithUser(userId) {
     const currentUserId = getAuthenticatedUserId();
     const targetUserId = normalizeSocketUserId(userId);
@@ -29726,7 +29742,9 @@ function createAccountSidebarController({
     }));
   }
   function canSendRoomInvites() {
-    return Boolean(currentRoomId);
+    return Boolean(
+      currentRoomId && (currentRoomRole === "w" || currentRoomRole === "b") && canPlayOnlineMultiplayer()
+    );
   }
   function sendInviteToFriend(userId) {
     const normalizedUserId = normalizeSocketUserId(userId);
@@ -29743,8 +29761,8 @@ function createAccountSidebarController({
       showToast("Reconnect before sending invites.");
       return false;
     }
-    if (!currentRoomId) {
-      showToast("Create or join a room before sending invites.");
+    if (!canSendRoomInvites()) {
+      showToast("Only registered seated players can send room invites.");
       return false;
     }
     socket.emit("friends:invite:send", {
@@ -29784,7 +29802,7 @@ function createAccountSidebarController({
     item.appendChild(identity);
     const actions = document.createElement("div");
     actions.className = "friend-actions";
-    if (currentRoomId) {
+    if (canSendRoomInvites()) {
       const inviteButton = document.createElement("button");
       inviteButton.type = "button";
       inviteButton.className = "chip friend-invite-button";
@@ -29805,7 +29823,7 @@ function createAccountSidebarController({
         if (!entry.presenceRoomId) {
           return;
         }
-        socket.emit("room:join", { roomId: entry.presenceRoomId });
+        socket.emit("room:join", { roomId: entry.presenceRoomId, spectateOnly: true });
         setSidebarOpen(false);
         showToast(`Joining ${entry.displayName}'s game as spectator...`);
       });
@@ -30313,7 +30331,7 @@ function createAccountSidebarController({
       const reason = getFirebaseAuthDisabledReason() ?? "Missing Firebase configuration.";
       refs.quickIdentity.textContent = "Guest";
       refs.authStatus.textContent = `Playing as Guest. Firebase unavailable: ${reason}`;
-      refs.storedGamesMeta.textContent = "Analysis is available, but cloud PGN history is disabled.";
+      refs.storedGamesMeta.textContent = "Analysis and spectating are available, but online PvP and cloud history are disabled.";
       refs.usernameInput.hidden = true;
       refs.saveUsernameButton.hidden = true;
       refs.guestModeButton.disabled = false;
@@ -30348,7 +30366,7 @@ function createAccountSidebarController({
     }
     refs.quickIdentity.textContent = "Guest";
     refs.authStatus.textContent = "Playing as Guest.";
-    refs.storedGamesMeta.textContent = "Guests can play and analyze, but games are not saved.";
+    refs.storedGamesMeta.textContent = "Guests can play bots, analyze boards, and spectate online rooms, but cannot play online PvP.";
     refs.usernameInput.hidden = true;
     refs.saveUsernameButton.hidden = true;
     refs.guestModeButton.disabled = authBusy;
@@ -30537,6 +30555,8 @@ function createAccountSidebarController({
     emitFriendshipState,
     getCurrentPlayerName,
     getAuthenticatedUserId,
+    isRegisteredOnlineUser,
+    canPlayOnlineMultiplayer,
     getFriendshipStatusWithUser,
     openSidebarToFriends,
     getInviteCandidates,
@@ -32459,14 +32479,14 @@ var require_main = __commonJS({
 
       <aside class="panel side-panel">
         <section class="control-card" id="inviteJoinCard">
-          <h2 class="card-title">Invite or join <span class="title-decor">!!</span></h2>
+          <h2 class="card-title">Invite or spectate <span class="title-decor">!!</span></h2>
           <div class="control-row">
             <button class="chip" id="copyLinkButton" type="button" hidden>Copy invite link</button>
             <button class="chip" id="leaveRoomButton" type="button" hidden>Leave room</button>
           </div>
           <div class="join-grid">
-            <input class="join-input" id="roomInput" maxlength="4" inputmode="numeric" pattern="\\d{4}" placeholder="4-digit code" />
-            <button class="action" id="joinRoomButton" type="button">Join</button>
+            <input class="join-input" id="roomInput" maxlength="4" inputmode="numeric" pattern="\\d{4}" placeholder="4-digit room ID" />
+            <button class="action" id="spectateRoomButton" type="button">Spectate</button>
           </div>
           <div class="link-row">
             <button class="chip" id="roomInviteButton" type="button" hidden>Invite</button>
@@ -32755,7 +32775,7 @@ var require_main = __commonJS({
       state.legalMovesEnabled = customEvent.detail.enabled;
       requestBoardRefresh(true);
     });
-    var joinRoomButton = must("#joinRoomButton");
+    var spectateRoomButton = must("#spectateRoomButton");
     var joinGrid = must(".join-grid");
     var copyLinkButton = must("#copyLinkButton");
     var leaveRoomButton = must("#leaveRoomButton");
@@ -33051,26 +33071,41 @@ var require_main = __commonJS({
     });
     createRoomButton.addEventListener("click", () => {
       closeBotDifficultyPicker();
+      if (!accountSidebarController.canPlayOnlineMultiplayer()) {
+        showToast("Guest mode is spectator-only online. Sign in to create a PvP room.");
+        return;
+      }
       state.gameMode = "multiplayer";
       socket.emit("room:create");
       scrollToInviteJoinCardOnMobile();
     });
-    joinRoomButton.addEventListener("click", () => {
+    function requestSpectateFromRoomInput() {
       closeBotDifficultyPicker();
       const code = roomInput.value.trim();
       if (!code) {
-        showToast("Enter a room code first.");
+        showToast("Enter a room ID first.");
         return;
       }
       if (!ROOM_ID_PATTERN3.test(code)) {
-        showToast("Room code must be exactly 4 digits.");
+        showToast("Room ID must be exactly 4 digits.");
         return;
       }
-      socket.emit("room:join", { roomId: code });
+      socket.emit("room:join", { roomId: code, spectateOnly: true });
+      showToast(`Joining room ${code} as spectator...`);
+    }
+    spectateRoomButton.addEventListener("click", () => {
+      requestSpectateFromRoomInput();
+    });
+    roomInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      requestSpectateFromRoomInput();
     });
     copyLinkButton.addEventListener("click", async () => {
-      if (!state.shareUrl) {
-        showToast("Create or join a room before copying a link.");
+      if (!state.shareUrl || !state.role || state.role === "spectator") {
+        showToast("Create or join as a player before copying an invite link.");
         return;
       }
       try {
@@ -33082,7 +33117,7 @@ var require_main = __commonJS({
     });
     roomInviteButton.addEventListener("click", () => {
       if (!accountSidebarController.canSendRoomInvites()) {
-        showToast("Create or join a room before inviting friends.");
+        showToast("Only registered seated players can invite friends.");
         return;
       }
       accountSidebarController.openSidebarToFriends();
@@ -33666,8 +33701,9 @@ var require_main = __commonJS({
         accepted: true
       });
       hideFriendInvitePrompt();
-      socket.emit("room:join", { roomId: invite.roomId, inviteToken: invite.inviteToken });
-      showToast(`Joining room ${invite.roomId}...`);
+      const spectateOnly = !accountSidebarController.canPlayOnlineMultiplayer();
+      socket.emit("room:join", { roomId: invite.roomId, inviteToken: invite.inviteToken, spectateOnly });
+      showToast(spectateOnly ? `Joining room ${invite.roomId} as spectator...` : `Joining room ${invite.roomId}...`);
     });
     friendInviteDeclineButton.addEventListener("click", () => {
       if (!pendingFriendInvite) {
@@ -33767,9 +33803,11 @@ var require_main = __commonJS({
       accountSidebarController.emitFriendshipState();
       if (state.autoJoinCode) {
         if (ROOM_ID_PATTERN3.test(state.autoJoinCode)) {
+          const hasInviteToken = Boolean(state.autoJoinInviteToken);
           socket.emit("room:join", {
             roomId: state.autoJoinCode,
-            inviteToken: state.autoJoinInviteToken
+            inviteToken: state.autoJoinInviteToken,
+            spectateOnly: !hasInviteToken
           });
         }
         state.autoJoinCode = null;
@@ -34025,7 +34063,9 @@ var require_main = __commonJS({
       refreshBotDifficultyUi();
       const isMultiplayer = state.gameMode === "multiplayer";
       const bothConnected = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
+      const canPlayOnlineMultiplayer = accountSidebarController.canPlayOnlineMultiplayer();
       const canSendRoomInvites = hasRoom && isMultiplayer && accountSidebarController.canSendRoomInvites();
+      const hasPlayerInviteLink = Boolean(state.shareUrl && state.role && state.role !== "spectator");
       const isGameActive = Boolean(
         isMultiplayer && bothConnected && snapshot?.isStarted || state.gameMode === "bot" && snapshot !== null
       );
@@ -34054,12 +34094,13 @@ var require_main = __commonJS({
       const heroCopy = document.querySelector(".hero-copy");
       if (heroCopy) heroCopy.hidden = isGameActive;
       inviteJoinCard.hidden = isGameActive;
-      createRoomButton.hidden = isGameActive;
+      createRoomButton.hidden = isGameActive || !canPlayOnlineMultiplayer;
+      createRoomButton.disabled = !canPlayOnlineMultiplayer;
       playBotButton.hidden = isGameActive;
       botDifficultyOverlay.hidden = isGameActive;
       leaveRoomButton.hidden = !hasRoom;
       joinGrid.hidden = hasRoom;
-      copyLinkButton.hidden = !state.shareUrl || isGameActive;
+      copyLinkButton.hidden = !hasPlayerInviteLink || isGameActive;
       flipBoardButton.hidden = !isGameActive;
       focusModeButton.hidden = !isGameActive;
       gameNav.hidden = !isGameActive;
@@ -34081,7 +34122,7 @@ var require_main = __commonJS({
         pregamePlaceholder.hidden = false;
         pregameWaiting.hidden = false;
         pregameSelection.hidden = true;
-        matchStatus.textContent = "Create a room to start.";
+        matchStatus.textContent = canPlayOnlineMultiplayer ? "Create a room to start." : "Spectate a room or sign in to play online.";
         whiteSeat.textContent = "Waiting for player";
         blackSeat.textContent = "Waiting for player";
         turnMeta.textContent = "White";

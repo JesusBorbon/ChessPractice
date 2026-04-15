@@ -105,6 +105,8 @@ export type AccountSidebarController = {
   emitFriendshipState: () => void;
   getCurrentPlayerName: () => string;
   getAuthenticatedUserId: () => string | null;
+  isRegisteredOnlineUser: () => boolean;
+  canPlayOnlineMultiplayer: () => boolean;
   getFriendshipStatusWithUser: (userId: string | null | undefined) => MultiplayerFriendshipStatus;
   openSidebarToFriends: () => void;
   getInviteCandidates: () => FriendInviteCandidate[];
@@ -155,6 +157,7 @@ export function createAccountSidebarController({
   const pendingFriendRemovals = new Set<string>();
   let currentFriendId: string | null = null;
   let currentRoomId: string | null = null;
+  let currentRoomRole: "w" | "b" | "spectator" | null = null;
 
   let savingGameSignature: string | null = null;
   let savedGameSignature: string | null = null;
@@ -482,16 +485,19 @@ export function createAccountSidebarController({
     }
 
     const roomId = normalizeRoomId((payload as { roomId?: unknown }).roomId);
+    const roomRole = normalizeRoomRole((payload as { role?: unknown }).role);
     currentRoomId = roomId;
+    currentRoomRole = roomRole;
     renderFriendsPanel();
   };
 
   const onSessionLeft = (): void => {
-    if (currentRoomId === null) {
+    if (currentRoomId === null && currentRoomRole === null) {
       return;
     }
 
     currentRoomId = null;
+    currentRoomRole = null;
     renderFriendsPanel();
   };
 
@@ -593,6 +599,14 @@ export function createAccountSidebarController({
 
     const normalized = value.trim();
     return ROOM_ID_PATTERN.test(normalized) ? normalized : null;
+  }
+
+  function normalizeRoomRole(value: unknown): "w" | "b" | "spectator" | null {
+    if (value === "w" || value === "b" || value === "spectator") {
+      return value;
+    }
+
+    return null;
   }
 
   function setFriendsComposerOpen(nextOpen: boolean, shouldAnimate = true): void {
@@ -750,6 +764,14 @@ export function createAccountSidebarController({
     return authenticatedUser?.uid ?? null;
   }
 
+  function isRegisteredOnlineUser(): boolean {
+    return Boolean(authenticatedUser && isFirebaseAuthEnabled());
+  }
+
+  function canPlayOnlineMultiplayer(): boolean {
+    return isRegisteredOnlineUser();
+  }
+
   function getFriendshipStatusWithUser(userId: string | null | undefined): MultiplayerFriendshipStatus {
     const currentUserId = getAuthenticatedUserId();
     const targetUserId = normalizeSocketUserId(userId);
@@ -805,7 +827,11 @@ export function createAccountSidebarController({
   }
 
   function canSendRoomInvites(): boolean {
-    return Boolean(currentRoomId);
+    return Boolean(
+      currentRoomId
+      && (currentRoomRole === "w" || currentRoomRole === "b")
+      && canPlayOnlineMultiplayer(),
+    );
   }
 
   function sendInviteToFriend(userId: string): boolean {
@@ -826,8 +852,8 @@ export function createAccountSidebarController({
       return false;
     }
 
-    if (!currentRoomId) {
-      showToast("Create or join a room before sending invites.");
+    if (!canSendRoomInvites()) {
+      showToast("Only registered seated players can send room invites.");
       return false;
     }
 
@@ -880,7 +906,7 @@ export function createAccountSidebarController({
     const actions = document.createElement("div");
     actions.className = "friend-actions";
 
-    if (currentRoomId) {
+    if (canSendRoomInvites()) {
       const inviteButton = document.createElement("button");
       inviteButton.type = "button";
       inviteButton.className = "chip friend-invite-button";
@@ -903,7 +929,7 @@ export function createAccountSidebarController({
           return;
         }
 
-        socket.emit("room:join", { roomId: entry.presenceRoomId });
+        socket.emit("room:join", { roomId: entry.presenceRoomId, spectateOnly: true });
         setSidebarOpen(false);
         showToast(`Joining ${entry.displayName}'s game as spectator...`);
       });
@@ -1537,7 +1563,7 @@ export function createAccountSidebarController({
       const reason = getFirebaseAuthDisabledReason() ?? "Missing Firebase configuration.";
       refs.quickIdentity.textContent = "Guest";
       refs.authStatus.textContent = `Playing as Guest. Firebase unavailable: ${reason}`;
-      refs.storedGamesMeta.textContent = "Analysis is available, but cloud PGN history is disabled.";
+      refs.storedGamesMeta.textContent = "Analysis and spectating are available, but online PvP and cloud history are disabled.";
       refs.usernameInput.hidden = true;
       refs.saveUsernameButton.hidden = true;
       refs.guestModeButton.disabled = false;
@@ -1580,7 +1606,7 @@ export function createAccountSidebarController({
 
     refs.quickIdentity.textContent = "Guest";
     refs.authStatus.textContent = "Playing as Guest.";
-    refs.storedGamesMeta.textContent = "Guests can play and analyze, but games are not saved.";
+    refs.storedGamesMeta.textContent = "Guests can play bots, analyze boards, and spectate online rooms, but cannot play online PvP.";
     refs.usernameInput.hidden = true;
     refs.saveUsernameButton.hidden = true;
     refs.guestModeButton.disabled = authBusy;
@@ -1799,6 +1825,8 @@ export function createAccountSidebarController({
     emitFriendshipState,
     getCurrentPlayerName,
     getAuthenticatedUserId,
+    isRegisteredOnlineUser,
+    canPlayOnlineMultiplayer,
     getFriendshipStatusWithUser,
     openSidebarToFriends,
     getInviteCandidates,
