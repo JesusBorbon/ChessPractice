@@ -1,7 +1,7 @@
 import { Chess, Move, PieceSymbol, Square } from "chess.js";
 import { io } from "socket.io-client";
 
-import { BoardOrientation, SquareName, buildSquareList, isLightSquare } from "../../engine";
+import { SquareName, buildSquareList, isLightSquare } from "../../engine";
 import "./theme-palette.css";
 import "./button-animations.css";
 import "./arrows.css";
@@ -11,266 +11,53 @@ import "./notifications.css";
 import "./account-sidebar-import.css";
 import "./badge-icon-colors.css";
 import { buildArrowLayerMarkup } from "./arrow-render";
-import { BestMoveArrow, canShowBestMoveArrow, parseBestMoveArrow } from "./best-move-arrow";
+import { canShowBestMoveArrow, parseBestMoveArrow } from "./best-move-arrow";
 import { createAccountSidebarController, type MultiplayerFriendshipStatus } from "./account-sidebar";
+import {
+  BOT_DIFFICULTY_PRESETS,
+  TIME_CONTROL_PRESETS,
+  botDifficultySummary,
+  chooseBotMoveByDifficulty,
+  clampBotLevel,
+  clampBotMoveTimeMs,
+  getBotDifficultyPreset,
+  getBotTimeControlPreset,
+  getLowTimeThresholdMs,
+  isTimeControlPresetId,
+  normalizeBotTimeControlId,
+  randomInt,
+} from "./bot-config";
+import { playSoundForHistoryNavigation, playSoundForMoveTraversal } from "./history-audio";
+import {
+  appendLiveCategoryMarkerContent,
+  buildBeforeAfterFenFromMoves,
+  classifyLiveMoveQuality,
+  materialFromPerspective,
+  summarizeLiveMove,
+  verifyLiveBrilliantOffer,
+} from "./live-analysis-utils";
 import { createVoiceChatController } from "./live-chat";
+import { buildMainAppMarkup } from "./main-template";
+import type {
+  AppState,
+  BotDifficultyPreset,
+  BotResponseTiming,
+  BotTimingProfile,
+  IncomingFriendInvite,
+  IncomingInGameFriendRequest,
+  MoveCategory,
+  MoveSummary,
+  PendingPromotion,
+  PlayerRole,
+  PromotionPiece,
+  RoomRole,
+  RoomSnapshot,
+} from "./main-types";
 import { createNotificationsStateController } from "./notifications/notification-state";
 import { createNotificationsUiController } from "./notifications/notification-ui";
+import { buildFinishedGameSignature, buildPgnFromMoves } from "./pgn-utils";
+import { StockfishBridge } from "./stockfish-bridge";
 import { mountThemeSwitcher } from "./theme";
-
-type PlayerRole = "w" | "b";
-type RoomRole = PlayerRole | "spectator";
-type TimeControlPresetId = "bullet1" | "bullet2p1" | "blitz3" | "blitz3p2" | "blitz5" | "rapid10" | "rapid15p10";
-type TimeControlPreset = {
-  id: TimeControlPresetId;
-  label: string;
-  initialMs: number;
-  incrementMs: number;
-};
-type PromotionPiece = "q" | "r" | "b" | "n";
-type MoveCategory = "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder";
-type QualityResult = {
-  category: MoveCategory;
-  label: string;
-};
-
-type MoveSummary = {
-  color: PlayerRole;
-  from: Square;
-  to: Square;
-  san: string;
-  piece: string;
-};
-
-type PgnHeaderOptions = {
-  whiteName?: string;
-  blackName?: string;
-  result?: "1-0" | "0-1" | "1/2-1/2" | "*";
-};
-
-type RoomSnapshot = {
-  roomId: string;
-  ownerId: string | null;
-  fen: string;
-  turn: PlayerRole;
-  status: string;
-  winner: PlayerRole | null;
-  check: boolean;
-  checkmate: boolean;
-  draw: boolean;
-  moveCount: number;
-  moves: MoveSummary[];
-  lastMove: MoveSummary | null;
-
-  players: {
-    whiteConnected: boolean;
-    blackConnected: boolean;
-    spectatorCount: number;
-    whiteName: string;
-    blackName: string;
-    whiteUserId: string | null;
-    blackUserId: string | null;
-    whiteFriendId: string | null;
-    blackFriendId: string | null;
-  };
-  rematchVotes: number;
-  analysis: {
-    enabled: boolean;
-    votes: number;
-    locked: boolean;
-    labelsOnly: boolean;
-    labelsVotes: number;
-  };
-  undo: {
-    pending: boolean;
-    requester: PlayerRole | null;
-  };
-  isStarted: boolean;
-  pregame: {
-    p1Choice: "w" | "b" | null;
-    p2Choice: "w" | "b" | null;
-    p1Ready: boolean;
-    p2Ready: boolean;
-  };
-  timeControl: TimeControlPreset;
-  clock: {
-    whiteMs: number;
-    blackMs: number;
-    active: PlayerRole | null;
-    running: boolean;
-    lowTimeThresholdMs: number;
-    serverNowMs: number;
-  };
-};
-
-
-type PendingPromotion = {
-  from: Square;
-  to: Square;
-};
-
-type IncomingFriendInvite = {
-  inviteId: string;
-  fromUserId: string;
-  fromName: string;
-  roomId: string;
-  inviteToken: string | null;
-};
-
-type IncomingInGameFriendRequest = {
-  requestId: string;
-  fromUserId: string;
-  fromName: string;
-  fromFriendId: string;
-};
-
-type Premove = {
-  from: Square;
-  to: Square;
-  promotion?: PromotionPiece;
-};
-
-
-
-type AppState = {
-  connected: boolean;
-  roomId: string | null;
-  role: RoomRole | null;
-  shareUrl: string;
-  snapshot: RoomSnapshot | null;
-  orientation: BoardOrientation;
-  selectedSquare: Square | null;
-  legalTargets: Square[];
-  toastMessage: string;
-  pendingPromotion: PendingPromotion | null;
-  premoves: Premove[]; 
-  autoJoinCode: string | null;
-  autoJoinInviteToken: string | null;
-  focusMode: boolean;
-  liveAnalysisSummary: string;
-  lastAnalyzedMoveKey: string | null;
-  liveMoveGrades: Record<number, { label: string; cpl: number; category: "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder" }>;
-  animationStyle: "smooth" | "epic";
-  bloodFxEnabled: boolean;
-  gameMode: "multiplayer" | "bot";
-  botLevel: number;
-  botTimeControlId: TimeControlPresetId;
-  botPickerOpen: boolean;
-  viewCursor: number | null;
-  trailFxEnabled: boolean; 
-  legalMovesEnabled: boolean;
-  bestMoveArrow: BestMoveArrow | null;
-  bestMoveArrowFen: string | null;
-};
-
-type EngineEval = {
-  cp: number;
-  mate: number | null;
-  bestMove: string;
-  pv: string;
-};
-
-type BotDifficultyPreset = {
-  level: number;
-  label: string;
-  elo: number | null;
-  skillLevel: number;
-  moveTimeMs: number;
-  fullStrength: boolean;
-};
-
-type BotTimingProfile = "premove" | "quick" | "standard" | "deep";
-
-type BotResponseTiming = {
-  profile: BotTimingProfile;
-  preDelayMs: number;
-  engineMoveTimeMs: number;
-};
-
-const BOT_DIFFICULTY_PRESETS: BotDifficultyPreset[] = [
-  { level: 1, label: "Level 1 - 800 Elo", elo: 800, skillLevel: 0, moveTimeMs: 90, fullStrength: false },
-  { level: 2, label: "Level 2 - 1000 Elo", elo: 1000, skillLevel: 2, moveTimeMs: 120, fullStrength: false },
-  { level: 3, label: "Level 3 - 1200 Elo", elo: 1200, skillLevel: 4, moveTimeMs: 170, fullStrength: false },
-  { level: 4, label: "Level 4 - 1400 Elo", elo: 1400, skillLevel: 6, moveTimeMs: 240, fullStrength: false },
-  { level: 5, label: "Level 5 - 1600 Elo", elo: 1600, skillLevel: 8, moveTimeMs: 330, fullStrength: false },
-  { level: 6, label: "Level 6 - 1800 Elo", elo: 1800, skillLevel: 10, moveTimeMs: 460, fullStrength: false },
-  { level: 7, label: "Level 7 - 2000 Elo", elo: 2000, skillLevel: 12, moveTimeMs: 620, fullStrength: false },
-  { level: 8, label: "Level 8 - 2200 Elo", elo: 2200, skillLevel: 14, moveTimeMs: 820, fullStrength: false },
-  { level: 9, label: "Level 9 - 2400 Elo", elo: 2400, skillLevel: 17, moveTimeMs: 1100, fullStrength: false },
-  { level: 10, label: "Level 10 - Full Strength", elo: null, skillLevel: 20, moveTimeMs: 2200, fullStrength: true },
-];
-
-const TIME_CONTROL_PRESETS: TimeControlPreset[] = [
-  { id: "bullet1", label: "1+0 Bullet", initialMs: 60_000, incrementMs: 0 },
-  { id: "bullet2p1", label: "2+1 Bullet", initialMs: 120_000, incrementMs: 1_000 },
-  { id: "blitz3", label: "3-minute Blitz", initialMs: 180_000, incrementMs: 0 },
-  { id: "blitz3p2", label: "3+2 Blitz", initialMs: 180_000, incrementMs: 2_000 },
-  { id: "blitz5", label: "5-minute Blitz", initialMs: 300_000, incrementMs: 0 },
-  { id: "rapid10", label: "10-minute Rapid", initialMs: 600_000, incrementMs: 0 },
-  { id: "rapid15p10", label: "15+10 Rapid", initialMs: 900_000, incrementMs: 10_000 },
-];
-
-const DEFAULT_BOT_TIME_CONTROL_ID: TimeControlPresetId = "blitz3";
-
-function isTimeControlPresetId(value: unknown): value is TimeControlPresetId {
-  return typeof value === "string" && TIME_CONTROL_PRESETS.some((entry) => entry.id === value);
-}
-
-function normalizeBotTimeControlId(value: unknown): TimeControlPresetId {
-  if (typeof value !== "string") {
-    return DEFAULT_BOT_TIME_CONTROL_ID;
-  }
-
-  const normalized = value.trim();
-  const preset = TIME_CONTROL_PRESETS.find((entry) => entry.id === normalized);
-  return preset?.id ?? DEFAULT_BOT_TIME_CONTROL_ID;
-}
-
-function getBotTimeControlPreset(id: TimeControlPresetId): TimeControlPreset {
-  const preset = TIME_CONTROL_PRESETS.find((entry) => entry.id === id);
-  return preset ?? TIME_CONTROL_PRESETS[0]!;
-}
-
-function getLowTimeThresholdMs(initialMs: number): number {
-  return Math.min(20_000, Math.max(5_000, Math.floor(initialMs * 0.18)));
-}
-
-function clampBotLevel(level: number): number {
-  if (!Number.isFinite(level)) {
-    return 1;
-  }
-  return Math.min(10, Math.max(1, Math.round(level)));
-}
-
-function getBotDifficultyPreset(level: number): BotDifficultyPreset {
-  const resolved = BOT_DIFFICULTY_PRESETS[clampBotLevel(level) - 1];
-  return resolved ?? BOT_DIFFICULTY_PRESETS[0]!;
-}
-
-function botDifficultySummary(preset: BotDifficultyPreset): string {
-  return preset.fullStrength
-    ? `Level ${preset.level} Max`
-    : `Level ${preset.level} ${preset.elo} Elo`;
-}
-
-function moveToUci(move: Move): string {
-  return `${move.from}${move.to}${move.promotion ?? ""}`;
-}
-
-function pickRandomMove(moves: Move[]): Move {
-  return moves[Math.floor(Math.random() * moves.length)]!;
-}
-
-function randomInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function clampBotMoveTimeMs(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 60;
-  }
-  return Math.max(25, Math.min(4200, Math.round(value)));
-}
 
 function computeBotResponseTiming(preset: BotDifficultyPreset, playerMove: Move | null): BotResponseTiming {
   const legalReplies = chess.moves({ verbose: true }).length;
@@ -364,63 +151,6 @@ function computeBotResponseTiming(preset: BotDifficultyPreset, playerMove: Move 
     preDelayMs: randomInt(standardMinDelay, standardMaxDelay),
     engineMoveTimeMs: clampBotMoveTimeMs(baseThink * levelMultiplier * (0.76 + Math.random() * 0.62)),
   };
-}
-
-function scoreMoveForHumanizedBot(move: Move): number {
-  const capturedValue = move.captured ? (PIECE_VALUES[move.captured] ?? 0) : 0;
-  const moverValue = PIECE_VALUES[move.piece] ?? 0;
-  const file = move.to.charCodeAt(0) - 97;
-  const rank = Number(move.to[1]) - 1;
-  const centrality = Math.max(0, 3.5 - (Math.abs(file - 3.5) + Math.abs(rank - 3.5)) / 2);
-
-  let score = 0;
-  score += capturedValue - moverValue * 0.15;
-  score += centrality * 12;
-  if (move.promotion) score += 900;
-  if (move.san.includes("+")) score += 85;
-  if (move.flags.includes("k") || move.flags.includes("q")) score += 40;
-
-  return score;
-}
-
-function chooseBotMoveByDifficulty(bestMoveUci: string, preset: BotDifficultyPreset): string {
-  if (preset.fullStrength || preset.level >= 10) {
-    return bestMoveUci;
-  }
-
-  const legalMoves = chess.moves({ verbose: true });
-  if (legalMoves.length <= 1) {
-    return bestMoveUci;
-  }
-
-  const bestMove = bestMoveUci.trim();
-  const alternatives = legalMoves.filter((move) => moveToUci(move) !== bestMove);
-  if (alternatives.length === 0) {
-    return bestMoveUci;
-  }
-
-  const levelGap = 10 - preset.level;
-  const blunderChance = Math.max(0, (levelGap - 1) * 0.03);
-  const inaccuracyChance = Math.max(0, levelGap * 0.045);
-  const roll = Math.random();
-
-  if (roll < blunderChance) {
-    const sorted = [...alternatives].sort((a, b) => scoreMoveForHumanizedBot(a) - scoreMoveForHumanizedBot(b));
-    const worstSlice = sorted.slice(0, Math.max(1, Math.floor(sorted.length / 3)));
-    return moveToUci(pickRandomMove(worstSlice));
-  }
-
-  if (roll < blunderChance + inaccuracyChance) {
-    const sorted = [...alternatives].sort((a, b) => scoreMoveForHumanizedBot(a) - scoreMoveForHumanizedBot(b));
-    const start = Math.floor(sorted.length * 0.2);
-    const end = Math.max(start + 1, Math.floor(sorted.length * 0.7));
-    const candidateSlice = sorted.slice(start, end);
-    if (candidateSlice.length > 0) {
-      return moveToUci(pickRandomMove(candidateSlice));
-    }
-  }
-
-  return bestMoveUci;
 }
 
 const PIECES: Record<`${PlayerRole}${PieceSymbol}`, string> = {
@@ -521,17 +251,6 @@ const EPIC_MOVE_DURATION_MS = {
   slide: 620,
 } as const;
 
-
-const LIVE_MATE_CP = 100000;
-const PIECE_VALUES: Record<string, number> = {
-  p: 100,
-  n: 320,
-  b: 330,
-  r: 500,
-  q: 900,
-  k: 0,
-};
-
 const PIECE_SYMBOLS_MAP: Record<string, string> = {
   p: "♟",
   n: "♞",
@@ -539,171 +258,12 @@ const PIECE_SYMBOLS_MAP: Record<string, string> = {
   r: "♜",
   q: "♛",
 } as const;
-const LIVE_CATEGORY_LABELS: Record<MoveCategory, string> = {
-  brilliant: "Brilliant",
-  great: "Great",
-  excellent: "Excellent",
-  good: "Good",
-  inaccuracy: "Inaccuracy",
-  mistake: "Mistake",
-  blunder: "Blunder",
-};
-
-const LIVE_CATEGORY_TEXT_SYMBOLS: Record<MoveCategory, string> = {
-  brilliant: "!!",
-  great: "!",
-  excellent: "★",
-  good: "✓",
-  inaccuracy: "?!",
-  mistake: "x",
-  blunder: "??",
-};
-
-const LIVE_CATEGORY_BADGE_ICON_PATHS: Partial<Record<MoveCategory, string>> = {
-  excellent: "/assets/labelBadges/excellent.svg",
-  good: "/assets/labelBadges/good.svg",
-  mistake: "/assets/labelBadges/mistake.svg",
-};
-const LIVE_BRILLIANT_VERIFICATION_DEPTH = 16;
 const ROOM_CODE_LENGTH = 4;
 const ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
 
 function applyAnimationTiming(style: "smooth" | "epic"): void {
   const cssDuration = style === "epic" ? 760 : SMOOTH_MOVE_DURATION_MS;
   document.documentElement.style.setProperty("--move-duration", `${cssDuration}ms`);
-}
-
-class StockfishBridge {
-  private readonly worker: Worker;
-  private ready = false;
-  private initResolve!: () => void;
-  private initReject!: (error: Error) => void;
-  private readonly initPromise: Promise<void>;
-  private readonly readyWaiters: Array<() => void> = [];
-  private lastBotConfigKey: string | null = null;
-  private activeEval: {
-    resolve: (value: EngineEval) => void;
-    reject: (reason?: unknown) => void;
-    lastCp: number;
-    mate: number | null;
-    pv: string;
-    bestMove: string;
-  } | null = null;
-  private queue: Promise<void> = Promise.resolve();
-
-  constructor(workerPath = "/stockfish/stockfish-18-lite-single.js") {
-    this.worker = new Worker(workerPath);
-    this.initPromise = new Promise<void>((resolve, reject) => {
-      this.initResolve = resolve;
-      this.initReject = reject;
-    });
-
-    this.worker.onmessage = (event) => this.onMessage(String(event.data ?? ""));
-    this.worker.onerror = () => {
-      if (!this.ready) this.initReject(new Error("Stockfish init failed."));
-      this.activeEval?.reject(new Error("Worker error."));
-      this.activeEval = null;
-    };
-
-    // --- INITIAL CONFIGURATION ---
-    this.send("uci");
-    this.send("isready");
-  }
-
-  /** Gets the best move from the engine for the Bot player */
-  async getBotMove(fen: string, preset: BotDifficultyPreset, moveTimeOverrideMs?: number): Promise<string> {
-    await this.initPromise;
-    const botPromise = this.queue.then(async () => {
-      await this.applyBotDifficulty(preset);
-      const effectiveMoveTimeMs = clampBotMoveTimeMs(moveTimeOverrideMs ?? preset.moveTimeMs);
-      return new Promise<string>((resolve, reject) => {
-        this.activeEval = {
-          resolve: (res) => resolve(res.bestMove),
-          reject,
-          lastCp: 0, mate: null, pv: "", bestMove: "",
-        };
-        this.send(`position fen ${fen}`);
-        this.send(`go movetime ${effectiveMoveTimeMs}`);
-      });
-    });
-    this.queue = botPromise.then(() => undefined).catch(() => undefined);
-    return botPromise;
-  }
-
-  /** Standard analysis evaluation */
-  async evaluateFen(fen: string, depth: number): Promise<EngineEval> {
-    await this.initPromise;
-    const evalPromise = this.queue.then(() => {
-      return new Promise<EngineEval>((resolve, reject) => {
-        this.activeEval = { resolve, reject, lastCp: 0, mate: null, pv: "", bestMove: "", };
-        this.send(`position fen ${fen}`);
-        this.send(`go depth ${depth}`);
-      });
-    });
-    this.queue = evalPromise.then(() => undefined).catch(() => undefined);
-    return evalPromise;
-  }
-
-  private onMessage(line: string): void {
-    if (line === "readyok") {
-      if (!this.ready) {
-        this.ready = true;
-        this.initResolve();
-      }
-      const waiters = this.readyWaiters.splice(0);
-      for (const waiter of waiters) {
-        waiter();
-      }
-      return;
-    }
-    if (!this.activeEval) return;
-    if (line.startsWith("info ")) {
-      const parsed = parseInfoLine(line);
-      if (parsed) {
-        this.activeEval.lastCp = parsed.cp;
-        this.activeEval.mate = parsed.mate;
-        this.activeEval.pv = parsed.pv;
-      }
-    } else if (line.startsWith("bestmove ")) {
-      this.activeEval.bestMove = line.split(" ")[1] ?? "";
-      this.activeEval.resolve({
-        cp: this.activeEval.lastCp,
-        mate: this.activeEval.mate,
-        bestMove: this.activeEval.bestMove,
-        pv: this.activeEval.pv,
-      });
-      this.activeEval = null;
-    }
-  }
-
-  private awaitReadyRoundTrip(): Promise<void> {
-    return new Promise<void>((resolve) => {
-      this.readyWaiters.push(resolve);
-      this.send("isready");
-    });
-  }
-
-  private async applyBotDifficulty(preset: BotDifficultyPreset): Promise<void> {
-    const configKey = `${preset.level}:${preset.elo ?? "max"}:${preset.skillLevel}:${preset.fullStrength}`;
-    if (configKey === this.lastBotConfigKey) {
-      return;
-    }
-
-    if (preset.fullStrength) {
-      this.send("setoption name UCI_LimitStrength value false");
-      this.send("setoption name Skill Level value 20");
-    } else {
-      this.send("setoption name UCI_LimitStrength value true");
-      this.send(`setoption name UCI_Elo value ${preset.elo}`);
-      this.send(`setoption name Skill Level value ${preset.skillLevel}`);
-    }
-
-    await this.awaitReadyRoundTrip();
-    this.lastBotConfigKey = configKey;
-  }
-
-  private send(cmd: string): void { this.worker.postMessage(cmd); }
-  terminate(): void { this.worker.terminate(); }
 }
 
 
@@ -728,24 +288,6 @@ function triggerGameOverScreen(title: string, subtitle: string) {
   boardWrap.appendChild(overlay);
 }
 
-function parseInfoLine(line: string): { cp: number; mate: number | null; pv: string } | null {
-  const scoreMatch = line.match(/score (cp|mate) (-?\d+)/);
-  if (!scoreMatch) {
-    return null;
-  }
-
-  const kind = scoreMatch[1];
-  const value = Number(scoreMatch[2]);
-  const pvMatch = line.match(/\spv\s(.+)$/);
-  const pv = pvMatch?.[1]?.trim() ?? "";
-  if (kind === "mate") {
-    const cp = value > 0 ? LIVE_MATE_CP - Math.min(Math.abs(value), 99) * 100 : -LIVE_MATE_CP + Math.min(Math.abs(value), 99) * 100;
-    return { cp, mate: value, pv };
-  }
-
-  return { cp: value, mate: null, pv };
-}
-
 // ── Sound ────────────────────────────────────────────────────────────────────
 const _audioCache: Record<string, HTMLAudioElement> = {};
 function playSound(name: string): void {
@@ -758,65 +300,6 @@ function playSound(name: string): void {
   audio.play().catch(() => {});
 }
 let _lastPlayedMoveCount = -1;
-
-function playSoundForMoveTraversal(moveSan: string, isCheck: boolean, isGameEnd: boolean): void {
-  if (isGameEnd) {
-    playSound("gameEndOrCheckmate");
-    return;
-  }
-
-  let specialSoundPlayed = false;
-
-  if (isCheck) {
-    playSound("checkMove");
-    specialSoundPlayed = true;
-  }
-
-  if (moveSan.includes("x")) {
-    playSound("capture");
-    specialSoundPlayed = true;
-  }
-
-  if (moveSan.startsWith("O-O") && !specialSoundPlayed) {
-    playSound("castle");
-    specialSoundPlayed = true;
-  }
-
-  if (!specialSoundPlayed) {
-    playSound("move-self");
-  }
-}
-
-function buildHistoryBoardAtMove(snapshot: RoomSnapshot, moveCount: number): Chess {
-  const historyBoard = new Chess();
-  const clampedCount = Math.max(0, Math.min(moveCount, snapshot.moves.length));
-
-  for (let i = 0; i < clampedCount; i += 1) {
-    const move = snapshot.moves[i];
-    if (move) {
-      historyBoard.move(move.san);
-    }
-  }
-
-  return historyBoard;
-}
-
-function playSoundForHistoryNavigation(snapshot: RoomSnapshot, previousPos: number, nextPos: number): void {
-  if (previousPos === nextPos) {
-    return;
-  }
-
-  const traversedMoveIndex = nextPos > previousPos ? nextPos - 1 : previousPos - 1;
-  const traversedMove = snapshot.moves[traversedMoveIndex];
-  if (!traversedMove) {
-    return;
-  }
-
-  const boardAtNext = buildHistoryBoardAtMove(snapshot, nextPos);
-  const isGameEnd = boardAtNext.isCheckmate() || boardAtNext.isDraw();
-  const isCheck = boardAtNext.isCheck();
-  playSoundForMoveTraversal(traversedMove.san, isCheck, isGameEnd);
-}
 
 function navigateToHistoryPosition(targetPos: number): void {
   const snapshot = state.snapshot;
@@ -832,7 +315,7 @@ function navigateToHistoryPosition(targetPos: number): void {
   }
 
   state.viewCursor = clampedTarget === maxMoves ? null : clampedTarget;
-  playSoundForHistoryNavigation(snapshot, previousPos, clampedTarget);
+  playSoundForHistoryNavigation(snapshot, previousPos, clampedTarget, playSound);
   render();
 }
 
@@ -840,347 +323,14 @@ function playSoundForSnapshot(snapshot: RoomSnapshot): void {
   const last = snapshot.lastMove;
   if (!last) return;
 
-  playSoundForMoveTraversal(last.san, snapshot.check, snapshot.checkmate || snapshot.draw);
+  playSoundForMoveTraversal(last.san, snapshot.check, snapshot.checkmate || snapshot.draw, playSound);
 }
 
-
-app.innerHTML = `
-  <div class="app-shell">
-    <section class="top-utility">
-      <p class="muted quick-identity" id="quickIdentity">Guest</p>
-      <div class="top-utility-actions">
-        <div class="notifications-shell" id="notificationsShell">
-          <button class="chip notifications-button" id="notificationsButton" type="button" aria-haspopup="dialog" aria-expanded="false">
-            Notifications
-            <span class="notifications-badge" id="notificationsBadge" hidden>0</span>
-          </button>
-          <section class="notifications-popover" id="notificationsPopover" hidden aria-live="polite" aria-label="Friend request notifications">
-            <p class="muted notifications-status" id="notificationsStatus">No notifications right now.</p>
-            <div class="notifications-list" id="notificationsList"></div>
-          </section>
-        </div>
-        <button class="chip account-menu-button" id="accountMenuButton" type="button" aria-haspopup="dialog" aria-expanded="false">
-          Account Menu
-        </button>
-      </div>
-    </section>
-
-    <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
-    <aside class="account-sidebar" id="accountSidebar" aria-hidden="true">
-      <header class="sidebar-header">
-        <h2>Player Menu</h2>
-        <button class="chip sidebar-close-button" id="sidebarCloseButton" type="button" aria-label="Close menu">Close</button>
-      </header>
-
-      <nav class="sidebar-nav" aria-label="Account sections">
-        <button class="chip sidebar-tab active" id="sidebarProfileTab" type="button">Profile</button>
-        <button class="chip sidebar-tab" id="sidebarHistoryTab" type="button">Saved Games</button>
-      </nav>
-
-      <section class="sidebar-panel" id="sidebarProfilePanel">
-        <p class="muted" id="authStatus">Guest mode enabled.</p>
-        <p class="muted" id="storedGamesMeta">Sign in/sign up to save up to 100 PGNs in cloud history.</p>
-        <div class="sidebar-actions">
-          <input class="auth-name-input" id="usernameInput" type="text" maxlength="24" placeholder="Custom username" hidden />
-          <button class="chip" id="saveUsernameButton" type="button" hidden>Save username</button>
-          <button class="chip" id="guestModeButton" type="button">Play as guest</button>
-          <button class="action cta-rainbow" id="signInGoogleButton" type="button">Sign in / Sign up</button>
-          <button class="chip" id="signOutButton" type="button" hidden>Sign out</button>
-        </div>
-
-        <section class="friends-section" aria-label="Friends section">
-          <h3 class="friends-title">Friends</h3>
-          <p class="muted friends-status" id="friendsStatus">Sign in to add friends by username or Friend ID.</p>
-          <div class="friends-player-id-wrap">
-            <span class="friends-player-id-label">Your Friend ID</span>
-            <p class="friends-player-id" id="friendPlayerId">Sign in to reveal your Friend ID</p>
-            <button class="chip" id="copyPlayerIdButton" type="button">Copy Friend ID</button>
-          </div>
-          <button class="friends-toggle" id="friendsToggleButton" type="button" aria-expanded="false">
-            <div class="friends-toggle-copy">
-              <p class="friends-toggle-title">Add and Invite Friends</p>
-              <p class="friends-toggle-description">Tap to manage friends by username or Friend ID.</p>
-            </div>
-            <span class="friends-toggle-indicator" aria-hidden="true">Open</span>
-          </button>
-          <div class="friends-composer" id="friendsComposer">
-            <div class="friends-add-row">
-              <input class="auth-name-input" id="friendIdInput" type="text" placeholder="Username or 5-digit Friend ID" autocomplete="off" />
-              <button class="chip" id="addFriendButton" type="button">Add</button>
-            </div>
-          </div>
-          <div class="friends-list" id="friendsList"></div>
-        </section>
-      </section>
-
-      <section class="sidebar-panel" id="sidebarHistoryPanel" hidden>
-        <p class="muted" id="historyPanelStatus">Sign in to view your saved PGN history.</p>
-        <div class="saved-games-list" id="savedGamesList"></div>
-      </section>
-    </aside>
-
-    <nav class="game-nav" id="gameNav" hidden>
-      <button class="nav-back-link" id="backToMenuButton" type="button">← Back to menu</button>
-    </nav>
-
-    <header class="hero">
-      <section class="hero-card hero-copy">
-        <h1>Multiplayer Chess</h1>
-        <p>Create a room or join one with code.</p>
-        <a class="analysis-board-link cta-rainbow" id="analysisBoardLink" href="/analyze">♟ Open Analysis Board</a>
-      </section>
-      <aside class="hero-card status-card">
-        <div class="status-grid">
-          <div>
-            <strong>Room</strong>
-            <div class="muted" id="roomBadge">No active room</div>
-          </div>
-          <div>
-            <strong>Your seat</strong>
-            <div class="muted" id="roleBadge">Not seated</div>
-          </div>  
-          <div>
-            <strong>Match state</strong>
-            <div class="muted" id="matchStatus">Create a room to start.</div>
-          </div>
-        </div>
-      </aside>
-    </header>
-
-    <main class="layout">
-      <section class="panel board-panel">
-        <div class="board-toolbar">
-          <button class="action cta-turquoise" id="createRoomButton" type="button">Create room</button>
-          <button class="action cta-rainbow" id="playBotButton" type="button">Play vs Bot (${botDifficultySummary(getBotDifficultyPreset(savedBotLevel))})</button>
-          <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
-          <button class="ghost" id="undoRequestButton" type="button" hidden>Request undo</button>
-          <button class="ghost" id="undoDeclineButton" type="button" hidden>Decline undo</button>
-          <button class="ghost" id="labelsOnlyButton" type="button" hidden>Labels only: Off</button>
-          <button class="ghost" id="flipBoardButton" type="button" hidden>Flip board</button>
-          <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
-          <button class="ghost" id="resignButton" type="button" hidden>Resign</button>
-        </div>
-       <div class="pregame-placeholder" id="pregamePlaceholder">
-          <div id="pregameWaiting">
-            <h2>Waiting for opponent</h2>
-            <p>Create or join a room. The board appears automatically once both players are connected.</p>
-          </div>
-          <div id="pregameSelection" hidden>
-            <h2>Choose Your Color</h2>
-            <div class="mode-row">
-              <label class="mode-label" for="multiplayerTimeControlSelect">Game mode</label>
-              <div class="mode-select-wrap">
-                <select id="multiplayerTimeControlSelect" class="mode-select" aria-label="Choose multiplayer time control">
-                  ${TIME_CONTROL_PRESETS.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join("")}
-                </select>
-                <span class="mode-select-chevron" aria-hidden="true">▾</span>
-              </div>
-              <p class="muted" id="modeHint">Room creator selects the timer. Color choice and ready are still required.</p>
-            </div>
-            <div class="selection-grid">
-              <div class="selection-col">
-                <strong>You</strong>
-                <div class="color-options">
-                  <button class="color-opt-btn" id="myPickWhite">White</button>
-                  <button class="color-opt-btn" id="myPickBlack">Black</button>
-                </div>
-                <div class="ready-badge" id="myReadyBadge">Ready!</div>
-              </div>
-              <div class="selection-col">
-                <strong>Opponent</strong>
-                <div class="color-options">
-                  <button class="color-opt-btn disabled" id="opPickWhite">White</button>
-                  <button class="color-opt-btn disabled" id="opPickBlack">Black</button>
-                </div>
-                <div class="ready-badge" id="opReadyBadge">Ready!</div>
-              </div>
-            </div>
-            <div style="margin-top: 24px;">
-              <button class="action" id="pregameReadyBtn">Ready to Play</button>
-              <div id="pregameConflictWarning" hidden>Both players cannot select the same color.</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="board-wrap">
-          <div class="board" id="board"></div>
-          <svg class="board-arrows" id="arrowLayer" viewBox="0 0 800 800" aria-hidden="true"></svg>
-        </div>
-        <div class="board-caption" id="boardCaption">
-          Tap or click one of your pieces, then choose a legal destination.
-        </div>
-
-        <div class="nav-row" id="gameNavRow" hidden>
-          <button id="liveNavFirst" title="Go to start">⏮</button>
-          <button id="liveNavPrev"  title="Previous move">◀</button>
-          <button id="liveNavNext"  title="Next move">▶</button>
-          <button id="liveNavLast"  title="Go to live">⏭</button>
-        </div>
-        <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
-      </section>
-
-      <aside class="panel side-panel">
-        <section class="control-card" id="inviteJoinCard">
-          <h2 class="card-title">Invite or spectate <span class="title-decor">!!</span></h2>
-          <div class="control-row">
-            <button class="chip" id="copyLinkButton" type="button" hidden>Copy invite link</button>
-            <button class="chip" id="leaveRoomButton" type="button" hidden>Leave room</button>
-          </div>
-          <div class="join-grid">
-            <input class="join-input" id="roomInput" maxlength="4" inputmode="numeric" pattern="\\d{4}" placeholder="4-digit room ID" />
-            <button class="action" id="spectateRoomButton" type="button">Spectate</button>
-          </div>
-          <div class="link-row">
-            <button class="chip" id="roomInviteButton" type="button" hidden>Invite</button>
-          </div>
-        </section>
-
-        <section class="seat-card" id="seatCard" hidden>
-          <h2 class="card-title">Seats</h2>
-          <div class="seat-grid">
-            <article class="seat">
-              <strong>White</strong>
-              <span class="muted" id="whiteSeat">Waiting for player</span>
-              <span class="clock-pill" id="whiteClock">03:00</span>
-            </article>
-            <article class="seat">
-              <strong>Black</strong>
-              <span class="muted" id="blackSeat">Waiting for player</span>
-              <span class="clock-pill" id="blackClock">03:00</span>
-            </article>
-          </div>
-          <div class="meta-grid" style="margin-top: 14px;">
-            <div>
-              <span class="meta-label">Turn</span>
-              <span class="muted" id="turnMeta">White</span>
-            </div>
-            <div>
-              <span class="meta-label">Moves</span>
-              <span class="muted" id="movesMeta">0</span>
-            </div>
-            <div>
-              <span class="meta-label">Viewers</span>
-              <span class="muted" id="spectatorMeta">0</span>
-            </div>
-          </div>
-          <section class="in-game-friend-panel" id="inGameFriendPanel" hidden>
-            <p class="muted in-game-friend-meta" id="inGameFriendMeta">Opponent info unavailable.</p>
-            <button class="chip" id="sendFriendRequestButton" type="button">Send Friend Request</button>
-          </section>
-          <section class="in-game-friend-request" id="inGameFriendRequest" hidden>
-            <p class="in-game-friend-request-text" id="inGameFriendRequestText">Friend request incoming.</p>
-            <div class="in-game-friend-request-actions">
-              <button class="chip" id="declineInGameFriendRequestButton" type="button">Decline</button>
-              <button class="action" id="acceptInGameFriendRequestButton" type="button">Accept</button>
-            </div>
-          </section>
-        </section>
-
-        <section class="summary-card" id="summaryCard" hidden>
-          <h2 class="card-title">Game summary</h2>
-          <p class="muted" id="summaryText">The server will keep this board authoritative for every device in the room.</p>
-          <p class="muted" id="liveAnalysisText">Live analysis disabled.</p>
-        </section>
-
-        <section class="moves-card" id="movesCard" hidden>
-          <h2 class="card-title">Moves</h2>
-          <div class="move-list" id="moveList">
-            <div class="empty-state">No moves yet.</div>
-          </div>
-        </section>
-      </aside>
-    </main>
-  </div>
-
-  <div class="bot-difficulty-overlay" id="botDifficultyOverlay" aria-hidden="true" hidden>
-    <div class="bot-difficulty-backdrop" id="botDifficultyBackdrop" aria-hidden="true"></div>
-    <div class="bot-difficulty-picker" id="botDifficultyPicker" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="botDifficultyTitle">
-      <h2 class="bot-difficulty-title" id="botDifficultyTitle">Choose Bot Strength</h2>
-      <p class="bot-difficulty-subtitle">Pick bot strength and a clock mode before starting.</p>
-      <label class="bot-difficulty-label bot-difficulty-level-label" for="botDifficultySelect">Bot level</label>
-      <div class="bot-difficulty-select-wrap bot-difficulty-level-select-wrap">
-        <select id="botDifficultySelect" class="bot-difficulty-select" aria-label="Choose bot difficulty">
-          ${BOT_DIFFICULTY_PRESETS.map((preset) => `<option value="${preset.level}">${preset.label}</option>`).join("")}
-        </select>
-        <span class="bot-difficulty-select-chevron" aria-hidden="true">▾</span>
-      </div>
-      <label class="bot-difficulty-label bot-difficulty-time-label" for="botTimeControlSelect">Time control</label>
-      <div class="bot-difficulty-select-wrap bot-difficulty-time-select-wrap">
-        <select id="botTimeControlSelect" class="bot-difficulty-select" aria-label="Choose bot time control">
-          ${TIME_CONTROL_PRESETS.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join("")}
-        </select>
-        <span class="bot-difficulty-select-chevron" aria-hidden="true">▾</span>
-      </div>
-      <button class="chip bot-difficulty-start" id="startBotGameButton" type="button">Start Match</button>
-    </div>
-  </div>
-
-  <div class="focus-hud" id="focusHud" hidden>
-    <span class="focus-chip" id="focusTimer">00:00</span>
-
-    <div id="focusMaterialHud" class="focus-material-hud" hidden></div>
-  </div>
-
-  <div class="promotion-dialog" id="promotionDialog" hidden>
-    <div class="promotion-card">
-      <h2 class="card-title">Choose a promotion</h2>
-      <p class="muted">Select the piece that your pawn should become.</p>
-      <div class="promotion-grid">
-        <button class="promotion-button" data-promotion="q" type="button">Queen</button>
-        <button class="promotion-button" data-promotion="r" type="button">Rook</button>
-        <button class="promotion-button" data-promotion="b" type="button">Bishop</button>
-        <button class="promotion-button" data-promotion="n" type="button">Knight</button>
-      </div>
-    </div>
-  </div>
-
- <div class="modal-overlay" id="confirmDialog" hidden>
-  <div class="modal-card">
-    <div class="modal-header">
-      <h2 class="modal-title" id="modalTitle">Leave Match?</h2>
-      <p class="modal-text" id="modalDescription">Your current game progress will be lost.</p>
-    </div>
-    <div class="modal-actions">
-      <button class="modal-btn cancel" id="confirmNoBtn" type="button">Stay</button>
-      <button class="modal-btn confirm" id="confirmYesBtn" type="button">Confirm</button>
-    </div>
-  </div>
-</div>
-
-  <button class="chat-fab" id="chatFabButton" type="button" aria-label="Open live chat" hidden>
-    <span>Chat</span>
-    <span class="chat-fab-badge" id="chatFabBadge" hidden></span>
-  </button>
-
-  <section class="live-chat-panel" id="chatPanel" hidden>
-    <header class="live-chat-header">
-      <h2>Live Chat</h2>
-      <button class="chip" id="chatCloseButton" type="button">Close</button>
-    </header>
-    <p class="muted" id="chatStatusText">Live chat is available only for seated multiplayer players during active matches.</p>
-    <div class="live-chat-actions">
-      <button class="chip" id="chatConsentButton" type="button">Accept Communication</button>
-      <button class="action cta-turquoise chat-voice-btn" id="chatVoiceButton" type="button">Hold to Talk</button>
-    </div>
-    <div class="live-chat-messages" id="chatMessages">
-      <div class="empty-state">No messages yet.</div>
-    </div>
-    <div class="live-chat-compose">
-      <input class="join-input live-chat-input" id="chatInput" maxlength="420" placeholder="Type a message..." />
-      <button class="action" id="chatSendButton" type="button">Send</button>
-    </div>
-  </section>
-
-  <div class="toast" id="toast"></div>
-
-  <section class="friend-invite-prompt" id="friendInvitePrompt" hidden aria-live="polite">
-    <p class="friend-invite-prompt-text" id="friendInvitePromptText">New invitation</p>
-    <div class="friend-invite-prompt-actions">
-      <button class="chip" id="friendInviteDeclineButton" type="button">Decline</button>
-      <button class="action cta-turquoise" id="friendInviteAcceptButton" type="button">Accept</button>
-    </div>
-  </section>
-`;
+app.innerHTML = buildMainAppMarkup({
+  botButtonLabel: botDifficultySummary(getBotDifficultyPreset(savedBotLevel)),
+  botDifficultyOptions: BOT_DIFFICULTY_PRESETS,
+  timeControlOptions: TIME_CONTROL_PRESETS,
+});
 
 
 
@@ -1354,44 +504,6 @@ const gameNavRow = must<HTMLDivElement>("#gameNavRow");
 const arrowAnnotations = new Set<string>();
 const squareAnnotations = new Set<string>(); 
 
-function buildPgnFromMoves(moves: MoveSummary[], headers?: PgnHeaderOptions): string | null {
-  if (moves.length === 0) {
-    return null;
-  }
-
-  const replay = new Chess();
-  try {
-    if (headers?.whiteName || headers?.blackName || headers?.result) {
-      replay.header(
-        "White", headers.whiteName?.trim() || "White",
-        "Black", headers.blackName?.trim() || "Black",
-        "Result", headers.result || "*",
-      );
-    }
-
-    for (const move of moves) {
-      const appliedMove = replay.move(move.san);
-      if (!appliedMove) {
-        return null;
-      }
-    }
-    return replay.pgn();
-  } catch {
-    return null;
-  }
-}
-
-function buildFinishedGameSignature(snapshot: RoomSnapshot): string {
-  return [
-    state.gameMode,
-    snapshot.roomId,
-    snapshot.moveCount,
-    snapshot.status,
-    snapshot.winner ?? "none",
-    snapshot.lastMove?.san ?? "none",
-  ].join(":");
-}
-
 const accountSidebarController = createAccountSidebarController({
   socket,
   refs: {
@@ -1496,7 +608,7 @@ async function maybePersistFinishedGame(snapshot: RoomSnapshot | null): Promise<
     return;
   }
 
-  const signature = buildFinishedGameSignature(snapshot);
+  const signature = buildFinishedGameSignature(state.gameMode, snapshot);
   const result: "1-0" | "0-1" | "1/2-1/2" | "*" =
     snapshot.draw
       ? "1/2-1/2"
@@ -2360,7 +1472,7 @@ async function triggerBotResponse(engineMoveTimeMs?: number) {
     return;
   }
 
-  const selectedMoveUci = chooseBotMoveByDifficulty(bestMoveUci, botPreset);
+  const selectedMoveUci = chooseBotMoveByDifficulty(bestMoveUci, botPreset, chess.moves({ verbose: true }));
 
   let bMove: Move | null = null;
   const attemptedMoves = selectedMoveUci === bestMoveUci
@@ -3966,178 +3078,6 @@ function updateCaption(): void {
       </div>
     `;
   }
-}
-
-function materialFromPerspective(fen: string, color: "w" | "b"): number {
-  const board = fen.split(" ")[0] ?? "";
-  let white = 0;
-  let black = 0;
-
-  for (const ch of board) {
-    if (ch === "/" || /\d/.test(ch)) {
-      continue;
-    }
-
-    const value = PIECE_VALUES[ch.toLowerCase()] ?? 0;
-    if (ch === ch.toUpperCase()) {
-      white += value;
-    } else {
-      black += value;
-    }
-  }
-
-  return color === "w" ? white - black : black - white;
-}
-
-function classifyLiveMoveQuality(input: {
-  cpl: number;
-  matchesBestMove: boolean;
-  materialDelta: number;
-  evalGain: number;
-  isCapture: boolean;
-  previousOpponentCategory: MoveCategory | undefined;
-  brilliantOffer: boolean;
-}): QualityResult {
-  const {
-    cpl,
-    matchesBestMove,
-    materialDelta,
-    evalGain,
-    isCapture,
-    previousOpponentCategory,
-    brilliantOffer,
-  } = input;
-
-  const opponentBlundered = previousOpponentCategory === "mistake" || previousOpponentCategory === "blunder";
-  const isSacrifice = materialDelta <= -100;
-  const brilliantSacrifice = isSacrifice && evalGain >= 80 && cpl <= 35;
-  const greatPunish = matchesBestMove
-    && cpl <= 22
-    && opponentBlundered
-    && (isCapture || materialDelta >= 100 || evalGain >= 110);
-
-  if (brilliantSacrifice || brilliantOffer) {
-    return { category: "brilliant", label: LIVE_CATEGORY_LABELS.brilliant };
-  }
-
-  if (greatPunish) {
-    return { category: "great", label: LIVE_CATEGORY_LABELS.great };
-  }
-
-  if (cpl <= 45) {
-    return { category: "excellent", label: LIVE_CATEGORY_LABELS.excellent };
-  }
-
-  if (cpl <= 90) {
-    return { category: "good", label: LIVE_CATEGORY_LABELS.good };
-  }
-
-  if (cpl <= 160) {
-    return { category: "inaccuracy", label: LIVE_CATEGORY_LABELS.inaccuracy };
-  }
-
-  if (cpl <= 280) {
-    return { category: "mistake", label: LIVE_CATEGORY_LABELS.mistake };
-  }
-
-  return { category: "blunder", label: LIVE_CATEGORY_LABELS.blunder };
-}
-
-async function verifyLiveBrilliantOffer(input: {
-  engine: StockfishBridge;
-  move: { to: string; san: string; piece?: string };
-  beforeFen: string;
-  afterFen: string;
-  beforeMoverCp: number;
-  afterMoverCp: number;
-  cpl: number;
-  matchesBestMove: boolean;
-  materialDelta: number;
-}): Promise<boolean> {
-  const {
-    engine,
-    move,
-    beforeFen,
-    afterFen,
-    beforeMoverCp,
-    afterMoverCp,
-    cpl,
-    matchesBestMove,
-    materialDelta,
-  } = input;
-
-  if (materialDelta < 0 || cpl > 35 || (!matchesBestMove && afterMoverCp < beforeMoverCp - 40)) {
-    return false;
-  }
-
-  const board = new Chess(afterFen);
-  const movedPiece = board.get(move.to as Square)?.type ?? (move.piece as PieceSymbol | undefined);
-  const movedPieceValue = movedPiece ? (PIECE_VALUES[movedPiece] ?? 0) : 0;
-  if (movedPieceValue < 330) {
-    return false;
-  }
-
-  const captureReplies = board.moves({ verbose: true }).filter((reply) => {
-    if (reply.to !== move.to || !reply.captured) {
-      return false;
-    }
-
-    const capturerValue = PIECE_VALUES[reply.piece] ?? 0;
-    return capturerValue <= movedPieceValue;
-  });
-
-  if (captureReplies.length === 0) {
-    return false;
-  }
-
-  let worstReplyScore = Number.POSITIVE_INFINITY;
-  for (const reply of captureReplies.slice(0, 3)) {
-    const replyBoard = new Chess(afterFen);
-    replyBoard.move(reply);
-    const replyEval = await engine.evaluateFen(replyBoard.fen(), LIVE_BRILLIANT_VERIFICATION_DEPTH);
-    worstReplyScore = Math.min(worstReplyScore, replyEval.cp);
-  }
-
-  return worstReplyScore >= Math.max(150, beforeMoverCp - 90);
-}
-
-function symbolForLiveCategory(category: "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder"): string {
-  return LIVE_CATEGORY_TEXT_SYMBOLS[category];
-}
-
-function appendLiveCategoryMarkerContent(marker: HTMLElement, category: MoveCategory): void {
-  const iconPath = LIVE_CATEGORY_BADGE_ICON_PATHS[category];
-  if (iconPath) {
-    const icon = document.createElement("img");
-    icon.className = "piece-quality-marker-icon";
-    icon.src = iconPath;
-    icon.alt = `${LIVE_CATEGORY_LABELS[category]} move`;
-    icon.draggable = false;
-    marker.append(icon);
-    return;
-  }
-
-  marker.textContent = symbolForLiveCategory(category);
-}
-
-function summarizeLiveMove(label: string, cpl: number, san: string): string {
-  return `${label}: ${san} (${cpl} CPL)`;
-}
-
-function buildBeforeAfterFenFromMoves(moves: MoveSummary[]): { beforeFen: string; afterFen: string } | null {
-  if (moves.length === 0) {
-    return null;
-  }
-
-  const replay = new Chess();
-  for (let index = 0; index < moves.length - 1; index += 1) {
-    replay.move(moves[index]!.san);
-  }
-
-  const beforeFen = replay.fen();
-  replay.move(moves[moves.length - 1]!.san);
-  const afterFen = replay.fen();
-  return { beforeFen, afterFen };
 }
 
 async function maybeRunLiveAnalysis(snapshot: RoomSnapshot): Promise<void> {

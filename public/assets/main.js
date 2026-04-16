@@ -30583,6 +30583,355 @@ var init_account_sidebar2 = __esm({
   }
 });
 
+// src/client/bot-config.ts
+function isTimeControlPresetId(value2) {
+  return typeof value2 === "string" && TIME_CONTROL_PRESETS.some((entry) => entry.id === value2);
+}
+function normalizeBotTimeControlId(value2) {
+  if (typeof value2 !== "string") {
+    return DEFAULT_BOT_TIME_CONTROL_ID;
+  }
+  const normalized = value2.trim();
+  const preset = TIME_CONTROL_PRESETS.find((entry) => entry.id === normalized);
+  return preset?.id ?? DEFAULT_BOT_TIME_CONTROL_ID;
+}
+function getBotTimeControlPreset(id) {
+  const preset = TIME_CONTROL_PRESETS.find((entry) => entry.id === id);
+  return preset ?? TIME_CONTROL_PRESETS[0];
+}
+function getLowTimeThresholdMs(initialMs) {
+  return Math.min(2e4, Math.max(5e3, Math.floor(initialMs * 0.18)));
+}
+function clampBotLevel(level) {
+  if (!Number.isFinite(level)) {
+    return 1;
+  }
+  return Math.min(10, Math.max(1, Math.round(level)));
+}
+function getBotDifficultyPreset(level) {
+  const resolved = BOT_DIFFICULTY_PRESETS[clampBotLevel(level) - 1];
+  return resolved ?? BOT_DIFFICULTY_PRESETS[0];
+}
+function botDifficultySummary(preset) {
+  return preset.fullStrength ? `Level ${preset.level} Max` : `Level ${preset.level} ${preset.elo} Elo`;
+}
+function moveToUci(move) {
+  return `${move.from}${move.to}${move.promotion ?? ""}`;
+}
+function pickRandomMove(moves) {
+  return moves[Math.floor(Math.random() * moves.length)];
+}
+function randomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+function clampBotMoveTimeMs(value2) {
+  if (!Number.isFinite(value2)) {
+    return 60;
+  }
+  return Math.max(25, Math.min(4200, Math.round(value2)));
+}
+function scoreMoveForHumanizedBot(move) {
+  const capturedValue = move.captured ? PIECE_VALUES[move.captured] ?? 0 : 0;
+  const moverValue = PIECE_VALUES[move.piece] ?? 0;
+  const file2 = move.to.charCodeAt(0) - 97;
+  const rank2 = Number(move.to[1]) - 1;
+  const centrality = Math.max(0, 3.5 - (Math.abs(file2 - 3.5) + Math.abs(rank2 - 3.5)) / 2);
+  let score = 0;
+  score += capturedValue - moverValue * 0.15;
+  score += centrality * 12;
+  if (move.promotion) score += 900;
+  if (move.san.includes("+")) score += 85;
+  if (move.flags.includes("k") || move.flags.includes("q")) score += 40;
+  return score;
+}
+function chooseBotMoveByDifficulty(bestMoveUci, preset, legalMoves) {
+  if (preset.fullStrength || preset.level >= 10) {
+    return bestMoveUci;
+  }
+  if (legalMoves.length <= 1) {
+    return bestMoveUci;
+  }
+  const bestMove = bestMoveUci.trim();
+  const alternatives = legalMoves.filter((move) => moveToUci(move) !== bestMove);
+  if (alternatives.length === 0) {
+    return bestMoveUci;
+  }
+  const levelGap = 10 - preset.level;
+  const blunderChance = Math.max(0, (levelGap - 1) * 0.03);
+  const inaccuracyChance = Math.max(0, levelGap * 0.045);
+  const roll = Math.random();
+  if (roll < blunderChance) {
+    const sorted = [...alternatives].sort((a, b2) => scoreMoveForHumanizedBot(a) - scoreMoveForHumanizedBot(b2));
+    const worstSlice = sorted.slice(0, Math.max(1, Math.floor(sorted.length / 3)));
+    return moveToUci(pickRandomMove(worstSlice));
+  }
+  if (roll < blunderChance + inaccuracyChance) {
+    const sorted = [...alternatives].sort((a, b2) => scoreMoveForHumanizedBot(a) - scoreMoveForHumanizedBot(b2));
+    const start = Math.floor(sorted.length * 0.2);
+    const end = Math.max(start + 1, Math.floor(sorted.length * 0.7));
+    const candidateSlice = sorted.slice(start, end);
+    if (candidateSlice.length > 0) {
+      return moveToUci(pickRandomMove(candidateSlice));
+    }
+  }
+  return bestMoveUci;
+}
+var PIECE_VALUES, BOT_DIFFICULTY_PRESETS, TIME_CONTROL_PRESETS, DEFAULT_BOT_TIME_CONTROL_ID;
+var init_bot_config = __esm({
+  "src/client/bot-config.ts"() {
+    "use strict";
+    PIECE_VALUES = {
+      p: 100,
+      n: 320,
+      b: 330,
+      r: 500,
+      q: 900,
+      k: 0
+    };
+    BOT_DIFFICULTY_PRESETS = [
+      { level: 1, label: "Level 1 - 800 Elo", elo: 800, skillLevel: 0, moveTimeMs: 90, fullStrength: false },
+      { level: 2, label: "Level 2 - 1000 Elo", elo: 1e3, skillLevel: 2, moveTimeMs: 120, fullStrength: false },
+      { level: 3, label: "Level 3 - 1200 Elo", elo: 1200, skillLevel: 4, moveTimeMs: 170, fullStrength: false },
+      { level: 4, label: "Level 4 - 1400 Elo", elo: 1400, skillLevel: 6, moveTimeMs: 240, fullStrength: false },
+      { level: 5, label: "Level 5 - 1600 Elo", elo: 1600, skillLevel: 8, moveTimeMs: 330, fullStrength: false },
+      { level: 6, label: "Level 6 - 1800 Elo", elo: 1800, skillLevel: 10, moveTimeMs: 460, fullStrength: false },
+      { level: 7, label: "Level 7 - 2000 Elo", elo: 2e3, skillLevel: 12, moveTimeMs: 620, fullStrength: false },
+      { level: 8, label: "Level 8 - 2200 Elo", elo: 2200, skillLevel: 14, moveTimeMs: 820, fullStrength: false },
+      { level: 9, label: "Level 9 - 2400 Elo", elo: 2400, skillLevel: 17, moveTimeMs: 1100, fullStrength: false },
+      { level: 10, label: "Level 10 - Full Strength", elo: null, skillLevel: 20, moveTimeMs: 2200, fullStrength: true }
+    ];
+    TIME_CONTROL_PRESETS = [
+      { id: "bullet1", label: "1+0 Bullet", initialMs: 6e4, incrementMs: 0 },
+      { id: "bullet2p1", label: "2+1 Bullet", initialMs: 12e4, incrementMs: 1e3 },
+      { id: "blitz3", label: "3-minute Blitz", initialMs: 18e4, incrementMs: 0 },
+      { id: "blitz3p2", label: "3+2 Blitz", initialMs: 18e4, incrementMs: 2e3 },
+      { id: "blitz5", label: "5-minute Blitz", initialMs: 3e5, incrementMs: 0 },
+      { id: "rapid10", label: "10-minute Rapid", initialMs: 6e5, incrementMs: 0 },
+      { id: "rapid15p10", label: "15+10 Rapid", initialMs: 9e5, incrementMs: 1e4 }
+    ];
+    DEFAULT_BOT_TIME_CONTROL_ID = "blitz3";
+  }
+});
+
+// src/client/history-audio.ts
+function playSoundForMoveTraversal(moveSan, isCheck, isGameEnd, playSound) {
+  if (isGameEnd) {
+    playSound("gameEndOrCheckmate");
+    return;
+  }
+  let specialSoundPlayed = false;
+  if (isCheck) {
+    playSound("checkMove");
+    specialSoundPlayed = true;
+  }
+  if (moveSan.includes("x")) {
+    playSound("capture");
+    specialSoundPlayed = true;
+  }
+  if (moveSan.startsWith("O-O") && !specialSoundPlayed) {
+    playSound("castle");
+    specialSoundPlayed = true;
+  }
+  if (!specialSoundPlayed) {
+    playSound("move-self");
+  }
+}
+function buildHistoryBoardAtMove(snapshot, moveCount) {
+  const historyBoard = new Chess();
+  const clampedCount = Math.max(0, Math.min(moveCount, snapshot.moves.length));
+  for (let i = 0; i < clampedCount; i += 1) {
+    const move = snapshot.moves[i];
+    if (move) {
+      historyBoard.move(move.san);
+    }
+  }
+  return historyBoard;
+}
+function playSoundForHistoryNavigation(snapshot, previousPos, nextPos, playSound) {
+  if (previousPos === nextPos) {
+    return;
+  }
+  const traversedMoveIndex = nextPos > previousPos ? nextPos - 1 : previousPos - 1;
+  const traversedMove = snapshot.moves[traversedMoveIndex];
+  if (!traversedMove) {
+    return;
+  }
+  const boardAtNext = buildHistoryBoardAtMove(snapshot, nextPos);
+  const isGameEnd = boardAtNext.isCheckmate() || boardAtNext.isDraw();
+  const isCheck = boardAtNext.isCheck();
+  playSoundForMoveTraversal(traversedMove.san, isCheck, isGameEnd, playSound);
+}
+var init_history_audio = __esm({
+  "src/client/history-audio.ts"() {
+    "use strict";
+    init_chess();
+  }
+});
+
+// src/client/live-analysis-utils.ts
+function materialFromPerspective(fen, color) {
+  const board = fen.split(" ")[0] ?? "";
+  let white = 0;
+  let black = 0;
+  for (const ch of board) {
+    if (ch === "/" || /\d/.test(ch)) {
+      continue;
+    }
+    const value2 = PIECE_VALUES2[ch.toLowerCase()] ?? 0;
+    if (ch === ch.toUpperCase()) {
+      white += value2;
+    } else {
+      black += value2;
+    }
+  }
+  return color === "w" ? white - black : black - white;
+}
+function classifyLiveMoveQuality(input) {
+  const {
+    cpl,
+    matchesBestMove,
+    materialDelta,
+    evalGain,
+    isCapture,
+    previousOpponentCategory,
+    brilliantOffer
+  } = input;
+  const opponentBlundered = previousOpponentCategory === "mistake" || previousOpponentCategory === "blunder";
+  const isSacrifice = materialDelta <= -100;
+  const brilliantSacrifice = isSacrifice && evalGain >= 80 && cpl <= 35;
+  const greatPunish = matchesBestMove && cpl <= 22 && opponentBlundered && (isCapture || materialDelta >= 100 || evalGain >= 110);
+  if (brilliantSacrifice || brilliantOffer) {
+    return { category: "brilliant", label: LIVE_CATEGORY_LABELS.brilliant };
+  }
+  if (greatPunish) {
+    return { category: "great", label: LIVE_CATEGORY_LABELS.great };
+  }
+  if (cpl <= 45) {
+    return { category: "excellent", label: LIVE_CATEGORY_LABELS.excellent };
+  }
+  if (cpl <= 90) {
+    return { category: "good", label: LIVE_CATEGORY_LABELS.good };
+  }
+  if (cpl <= 160) {
+    return { category: "inaccuracy", label: LIVE_CATEGORY_LABELS.inaccuracy };
+  }
+  if (cpl <= 280) {
+    return { category: "mistake", label: LIVE_CATEGORY_LABELS.mistake };
+  }
+  return { category: "blunder", label: LIVE_CATEGORY_LABELS.blunder };
+}
+async function verifyLiveBrilliantOffer(input) {
+  const {
+    engine,
+    move,
+    beforeFen,
+    afterFen,
+    beforeMoverCp,
+    afterMoverCp,
+    cpl,
+    matchesBestMove,
+    materialDelta
+  } = input;
+  if (materialDelta < 0 || cpl > 35 || !matchesBestMove && afterMoverCp < beforeMoverCp - 40) {
+    return false;
+  }
+  const board = new Chess(afterFen);
+  const movedPiece = board.get(move.to)?.type ?? move.piece;
+  const movedPieceValue = movedPiece ? PIECE_VALUES2[movedPiece] ?? 0 : 0;
+  if (movedPieceValue < 330) {
+    return false;
+  }
+  const captureReplies = board.moves({ verbose: true }).filter((reply) => {
+    if (reply.to !== move.to || !reply.captured) {
+      return false;
+    }
+    const capturerValue = PIECE_VALUES2[reply.piece] ?? 0;
+    return capturerValue <= movedPieceValue;
+  });
+  if (captureReplies.length === 0) {
+    return false;
+  }
+  let worstReplyScore = Number.POSITIVE_INFINITY;
+  for (const reply of captureReplies.slice(0, 3)) {
+    const replyBoard = new Chess(afterFen);
+    replyBoard.move(reply);
+    const replyEval = await engine.evaluateFen(replyBoard.fen(), LIVE_BRILLIANT_VERIFICATION_DEPTH);
+    worstReplyScore = Math.min(worstReplyScore, replyEval.cp);
+  }
+  return worstReplyScore >= Math.max(150, beforeMoverCp - 90);
+}
+function symbolForLiveCategory(category) {
+  return LIVE_CATEGORY_TEXT_SYMBOLS[category];
+}
+function appendLiveCategoryMarkerContent(marker, category) {
+  const iconPath = LIVE_CATEGORY_BADGE_ICON_PATHS[category];
+  if (iconPath) {
+    const icon = document.createElement("img");
+    icon.className = "piece-quality-marker-icon";
+    icon.src = iconPath;
+    icon.alt = `${LIVE_CATEGORY_LABELS[category]} move`;
+    icon.draggable = false;
+    marker.append(icon);
+    return;
+  }
+  marker.textContent = symbolForLiveCategory(category);
+}
+function summarizeLiveMove(label, cpl, san) {
+  return `${label}: ${san} (${cpl} CPL)`;
+}
+function buildBeforeAfterFenFromMoves(moves) {
+  if (moves.length === 0) {
+    return null;
+  }
+  const replay = new Chess();
+  for (let index = 0; index < moves.length - 1; index += 1) {
+    replay.move(moves[index].san);
+  }
+  const beforeFen = replay.fen();
+  replay.move(moves[moves.length - 1].san);
+  const afterFen = replay.fen();
+  return { beforeFen, afterFen };
+}
+var PIECE_VALUES2, LIVE_CATEGORY_LABELS, LIVE_CATEGORY_TEXT_SYMBOLS, LIVE_CATEGORY_BADGE_ICON_PATHS, LIVE_BRILLIANT_VERIFICATION_DEPTH;
+var init_live_analysis_utils = __esm({
+  "src/client/live-analysis-utils.ts"() {
+    "use strict";
+    init_chess();
+    PIECE_VALUES2 = {
+      p: 100,
+      n: 320,
+      b: 330,
+      r: 500,
+      q: 900,
+      k: 0
+    };
+    LIVE_CATEGORY_LABELS = {
+      brilliant: "Brilliant",
+      great: "Great",
+      excellent: "Excellent",
+      good: "Good",
+      inaccuracy: "Inaccuracy",
+      mistake: "Mistake",
+      blunder: "Blunder"
+    };
+    LIVE_CATEGORY_TEXT_SYMBOLS = {
+      brilliant: "!!",
+      great: "!",
+      excellent: "\u2605",
+      good: "\u2713",
+      inaccuracy: "?!",
+      mistake: "x",
+      blunder: "??"
+    };
+    LIVE_CATEGORY_BADGE_ICON_PATHS = {
+      excellent: "/assets/labelBadges/excellent.svg",
+      good: "/assets/labelBadges/good.svg",
+      mistake: "/assets/labelBadges/mistake.svg"
+    };
+    LIVE_BRILLIANT_VERIFICATION_DEPTH = 16;
+  }
+});
+
 // src/client/live-chat.ts
 function createVoiceChatController({ socket, refs, showToast }) {
   let roomId = null;
@@ -31161,6 +31510,354 @@ var init_live_chat = __esm({
   }
 });
 
+// src/client/main-template.ts
+function buildMainAppMarkup(params) {
+  const botDifficultyOptionsHtml = params.botDifficultyOptions.map((preset) => `<option value="${preset.level}">${preset.label}</option>`).join("");
+  const timeControlOptionsHtml = params.timeControlOptions.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join("");
+  return `
+  <div class="app-shell">
+    <section class="top-utility">
+      <p class="muted quick-identity" id="quickIdentity">Guest</p>
+      <div class="top-utility-actions">
+        <div class="notifications-shell" id="notificationsShell">
+          <button class="chip notifications-button" id="notificationsButton" type="button" aria-haspopup="dialog" aria-expanded="false">
+            Notifications
+            <span class="notifications-badge" id="notificationsBadge" hidden>0</span>
+          </button>
+          <section class="notifications-popover" id="notificationsPopover" hidden aria-live="polite" aria-label="Friend request notifications">
+            <p class="muted notifications-status" id="notificationsStatus">No notifications right now.</p>
+            <div class="notifications-list" id="notificationsList"></div>
+          </section>
+        </div>
+        <button class="chip account-menu-button" id="accountMenuButton" type="button" aria-haspopup="dialog" aria-expanded="false">
+          Account Menu
+        </button>
+      </div>
+    </section>
+
+    <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
+    <aside class="account-sidebar" id="accountSidebar" aria-hidden="true">
+      <header class="sidebar-header">
+        <h2>Player Menu</h2>
+        <button class="chip sidebar-close-button" id="sidebarCloseButton" type="button" aria-label="Close menu">Close</button>
+      </header>
+
+      <nav class="sidebar-nav" aria-label="Account sections">
+        <button class="chip sidebar-tab active" id="sidebarProfileTab" type="button">Profile</button>
+        <button class="chip sidebar-tab" id="sidebarHistoryTab" type="button">Saved Games</button>
+      </nav>
+
+      <section class="sidebar-panel" id="sidebarProfilePanel">
+        <p class="muted" id="authStatus">Guest mode enabled.</p>
+        <p class="muted" id="storedGamesMeta">Sign in/sign up to save up to 100 PGNs in cloud history.</p>
+        <div class="sidebar-actions">
+          <input class="auth-name-input" id="usernameInput" type="text" maxlength="24" placeholder="Custom username" hidden />
+          <button class="chip" id="saveUsernameButton" type="button" hidden>Save username</button>
+          <button class="chip" id="guestModeButton" type="button">Play as guest</button>
+          <button class="action cta-rainbow" id="signInGoogleButton" type="button">Sign in / Sign up</button>
+          <button class="chip" id="signOutButton" type="button" hidden>Sign out</button>
+        </div>
+
+        <section class="friends-section" aria-label="Friends section">
+          <h3 class="friends-title">Friends</h3>
+          <p class="muted friends-status" id="friendsStatus">Sign in to add friends by username or Friend ID.</p>
+          <div class="friends-player-id-wrap">
+            <span class="friends-player-id-label">Your Friend ID</span>
+            <p class="friends-player-id" id="friendPlayerId">Sign in to reveal your Friend ID</p>
+            <button class="chip" id="copyPlayerIdButton" type="button">Copy Friend ID</button>
+          </div>
+          <button class="friends-toggle" id="friendsToggleButton" type="button" aria-expanded="false">
+            <div class="friends-toggle-copy">
+              <p class="friends-toggle-title">Add and Invite Friends</p>
+              <p class="friends-toggle-description">Tap to manage friends by username or Friend ID.</p>
+            </div>
+            <span class="friends-toggle-indicator" aria-hidden="true">Open</span>
+          </button>
+          <div class="friends-composer" id="friendsComposer">
+            <div class="friends-add-row">
+              <input class="auth-name-input" id="friendIdInput" type="text" placeholder="Username or 5-digit Friend ID" autocomplete="off" />
+              <button class="chip" id="addFriendButton" type="button">Add</button>
+            </div>
+          </div>
+          <div class="friends-list" id="friendsList"></div>
+        </section>
+      </section>
+
+      <section class="sidebar-panel" id="sidebarHistoryPanel" hidden>
+        <p class="muted" id="historyPanelStatus">Sign in to view your saved PGN history.</p>
+        <div class="saved-games-list" id="savedGamesList"></div>
+      </section>
+    </aside>
+
+    <nav class="game-nav" id="gameNav" hidden>
+      <button class="nav-back-link" id="backToMenuButton" type="button">\u2190 Back to menu</button>
+    </nav>
+
+    <header class="hero">
+      <section class="hero-card hero-copy">
+        <h1>Multiplayer Chess</h1>
+        <p>Create a room or join one with code.</p>
+        <a class="analysis-board-link cta-rainbow" id="analysisBoardLink" href="/analyze">\u265F Open Analysis Board</a>
+      </section>
+      <aside class="hero-card status-card">
+        <div class="status-grid">
+          <div>
+            <strong>Room</strong>
+            <div class="muted" id="roomBadge">No active room</div>
+          </div>
+          <div>
+            <strong>Your seat</strong>
+            <div class="muted" id="roleBadge">Not seated</div>
+          </div>  
+          <div>
+            <strong>Match state</strong>
+            <div class="muted" id="matchStatus">Create a room to start.</div>
+          </div>
+        </div>
+      </aside>
+    </header>
+
+    <main class="layout">
+      <section class="panel board-panel">
+        <div class="board-toolbar">
+          <button class="action cta-turquoise" id="createRoomButton" type="button">Create room</button>
+          <button class="action cta-rainbow" id="playBotButton" type="button">Play vs Bot (${params.botButtonLabel})</button>
+          <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
+          <button class="ghost" id="undoRequestButton" type="button" hidden>Request undo</button>
+          <button class="ghost" id="undoDeclineButton" type="button" hidden>Decline undo</button>
+          <button class="ghost" id="labelsOnlyButton" type="button" hidden>Labels only: Off</button>
+          <button class="ghost" id="flipBoardButton" type="button" hidden>Flip board</button>
+          <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
+          <button class="ghost" id="resignButton" type="button" hidden>Resign</button>
+        </div>
+       <div class="pregame-placeholder" id="pregamePlaceholder">
+          <div id="pregameWaiting">
+            <h2>Waiting for opponent</h2>
+            <p>Create or join a room. The board appears automatically once both players are connected.</p>
+          </div>
+          <div id="pregameSelection" hidden>
+            <h2>Choose Your Color</h2>
+            <div class="mode-row">
+              <label class="mode-label" for="multiplayerTimeControlSelect">Game mode</label>
+              <div class="mode-select-wrap">
+                <select id="multiplayerTimeControlSelect" class="mode-select" aria-label="Choose multiplayer time control">
+                  ${timeControlOptionsHtml}
+                </select>
+                <span class="mode-select-chevron" aria-hidden="true">\u25BE</span>
+              </div>
+              <p class="muted" id="modeHint">Room creator selects the timer. Color choice and ready are still required.</p>
+            </div>
+            <div class="selection-grid">
+              <div class="selection-col">
+                <strong>You</strong>
+                <div class="color-options">
+                  <button class="color-opt-btn" id="myPickWhite">White</button>
+                  <button class="color-opt-btn" id="myPickBlack">Black</button>
+                </div>
+                <div class="ready-badge" id="myReadyBadge">Ready!</div>
+              </div>
+              <div class="selection-col">
+                <strong>Opponent</strong>
+                <div class="color-options">
+                  <button class="color-opt-btn disabled" id="opPickWhite">White</button>
+                  <button class="color-opt-btn disabled" id="opPickBlack">Black</button>
+                </div>
+                <div class="ready-badge" id="opReadyBadge">Ready!</div>
+              </div>
+            </div>
+            <div style="margin-top: 24px;">
+              <button class="action" id="pregameReadyBtn">Ready to Play</button>
+              <div id="pregameConflictWarning" hidden>Both players cannot select the same color.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="board-wrap">
+          <div class="board" id="board"></div>
+          <svg class="board-arrows" id="arrowLayer" viewBox="0 0 800 800" aria-hidden="true"></svg>
+        </div>
+        <div class="board-caption" id="boardCaption">
+          Tap or click one of your pieces, then choose a legal destination.
+        </div>
+
+        <div class="nav-row" id="gameNavRow" hidden>
+          <button id="liveNavFirst" title="Go to start">\u23EE</button>
+          <button id="liveNavPrev"  title="Previous move">\u25C0</button>
+          <button id="liveNavNext"  title="Next move">\u25B6</button>
+          <button id="liveNavLast"  title="Go to live">\u23ED</button>
+        </div>
+        <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
+      </section>
+
+      <aside class="panel side-panel">
+        <section class="control-card" id="inviteJoinCard">
+          <h2 class="card-title">Invite or spectate <span class="title-decor">!!</span></h2>
+          <div class="control-row">
+            <button class="chip" id="copyLinkButton" type="button" hidden>Copy invite link</button>
+            <button class="chip" id="leaveRoomButton" type="button" hidden>Leave room</button>
+          </div>
+          <div class="join-grid">
+            <input class="join-input" id="roomInput" maxlength="4" inputmode="numeric" pattern="\\d{4}" placeholder="4-digit room ID" />
+            <button class="action" id="spectateRoomButton" type="button">Spectate</button>
+          </div>
+          <div class="link-row">
+            <button class="chip" id="roomInviteButton" type="button" hidden>Invite</button>
+          </div>
+        </section>
+
+        <section class="seat-card" id="seatCard" hidden>
+          <h2 class="card-title">Seats</h2>
+          <div class="seat-grid">
+            <article class="seat">
+              <strong>White</strong>
+              <span class="muted" id="whiteSeat">Waiting for player</span>
+              <span class="clock-pill" id="whiteClock">03:00</span>
+            </article>
+            <article class="seat">
+              <strong>Black</strong>
+              <span class="muted" id="blackSeat">Waiting for player</span>
+              <span class="clock-pill" id="blackClock">03:00</span>
+            </article>
+          </div>
+          <div class="meta-grid" style="margin-top: 14px;">
+            <div>
+              <span class="meta-label">Turn</span>
+              <span class="muted" id="turnMeta">White</span>
+            </div>
+            <div>
+              <span class="meta-label">Moves</span>
+              <span class="muted" id="movesMeta">0</span>
+            </div>
+            <div>
+              <span class="meta-label">Viewers</span>
+              <span class="muted" id="spectatorMeta">0</span>
+            </div>
+          </div>
+          <section class="in-game-friend-panel" id="inGameFriendPanel" hidden>
+            <p class="muted in-game-friend-meta" id="inGameFriendMeta">Opponent info unavailable.</p>
+            <button class="chip" id="sendFriendRequestButton" type="button">Send Friend Request</button>
+          </section>
+          <section class="in-game-friend-request" id="inGameFriendRequest" hidden>
+            <p class="in-game-friend-request-text" id="inGameFriendRequestText">Friend request incoming.</p>
+            <div class="in-game-friend-request-actions">
+              <button class="chip" id="declineInGameFriendRequestButton" type="button">Decline</button>
+              <button class="action" id="acceptInGameFriendRequestButton" type="button">Accept</button>
+            </div>
+          </section>
+        </section>
+
+        <section class="summary-card" id="summaryCard" hidden>
+          <h2 class="card-title">Game summary</h2>
+          <p class="muted" id="summaryText">The server will keep this board authoritative for every device in the room.</p>
+          <p class="muted" id="liveAnalysisText">Live analysis disabled.</p>
+        </section>
+
+        <section class="moves-card" id="movesCard" hidden>
+          <h2 class="card-title">Moves</h2>
+          <div class="move-list" id="moveList">
+            <div class="empty-state">No moves yet.</div>
+          </div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <div class="bot-difficulty-overlay" id="botDifficultyOverlay" aria-hidden="true" hidden>
+    <div class="bot-difficulty-backdrop" id="botDifficultyBackdrop" aria-hidden="true"></div>
+    <div class="bot-difficulty-picker" id="botDifficultyPicker" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="botDifficultyTitle">
+      <h2 class="bot-difficulty-title" id="botDifficultyTitle">Choose Bot Strength</h2>
+      <p class="bot-difficulty-subtitle">Pick bot strength and a clock mode before starting.</p>
+      <label class="bot-difficulty-label bot-difficulty-level-label" for="botDifficultySelect">Bot level</label>
+      <div class="bot-difficulty-select-wrap bot-difficulty-level-select-wrap">
+        <select id="botDifficultySelect" class="bot-difficulty-select" aria-label="Choose bot difficulty">
+          ${botDifficultyOptionsHtml}
+        </select>
+        <span class="bot-difficulty-select-chevron" aria-hidden="true">\u25BE</span>
+      </div>
+      <label class="bot-difficulty-label bot-difficulty-time-label" for="botTimeControlSelect">Time control</label>
+      <div class="bot-difficulty-select-wrap bot-difficulty-time-select-wrap">
+        <select id="botTimeControlSelect" class="bot-difficulty-select" aria-label="Choose bot time control">
+          ${timeControlOptionsHtml}
+        </select>
+        <span class="bot-difficulty-select-chevron" aria-hidden="true">\u25BE</span>
+      </div>
+      <button class="chip bot-difficulty-start" id="startBotGameButton" type="button">Start Match</button>
+    </div>
+  </div>
+
+  <div class="focus-hud" id="focusHud" hidden>
+    <span class="focus-chip" id="focusTimer">00:00</span>
+
+    <div id="focusMaterialHud" class="focus-material-hud" hidden></div>
+  </div>
+
+  <div class="promotion-dialog" id="promotionDialog" hidden>
+    <div class="promotion-card">
+      <h2 class="card-title">Choose a promotion</h2>
+      <p class="muted">Select the piece that your pawn should become.</p>
+      <div class="promotion-grid">
+        <button class="promotion-button" data-promotion="q" type="button">Queen</button>
+        <button class="promotion-button" data-promotion="r" type="button">Rook</button>
+        <button class="promotion-button" data-promotion="b" type="button">Bishop</button>
+        <button class="promotion-button" data-promotion="n" type="button">Knight</button>
+      </div>
+    </div>
+  </div>
+
+ <div class="modal-overlay" id="confirmDialog" hidden>
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 class="modal-title" id="modalTitle">Leave Match?</h2>
+      <p class="modal-text" id="modalDescription">Your current game progress will be lost.</p>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn cancel" id="confirmNoBtn" type="button">Stay</button>
+      <button class="modal-btn confirm" id="confirmYesBtn" type="button">Confirm</button>
+    </div>
+  </div>
+</div>
+
+  <button class="chat-fab" id="chatFabButton" type="button" aria-label="Open live chat" hidden>
+    <span>Chat</span>
+    <span class="chat-fab-badge" id="chatFabBadge" hidden></span>
+  </button>
+
+  <section class="live-chat-panel" id="chatPanel" hidden>
+    <header class="live-chat-header">
+      <h2>Live Chat</h2>
+      <button class="chip" id="chatCloseButton" type="button">Close</button>
+    </header>
+    <p class="muted" id="chatStatusText">Live chat is available only for seated multiplayer players during active matches.</p>
+    <div class="live-chat-actions">
+      <button class="chip" id="chatConsentButton" type="button">Accept Communication</button>
+      <button class="action cta-turquoise chat-voice-btn" id="chatVoiceButton" type="button">Hold to Talk</button>
+    </div>
+    <div class="live-chat-messages" id="chatMessages">
+      <div class="empty-state">No messages yet.</div>
+    </div>
+    <div class="live-chat-compose">
+      <input class="join-input live-chat-input" id="chatInput" maxlength="420" placeholder="Type a message..." />
+      <button class="action" id="chatSendButton" type="button">Send</button>
+    </div>
+  </section>
+
+  <div class="toast" id="toast"></div>
+
+  <section class="friend-invite-prompt" id="friendInvitePrompt" hidden aria-live="polite">
+    <p class="friend-invite-prompt-text" id="friendInvitePromptText">New invitation</p>
+    <div class="friend-invite-prompt-actions">
+      <button class="chip" id="friendInviteDeclineButton" type="button">Decline</button>
+      <button class="action cta-turquoise" id="friendInviteAcceptButton" type="button">Accept</button>
+    </div>
+  </section>
+`;
+}
+var init_main_template = __esm({
+  "src/client/main-template.ts"() {
+    "use strict";
+  }
+});
+
 // src/client/notifications/friend-request-notification-actions.ts
 function createFriendRequestNotificationActions({
   socket,
@@ -31594,6 +32291,203 @@ var init_notification_ui = __esm({
   }
 });
 
+// src/client/pgn-utils.ts
+function buildPgnFromMoves(moves, headers) {
+  if (moves.length === 0) {
+    return null;
+  }
+  const replay = new Chess();
+  try {
+    if (headers?.whiteName || headers?.blackName || headers?.result) {
+      replay.header(
+        "White",
+        headers.whiteName?.trim() || "White",
+        "Black",
+        headers.blackName?.trim() || "Black",
+        "Result",
+        headers.result || "*"
+      );
+    }
+    for (const move of moves) {
+      const appliedMove = replay.move(move.san);
+      if (!appliedMove) {
+        return null;
+      }
+    }
+    return replay.pgn();
+  } catch {
+    return null;
+  }
+}
+function buildFinishedGameSignature(gameMode, snapshot) {
+  return [
+    gameMode,
+    snapshot.roomId,
+    snapshot.moveCount,
+    snapshot.status,
+    snapshot.winner ?? "none",
+    snapshot.lastMove?.san ?? "none"
+  ].join(":");
+}
+var init_pgn_utils = __esm({
+  "src/client/pgn-utils.ts"() {
+    "use strict";
+    init_chess();
+  }
+});
+
+// src/client/stockfish-bridge.ts
+function parseInfoLine(line) {
+  const scoreMatch = line.match(/score (cp|mate) (-?\d+)/);
+  if (!scoreMatch) {
+    return null;
+  }
+  const kind = scoreMatch[1];
+  const value2 = Number(scoreMatch[2]);
+  const pvMatch = line.match(/\spv\s(.+)$/);
+  const pv = pvMatch?.[1]?.trim() ?? "";
+  if (kind === "mate") {
+    const cp = value2 > 0 ? LIVE_MATE_CP - Math.min(Math.abs(value2), 99) * 100 : -LIVE_MATE_CP + Math.min(Math.abs(value2), 99) * 100;
+    return { cp, mate: value2, pv };
+  }
+  return { cp: value2, mate: null, pv };
+}
+var LIVE_MATE_CP, StockfishBridge;
+var init_stockfish_bridge = __esm({
+  "src/client/stockfish-bridge.ts"() {
+    "use strict";
+    init_bot_config();
+    LIVE_MATE_CP = 1e5;
+    StockfishBridge = class {
+      worker;
+      ready = false;
+      initResolve;
+      initReject;
+      initPromise;
+      readyWaiters = [];
+      lastBotConfigKey = null;
+      activeEval = null;
+      queue = Promise.resolve();
+      constructor(workerPath = "/stockfish/stockfish-18-lite-single.js") {
+        this.worker = new Worker(workerPath);
+        this.initPromise = new Promise((resolve, reject) => {
+          this.initResolve = resolve;
+          this.initReject = reject;
+        });
+        this.worker.onmessage = (event) => this.onMessage(String(event.data ?? ""));
+        this.worker.onerror = () => {
+          if (!this.ready) this.initReject(new Error("Stockfish init failed."));
+          this.activeEval?.reject(new Error("Worker error."));
+          this.activeEval = null;
+        };
+        this.send("uci");
+        this.send("isready");
+      }
+      async getBotMove(fen, preset, moveTimeOverrideMs) {
+        await this.initPromise;
+        const botPromise = this.queue.then(async () => {
+          await this.applyBotDifficulty(preset);
+          const effectiveMoveTimeMs = clampBotMoveTimeMs(moveTimeOverrideMs ?? preset.moveTimeMs);
+          return new Promise((resolve, reject) => {
+            this.activeEval = {
+              resolve: (res) => resolve(res.bestMove),
+              reject,
+              lastCp: 0,
+              mate: null,
+              pv: "",
+              bestMove: ""
+            };
+            this.send(`position fen ${fen}`);
+            this.send(`go movetime ${effectiveMoveTimeMs}`);
+          });
+        });
+        this.queue = botPromise.then(() => void 0).catch(() => void 0);
+        return botPromise;
+      }
+      async evaluateFen(fen, depth) {
+        await this.initPromise;
+        const evalPromise = this.queue.then(() => {
+          return new Promise((resolve, reject) => {
+            this.activeEval = {
+              resolve,
+              reject,
+              lastCp: 0,
+              mate: null,
+              pv: "",
+              bestMove: ""
+            };
+            this.send(`position fen ${fen}`);
+            this.send(`go depth ${depth}`);
+          });
+        });
+        this.queue = evalPromise.then(() => void 0).catch(() => void 0);
+        return evalPromise;
+      }
+      onMessage(line) {
+        if (line === "readyok") {
+          if (!this.ready) {
+            this.ready = true;
+            this.initResolve();
+          }
+          const waiters = this.readyWaiters.splice(0);
+          for (const waiter of waiters) {
+            waiter();
+          }
+          return;
+        }
+        if (!this.activeEval) {
+          return;
+        }
+        if (line.startsWith("info ")) {
+          const parsed = parseInfoLine(line);
+          if (parsed) {
+            this.activeEval.lastCp = parsed.cp;
+            this.activeEval.mate = parsed.mate;
+            this.activeEval.pv = parsed.pv;
+          }
+        } else if (line.startsWith("bestmove ")) {
+          this.activeEval.bestMove = line.split(" ")[1] ?? "";
+          this.activeEval.resolve({
+            cp: this.activeEval.lastCp,
+            mate: this.activeEval.mate,
+            bestMove: this.activeEval.bestMove,
+            pv: this.activeEval.pv
+          });
+          this.activeEval = null;
+        }
+      }
+      awaitReadyRoundTrip() {
+        return new Promise((resolve) => {
+          this.readyWaiters.push(resolve);
+          this.send("isready");
+        });
+      }
+      async applyBotDifficulty(preset) {
+        const configKey = `${preset.level}:${preset.elo ?? "max"}:${preset.skillLevel}:${preset.fullStrength}`;
+        if (configKey === this.lastBotConfigKey) {
+          return;
+        }
+        if (preset.fullStrength) {
+          this.send("setoption name UCI_LimitStrength value false");
+          this.send("setoption name Skill Level value 20");
+        } else {
+          this.send("setoption name UCI_LimitStrength value true");
+          this.send(`setoption name UCI_Elo value ${preset.elo}`);
+          this.send(`setoption name Skill Level value ${preset.skillLevel}`);
+        }
+        await this.awaitReadyRoundTrip();
+        this.lastBotConfigKey = configKey;
+      }
+      send(cmd) {
+        this.worker.postMessage(cmd);
+      }
+      terminate() {
+        this.worker.terminate();
+      }
+    };
+  }
+});
+
 // src/client/theme.ts
 function setTheme(theme) {
   if (theme === "forest") {
@@ -31760,78 +32654,16 @@ var require_main = __commonJS({
     init_arrow_render();
     init_best_move_arrow();
     init_account_sidebar2();
+    init_bot_config();
+    init_history_audio();
+    init_live_analysis_utils();
     init_live_chat();
+    init_main_template();
     init_notification_state();
     init_notification_ui();
+    init_pgn_utils();
+    init_stockfish_bridge();
     init_theme();
-    var BOT_DIFFICULTY_PRESETS = [
-      { level: 1, label: "Level 1 - 800 Elo", elo: 800, skillLevel: 0, moveTimeMs: 90, fullStrength: false },
-      { level: 2, label: "Level 2 - 1000 Elo", elo: 1e3, skillLevel: 2, moveTimeMs: 120, fullStrength: false },
-      { level: 3, label: "Level 3 - 1200 Elo", elo: 1200, skillLevel: 4, moveTimeMs: 170, fullStrength: false },
-      { level: 4, label: "Level 4 - 1400 Elo", elo: 1400, skillLevel: 6, moveTimeMs: 240, fullStrength: false },
-      { level: 5, label: "Level 5 - 1600 Elo", elo: 1600, skillLevel: 8, moveTimeMs: 330, fullStrength: false },
-      { level: 6, label: "Level 6 - 1800 Elo", elo: 1800, skillLevel: 10, moveTimeMs: 460, fullStrength: false },
-      { level: 7, label: "Level 7 - 2000 Elo", elo: 2e3, skillLevel: 12, moveTimeMs: 620, fullStrength: false },
-      { level: 8, label: "Level 8 - 2200 Elo", elo: 2200, skillLevel: 14, moveTimeMs: 820, fullStrength: false },
-      { level: 9, label: "Level 9 - 2400 Elo", elo: 2400, skillLevel: 17, moveTimeMs: 1100, fullStrength: false },
-      { level: 10, label: "Level 10 - Full Strength", elo: null, skillLevel: 20, moveTimeMs: 2200, fullStrength: true }
-    ];
-    var TIME_CONTROL_PRESETS = [
-      { id: "bullet1", label: "1+0 Bullet", initialMs: 6e4, incrementMs: 0 },
-      { id: "bullet2p1", label: "2+1 Bullet", initialMs: 12e4, incrementMs: 1e3 },
-      { id: "blitz3", label: "3-minute Blitz", initialMs: 18e4, incrementMs: 0 },
-      { id: "blitz3p2", label: "3+2 Blitz", initialMs: 18e4, incrementMs: 2e3 },
-      { id: "blitz5", label: "5-minute Blitz", initialMs: 3e5, incrementMs: 0 },
-      { id: "rapid10", label: "10-minute Rapid", initialMs: 6e5, incrementMs: 0 },
-      { id: "rapid15p10", label: "15+10 Rapid", initialMs: 9e5, incrementMs: 1e4 }
-    ];
-    var DEFAULT_BOT_TIME_CONTROL_ID = "blitz3";
-    function isTimeControlPresetId(value2) {
-      return typeof value2 === "string" && TIME_CONTROL_PRESETS.some((entry) => entry.id === value2);
-    }
-    function normalizeBotTimeControlId(value2) {
-      if (typeof value2 !== "string") {
-        return DEFAULT_BOT_TIME_CONTROL_ID;
-      }
-      const normalized = value2.trim();
-      const preset = TIME_CONTROL_PRESETS.find((entry) => entry.id === normalized);
-      return preset?.id ?? DEFAULT_BOT_TIME_CONTROL_ID;
-    }
-    function getBotTimeControlPreset(id) {
-      const preset = TIME_CONTROL_PRESETS.find((entry) => entry.id === id);
-      return preset ?? TIME_CONTROL_PRESETS[0];
-    }
-    function getLowTimeThresholdMs(initialMs) {
-      return Math.min(2e4, Math.max(5e3, Math.floor(initialMs * 0.18)));
-    }
-    function clampBotLevel(level) {
-      if (!Number.isFinite(level)) {
-        return 1;
-      }
-      return Math.min(10, Math.max(1, Math.round(level)));
-    }
-    function getBotDifficultyPreset(level) {
-      const resolved = BOT_DIFFICULTY_PRESETS[clampBotLevel(level) - 1];
-      return resolved ?? BOT_DIFFICULTY_PRESETS[0];
-    }
-    function botDifficultySummary(preset) {
-      return preset.fullStrength ? `Level ${preset.level} Max` : `Level ${preset.level} ${preset.elo} Elo`;
-    }
-    function moveToUci(move) {
-      return `${move.from}${move.to}${move.promotion ?? ""}`;
-    }
-    function pickRandomMove(moves) {
-      return moves[Math.floor(Math.random() * moves.length)];
-    }
-    function randomInt(min, max) {
-      return Math.floor(Math.random() * (max - min + 1)) + min;
-    }
-    function clampBotMoveTimeMs(value2) {
-      if (!Number.isFinite(value2)) {
-        return 60;
-      }
-      return Math.max(25, Math.min(4200, Math.round(value2)));
-    }
     function computeBotResponseTiming(preset, playerMove) {
       const legalReplies = chess.moves({ verbose: true }).length;
       const moveCount = state.snapshot?.moveCount ?? 0;
@@ -31913,53 +32745,6 @@ var require_main = __commonJS({
         preDelayMs: randomInt(standardMinDelay, standardMaxDelay),
         engineMoveTimeMs: clampBotMoveTimeMs(baseThink * levelMultiplier * (0.76 + Math.random() * 0.62))
       };
-    }
-    function scoreMoveForHumanizedBot(move) {
-      const capturedValue = move.captured ? PIECE_VALUES[move.captured] ?? 0 : 0;
-      const moverValue = PIECE_VALUES[move.piece] ?? 0;
-      const file2 = move.to.charCodeAt(0) - 97;
-      const rank2 = Number(move.to[1]) - 1;
-      const centrality = Math.max(0, 3.5 - (Math.abs(file2 - 3.5) + Math.abs(rank2 - 3.5)) / 2);
-      let score = 0;
-      score += capturedValue - moverValue * 0.15;
-      score += centrality * 12;
-      if (move.promotion) score += 900;
-      if (move.san.includes("+")) score += 85;
-      if (move.flags.includes("k") || move.flags.includes("q")) score += 40;
-      return score;
-    }
-    function chooseBotMoveByDifficulty(bestMoveUci, preset) {
-      if (preset.fullStrength || preset.level >= 10) {
-        return bestMoveUci;
-      }
-      const legalMoves = chess.moves({ verbose: true });
-      if (legalMoves.length <= 1) {
-        return bestMoveUci;
-      }
-      const bestMove = bestMoveUci.trim();
-      const alternatives = legalMoves.filter((move) => moveToUci(move) !== bestMove);
-      if (alternatives.length === 0) {
-        return bestMoveUci;
-      }
-      const levelGap = 10 - preset.level;
-      const blunderChance = Math.max(0, (levelGap - 1) * 0.03);
-      const inaccuracyChance = Math.max(0, levelGap * 0.045);
-      const roll = Math.random();
-      if (roll < blunderChance) {
-        const sorted = [...alternatives].sort((a, b2) => scoreMoveForHumanizedBot(a) - scoreMoveForHumanizedBot(b2));
-        const worstSlice = sorted.slice(0, Math.max(1, Math.floor(sorted.length / 3)));
-        return moveToUci(pickRandomMove(worstSlice));
-      }
-      if (roll < blunderChance + inaccuracyChance) {
-        const sorted = [...alternatives].sort((a, b2) => scoreMoveForHumanizedBot(a) - scoreMoveForHumanizedBot(b2));
-        const start = Math.floor(sorted.length * 0.2);
-        const end = Math.max(start + 1, Math.floor(sorted.length * 0.7));
-        const candidateSlice = sorted.slice(start, end);
-        if (candidateSlice.length > 0) {
-          return moveToUci(pickRandomMove(candidateSlice));
-        }
-      }
-      return bestMoveUci;
     }
     var PIECES = {
       wp: "/pieces/wP.svg",
@@ -32049,179 +32834,11 @@ var require_main = __commonJS({
       spin: 760,
       slide: 620
     };
-    var LIVE_MATE_CP = 1e5;
-    var PIECE_VALUES = {
-      p: 100,
-      n: 320,
-      b: 330,
-      r: 500,
-      q: 900,
-      k: 0
-    };
-    var LIVE_CATEGORY_LABELS = {
-      brilliant: "Brilliant",
-      great: "Great",
-      excellent: "Excellent",
-      good: "Good",
-      inaccuracy: "Inaccuracy",
-      mistake: "Mistake",
-      blunder: "Blunder"
-    };
-    var LIVE_CATEGORY_TEXT_SYMBOLS = {
-      brilliant: "!!",
-      great: "!",
-      excellent: "\u2605",
-      good: "\u2713",
-      inaccuracy: "?!",
-      mistake: "x",
-      blunder: "??"
-    };
-    var LIVE_CATEGORY_BADGE_ICON_PATHS = {
-      excellent: "/assets/labelBadges/excellent.svg",
-      good: "/assets/labelBadges/good.svg",
-      mistake: "/assets/labelBadges/mistake.svg"
-    };
-    var LIVE_BRILLIANT_VERIFICATION_DEPTH = 16;
     var ROOM_CODE_LENGTH = 4;
     var ROOM_ID_PATTERN3 = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
     function applyAnimationTiming(style) {
       const cssDuration = style === "epic" ? 760 : SMOOTH_MOVE_DURATION_MS;
       document.documentElement.style.setProperty("--move-duration", `${cssDuration}ms`);
-    }
-    var StockfishBridge = class {
-      worker;
-      ready = false;
-      initResolve;
-      initReject;
-      initPromise;
-      readyWaiters = [];
-      lastBotConfigKey = null;
-      activeEval = null;
-      queue = Promise.resolve();
-      constructor(workerPath = "/stockfish/stockfish-18-lite-single.js") {
-        this.worker = new Worker(workerPath);
-        this.initPromise = new Promise((resolve, reject) => {
-          this.initResolve = resolve;
-          this.initReject = reject;
-        });
-        this.worker.onmessage = (event) => this.onMessage(String(event.data ?? ""));
-        this.worker.onerror = () => {
-          if (!this.ready) this.initReject(new Error("Stockfish init failed."));
-          this.activeEval?.reject(new Error("Worker error."));
-          this.activeEval = null;
-        };
-        this.send("uci");
-        this.send("isready");
-      }
-      /** Gets the best move from the engine for the Bot player */
-      async getBotMove(fen, preset, moveTimeOverrideMs) {
-        await this.initPromise;
-        const botPromise = this.queue.then(async () => {
-          await this.applyBotDifficulty(preset);
-          const effectiveMoveTimeMs = clampBotMoveTimeMs(moveTimeOverrideMs ?? preset.moveTimeMs);
-          return new Promise((resolve, reject) => {
-            this.activeEval = {
-              resolve: (res) => resolve(res.bestMove),
-              reject,
-              lastCp: 0,
-              mate: null,
-              pv: "",
-              bestMove: ""
-            };
-            this.send(`position fen ${fen}`);
-            this.send(`go movetime ${effectiveMoveTimeMs}`);
-          });
-        });
-        this.queue = botPromise.then(() => void 0).catch(() => void 0);
-        return botPromise;
-      }
-      /** Standard analysis evaluation */
-      async evaluateFen(fen, depth) {
-        await this.initPromise;
-        const evalPromise = this.queue.then(() => {
-          return new Promise((resolve, reject) => {
-            this.activeEval = { resolve, reject, lastCp: 0, mate: null, pv: "", bestMove: "" };
-            this.send(`position fen ${fen}`);
-            this.send(`go depth ${depth}`);
-          });
-        });
-        this.queue = evalPromise.then(() => void 0).catch(() => void 0);
-        return evalPromise;
-      }
-      onMessage(line) {
-        if (line === "readyok") {
-          if (!this.ready) {
-            this.ready = true;
-            this.initResolve();
-          }
-          const waiters = this.readyWaiters.splice(0);
-          for (const waiter of waiters) {
-            waiter();
-          }
-          return;
-        }
-        if (!this.activeEval) return;
-        if (line.startsWith("info ")) {
-          const parsed = parseInfoLine(line);
-          if (parsed) {
-            this.activeEval.lastCp = parsed.cp;
-            this.activeEval.mate = parsed.mate;
-            this.activeEval.pv = parsed.pv;
-          }
-        } else if (line.startsWith("bestmove ")) {
-          this.activeEval.bestMove = line.split(" ")[1] ?? "";
-          this.activeEval.resolve({
-            cp: this.activeEval.lastCp,
-            mate: this.activeEval.mate,
-            bestMove: this.activeEval.bestMove,
-            pv: this.activeEval.pv
-          });
-          this.activeEval = null;
-        }
-      }
-      awaitReadyRoundTrip() {
-        return new Promise((resolve) => {
-          this.readyWaiters.push(resolve);
-          this.send("isready");
-        });
-      }
-      async applyBotDifficulty(preset) {
-        const configKey = `${preset.level}:${preset.elo ?? "max"}:${preset.skillLevel}:${preset.fullStrength}`;
-        if (configKey === this.lastBotConfigKey) {
-          return;
-        }
-        if (preset.fullStrength) {
-          this.send("setoption name UCI_LimitStrength value false");
-          this.send("setoption name Skill Level value 20");
-        } else {
-          this.send("setoption name UCI_LimitStrength value true");
-          this.send(`setoption name UCI_Elo value ${preset.elo}`);
-          this.send(`setoption name Skill Level value ${preset.skillLevel}`);
-        }
-        await this.awaitReadyRoundTrip();
-        this.lastBotConfigKey = configKey;
-      }
-      send(cmd) {
-        this.worker.postMessage(cmd);
-      }
-      terminate() {
-        this.worker.terminate();
-      }
-    };
-    function parseInfoLine(line) {
-      const scoreMatch = line.match(/score (cp|mate) (-?\d+)/);
-      if (!scoreMatch) {
-        return null;
-      }
-      const kind = scoreMatch[1];
-      const value2 = Number(scoreMatch[2]);
-      const pvMatch = line.match(/\spv\s(.+)$/);
-      const pv = pvMatch?.[1]?.trim() ?? "";
-      if (kind === "mate") {
-        const cp = value2 > 0 ? LIVE_MATE_CP - Math.min(Math.abs(value2), 99) * 100 : -LIVE_MATE_CP + Math.min(Math.abs(value2), 99) * 100;
-        return { cp, mate: value2, pv };
-      }
-      return { cp: value2, mate: null, pv };
     }
     var _audioCache = {};
     function playSound(name4) {
@@ -32235,53 +32852,6 @@ var require_main = __commonJS({
       });
     }
     var _lastPlayedMoveCount = -1;
-    function playSoundForMoveTraversal(moveSan, isCheck, isGameEnd) {
-      if (isGameEnd) {
-        playSound("gameEndOrCheckmate");
-        return;
-      }
-      let specialSoundPlayed = false;
-      if (isCheck) {
-        playSound("checkMove");
-        specialSoundPlayed = true;
-      }
-      if (moveSan.includes("x")) {
-        playSound("capture");
-        specialSoundPlayed = true;
-      }
-      if (moveSan.startsWith("O-O") && !specialSoundPlayed) {
-        playSound("castle");
-        specialSoundPlayed = true;
-      }
-      if (!specialSoundPlayed) {
-        playSound("move-self");
-      }
-    }
-    function buildHistoryBoardAtMove(snapshot, moveCount) {
-      const historyBoard = new Chess();
-      const clampedCount = Math.max(0, Math.min(moveCount, snapshot.moves.length));
-      for (let i = 0; i < clampedCount; i += 1) {
-        const move = snapshot.moves[i];
-        if (move) {
-          historyBoard.move(move.san);
-        }
-      }
-      return historyBoard;
-    }
-    function playSoundForHistoryNavigation(snapshot, previousPos, nextPos) {
-      if (previousPos === nextPos) {
-        return;
-      }
-      const traversedMoveIndex = nextPos > previousPos ? nextPos - 1 : previousPos - 1;
-      const traversedMove = snapshot.moves[traversedMoveIndex];
-      if (!traversedMove) {
-        return;
-      }
-      const boardAtNext = buildHistoryBoardAtMove(snapshot, nextPos);
-      const isGameEnd = boardAtNext.isCheckmate() || boardAtNext.isDraw();
-      const isCheck = boardAtNext.isCheck();
-      playSoundForMoveTraversal(traversedMove.san, isCheck, isGameEnd);
-    }
     function navigateToHistoryPosition(targetPos) {
       const snapshot = state.snapshot;
       if (!snapshot || snapshot.moves.length === 0) {
@@ -32294,351 +32864,19 @@ var require_main = __commonJS({
         return;
       }
       state.viewCursor = clampedTarget === maxMoves ? null : clampedTarget;
-      playSoundForHistoryNavigation(snapshot, previousPos, clampedTarget);
+      playSoundForHistoryNavigation(snapshot, previousPos, clampedTarget, playSound);
       render();
     }
     function playSoundForSnapshot(snapshot) {
       const last = snapshot.lastMove;
       if (!last) return;
-      playSoundForMoveTraversal(last.san, snapshot.check, snapshot.checkmate || snapshot.draw);
+      playSoundForMoveTraversal(last.san, snapshot.check, snapshot.checkmate || snapshot.draw, playSound);
     }
-    app.innerHTML = `
-  <div class="app-shell">
-    <section class="top-utility">
-      <p class="muted quick-identity" id="quickIdentity">Guest</p>
-      <div class="top-utility-actions">
-        <div class="notifications-shell" id="notificationsShell">
-          <button class="chip notifications-button" id="notificationsButton" type="button" aria-haspopup="dialog" aria-expanded="false">
-            Notifications
-            <span class="notifications-badge" id="notificationsBadge" hidden>0</span>
-          </button>
-          <section class="notifications-popover" id="notificationsPopover" hidden aria-live="polite" aria-label="Friend request notifications">
-            <p class="muted notifications-status" id="notificationsStatus">No notifications right now.</p>
-            <div class="notifications-list" id="notificationsList"></div>
-          </section>
-        </div>
-        <button class="chip account-menu-button" id="accountMenuButton" type="button" aria-haspopup="dialog" aria-expanded="false">
-          Account Menu
-        </button>
-      </div>
-    </section>
-
-    <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
-    <aside class="account-sidebar" id="accountSidebar" aria-hidden="true">
-      <header class="sidebar-header">
-        <h2>Player Menu</h2>
-        <button class="chip sidebar-close-button" id="sidebarCloseButton" type="button" aria-label="Close menu">Close</button>
-      </header>
-
-      <nav class="sidebar-nav" aria-label="Account sections">
-        <button class="chip sidebar-tab active" id="sidebarProfileTab" type="button">Profile</button>
-        <button class="chip sidebar-tab" id="sidebarHistoryTab" type="button">Saved Games</button>
-      </nav>
-
-      <section class="sidebar-panel" id="sidebarProfilePanel">
-        <p class="muted" id="authStatus">Guest mode enabled.</p>
-        <p class="muted" id="storedGamesMeta">Sign in/sign up to save up to 100 PGNs in cloud history.</p>
-        <div class="sidebar-actions">
-          <input class="auth-name-input" id="usernameInput" type="text" maxlength="24" placeholder="Custom username" hidden />
-          <button class="chip" id="saveUsernameButton" type="button" hidden>Save username</button>
-          <button class="chip" id="guestModeButton" type="button">Play as guest</button>
-          <button class="action cta-rainbow" id="signInGoogleButton" type="button">Sign in / Sign up</button>
-          <button class="chip" id="signOutButton" type="button" hidden>Sign out</button>
-        </div>
-
-        <section class="friends-section" aria-label="Friends section">
-          <h3 class="friends-title">Friends</h3>
-          <p class="muted friends-status" id="friendsStatus">Sign in to add friends by username or Friend ID.</p>
-          <div class="friends-player-id-wrap">
-            <span class="friends-player-id-label">Your Friend ID</span>
-            <p class="friends-player-id" id="friendPlayerId">Sign in to reveal your Friend ID</p>
-            <button class="chip" id="copyPlayerIdButton" type="button">Copy Friend ID</button>
-          </div>
-          <button class="friends-toggle" id="friendsToggleButton" type="button" aria-expanded="false">
-            <div class="friends-toggle-copy">
-              <p class="friends-toggle-title">Add and Invite Friends</p>
-              <p class="friends-toggle-description">Tap to manage friends by username or Friend ID.</p>
-            </div>
-            <span class="friends-toggle-indicator" aria-hidden="true">Open</span>
-          </button>
-          <div class="friends-composer" id="friendsComposer">
-            <div class="friends-add-row">
-              <input class="auth-name-input" id="friendIdInput" type="text" placeholder="Username or 5-digit Friend ID" autocomplete="off" />
-              <button class="chip" id="addFriendButton" type="button">Add</button>
-            </div>
-          </div>
-          <div class="friends-list" id="friendsList"></div>
-        </section>
-      </section>
-
-      <section class="sidebar-panel" id="sidebarHistoryPanel" hidden>
-        <p class="muted" id="historyPanelStatus">Sign in to view your saved PGN history.</p>
-        <div class="saved-games-list" id="savedGamesList"></div>
-      </section>
-    </aside>
-
-    <nav class="game-nav" id="gameNav" hidden>
-      <button class="nav-back-link" id="backToMenuButton" type="button">\u2190 Back to menu</button>
-    </nav>
-
-    <header class="hero">
-      <section class="hero-card hero-copy">
-        <h1>Multiplayer Chess</h1>
-        <p>Create a room or join one with code.</p>
-        <a class="analysis-board-link cta-rainbow" id="analysisBoardLink" href="/analyze">\u265F Open Analysis Board</a>
-      </section>
-      <aside class="hero-card status-card">
-        <div class="status-grid">
-          <div>
-            <strong>Room</strong>
-            <div class="muted" id="roomBadge">No active room</div>
-          </div>
-          <div>
-            <strong>Your seat</strong>
-            <div class="muted" id="roleBadge">Not seated</div>
-          </div>  
-          <div>
-            <strong>Match state</strong>
-            <div class="muted" id="matchStatus">Create a room to start.</div>
-          </div>
-        </div>
-      </aside>
-    </header>
-
-    <main class="layout">
-      <section class="panel board-panel">
-        <div class="board-toolbar">
-          <button class="action cta-turquoise" id="createRoomButton" type="button">Create room</button>
-          <button class="action cta-rainbow" id="playBotButton" type="button">Play vs Bot (${botDifficultySummary(getBotDifficultyPreset(savedBotLevel))})</button>
-          <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
-          <button class="ghost" id="undoRequestButton" type="button" hidden>Request undo</button>
-          <button class="ghost" id="undoDeclineButton" type="button" hidden>Decline undo</button>
-          <button class="ghost" id="labelsOnlyButton" type="button" hidden>Labels only: Off</button>
-          <button class="ghost" id="flipBoardButton" type="button" hidden>Flip board</button>
-          <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
-          <button class="ghost" id="resignButton" type="button" hidden>Resign</button>
-        </div>
-       <div class="pregame-placeholder" id="pregamePlaceholder">
-          <div id="pregameWaiting">
-            <h2>Waiting for opponent</h2>
-            <p>Create or join a room. The board appears automatically once both players are connected.</p>
-          </div>
-          <div id="pregameSelection" hidden>
-            <h2>Choose Your Color</h2>
-            <div class="mode-row">
-              <label class="mode-label" for="multiplayerTimeControlSelect">Game mode</label>
-              <div class="mode-select-wrap">
-                <select id="multiplayerTimeControlSelect" class="mode-select" aria-label="Choose multiplayer time control">
-                  ${TIME_CONTROL_PRESETS.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join("")}
-                </select>
-                <span class="mode-select-chevron" aria-hidden="true">\u25BE</span>
-              </div>
-              <p class="muted" id="modeHint">Room creator selects the timer. Color choice and ready are still required.</p>
-            </div>
-            <div class="selection-grid">
-              <div class="selection-col">
-                <strong>You</strong>
-                <div class="color-options">
-                  <button class="color-opt-btn" id="myPickWhite">White</button>
-                  <button class="color-opt-btn" id="myPickBlack">Black</button>
-                </div>
-                <div class="ready-badge" id="myReadyBadge">Ready!</div>
-              </div>
-              <div class="selection-col">
-                <strong>Opponent</strong>
-                <div class="color-options">
-                  <button class="color-opt-btn disabled" id="opPickWhite">White</button>
-                  <button class="color-opt-btn disabled" id="opPickBlack">Black</button>
-                </div>
-                <div class="ready-badge" id="opReadyBadge">Ready!</div>
-              </div>
-            </div>
-            <div style="margin-top: 24px;">
-              <button class="action" id="pregameReadyBtn">Ready to Play</button>
-              <div id="pregameConflictWarning" hidden>Both players cannot select the same color.</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="board-wrap">
-          <div class="board" id="board"></div>
-          <svg class="board-arrows" id="arrowLayer" viewBox="0 0 800 800" aria-hidden="true"></svg>
-        </div>
-        <div class="board-caption" id="boardCaption">
-          Tap or click one of your pieces, then choose a legal destination.
-        </div>
-
-        <div class="nav-row" id="gameNavRow" hidden>
-          <button id="liveNavFirst" title="Go to start">\u23EE</button>
-          <button id="liveNavPrev"  title="Previous move">\u25C0</button>
-          <button id="liveNavNext"  title="Next move">\u25B6</button>
-          <button id="liveNavLast"  title="Go to live">\u23ED</button>
-        </div>
-        <button class="focus-toggle-btn" id="focusModeBtn" type="button" aria-pressed="false">Focus</button>
-      </section>
-
-      <aside class="panel side-panel">
-        <section class="control-card" id="inviteJoinCard">
-          <h2 class="card-title">Invite or spectate <span class="title-decor">!!</span></h2>
-          <div class="control-row">
-            <button class="chip" id="copyLinkButton" type="button" hidden>Copy invite link</button>
-            <button class="chip" id="leaveRoomButton" type="button" hidden>Leave room</button>
-          </div>
-          <div class="join-grid">
-            <input class="join-input" id="roomInput" maxlength="4" inputmode="numeric" pattern="\\d{4}" placeholder="4-digit room ID" />
-            <button class="action" id="spectateRoomButton" type="button">Spectate</button>
-          </div>
-          <div class="link-row">
-            <button class="chip" id="roomInviteButton" type="button" hidden>Invite</button>
-          </div>
-        </section>
-
-        <section class="seat-card" id="seatCard" hidden>
-          <h2 class="card-title">Seats</h2>
-          <div class="seat-grid">
-            <article class="seat">
-              <strong>White</strong>
-              <span class="muted" id="whiteSeat">Waiting for player</span>
-              <span class="clock-pill" id="whiteClock">03:00</span>
-            </article>
-            <article class="seat">
-              <strong>Black</strong>
-              <span class="muted" id="blackSeat">Waiting for player</span>
-              <span class="clock-pill" id="blackClock">03:00</span>
-            </article>
-          </div>
-          <div class="meta-grid" style="margin-top: 14px;">
-            <div>
-              <span class="meta-label">Turn</span>
-              <span class="muted" id="turnMeta">White</span>
-            </div>
-            <div>
-              <span class="meta-label">Moves</span>
-              <span class="muted" id="movesMeta">0</span>
-            </div>
-            <div>
-              <span class="meta-label">Viewers</span>
-              <span class="muted" id="spectatorMeta">0</span>
-            </div>
-          </div>
-          <section class="in-game-friend-panel" id="inGameFriendPanel" hidden>
-            <p class="muted in-game-friend-meta" id="inGameFriendMeta">Opponent info unavailable.</p>
-            <button class="chip" id="sendFriendRequestButton" type="button">Send Friend Request</button>
-          </section>
-          <section class="in-game-friend-request" id="inGameFriendRequest" hidden>
-            <p class="in-game-friend-request-text" id="inGameFriendRequestText">Friend request incoming.</p>
-            <div class="in-game-friend-request-actions">
-              <button class="chip" id="declineInGameFriendRequestButton" type="button">Decline</button>
-              <button class="action" id="acceptInGameFriendRequestButton" type="button">Accept</button>
-            </div>
-          </section>
-        </section>
-
-        <section class="summary-card" id="summaryCard" hidden>
-          <h2 class="card-title">Game summary</h2>
-          <p class="muted" id="summaryText">The server will keep this board authoritative for every device in the room.</p>
-          <p class="muted" id="liveAnalysisText">Live analysis disabled.</p>
-        </section>
-
-        <section class="moves-card" id="movesCard" hidden>
-          <h2 class="card-title">Moves</h2>
-          <div class="move-list" id="moveList">
-            <div class="empty-state">No moves yet.</div>
-          </div>
-        </section>
-      </aside>
-    </main>
-  </div>
-
-  <div class="bot-difficulty-overlay" id="botDifficultyOverlay" aria-hidden="true" hidden>
-    <div class="bot-difficulty-backdrop" id="botDifficultyBackdrop" aria-hidden="true"></div>
-    <div class="bot-difficulty-picker" id="botDifficultyPicker" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="botDifficultyTitle">
-      <h2 class="bot-difficulty-title" id="botDifficultyTitle">Choose Bot Strength</h2>
-      <p class="bot-difficulty-subtitle">Pick bot strength and a clock mode before starting.</p>
-      <label class="bot-difficulty-label bot-difficulty-level-label" for="botDifficultySelect">Bot level</label>
-      <div class="bot-difficulty-select-wrap bot-difficulty-level-select-wrap">
-        <select id="botDifficultySelect" class="bot-difficulty-select" aria-label="Choose bot difficulty">
-          ${BOT_DIFFICULTY_PRESETS.map((preset) => `<option value="${preset.level}">${preset.label}</option>`).join("")}
-        </select>
-        <span class="bot-difficulty-select-chevron" aria-hidden="true">\u25BE</span>
-      </div>
-      <label class="bot-difficulty-label bot-difficulty-time-label" for="botTimeControlSelect">Time control</label>
-      <div class="bot-difficulty-select-wrap bot-difficulty-time-select-wrap">
-        <select id="botTimeControlSelect" class="bot-difficulty-select" aria-label="Choose bot time control">
-          ${TIME_CONTROL_PRESETS.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join("")}
-        </select>
-        <span class="bot-difficulty-select-chevron" aria-hidden="true">\u25BE</span>
-      </div>
-      <button class="chip bot-difficulty-start" id="startBotGameButton" type="button">Start Match</button>
-    </div>
-  </div>
-
-  <div class="focus-hud" id="focusHud" hidden>
-    <span class="focus-chip" id="focusTimer">00:00</span>
-
-    <div id="focusMaterialHud" class="focus-material-hud" hidden></div>
-  </div>
-
-  <div class="promotion-dialog" id="promotionDialog" hidden>
-    <div class="promotion-card">
-      <h2 class="card-title">Choose a promotion</h2>
-      <p class="muted">Select the piece that your pawn should become.</p>
-      <div class="promotion-grid">
-        <button class="promotion-button" data-promotion="q" type="button">Queen</button>
-        <button class="promotion-button" data-promotion="r" type="button">Rook</button>
-        <button class="promotion-button" data-promotion="b" type="button">Bishop</button>
-        <button class="promotion-button" data-promotion="n" type="button">Knight</button>
-      </div>
-    </div>
-  </div>
-
- <div class="modal-overlay" id="confirmDialog" hidden>
-  <div class="modal-card">
-    <div class="modal-header">
-      <h2 class="modal-title" id="modalTitle">Leave Match?</h2>
-      <p class="modal-text" id="modalDescription">Your current game progress will be lost.</p>
-    </div>
-    <div class="modal-actions">
-      <button class="modal-btn cancel" id="confirmNoBtn" type="button">Stay</button>
-      <button class="modal-btn confirm" id="confirmYesBtn" type="button">Confirm</button>
-    </div>
-  </div>
-</div>
-
-  <button class="chat-fab" id="chatFabButton" type="button" aria-label="Open live chat" hidden>
-    <span>Chat</span>
-    <span class="chat-fab-badge" id="chatFabBadge" hidden></span>
-  </button>
-
-  <section class="live-chat-panel" id="chatPanel" hidden>
-    <header class="live-chat-header">
-      <h2>Live Chat</h2>
-      <button class="chip" id="chatCloseButton" type="button">Close</button>
-    </header>
-    <p class="muted" id="chatStatusText">Live chat is available only for seated multiplayer players during active matches.</p>
-    <div class="live-chat-actions">
-      <button class="chip" id="chatConsentButton" type="button">Accept Communication</button>
-      <button class="action cta-turquoise chat-voice-btn" id="chatVoiceButton" type="button">Hold to Talk</button>
-    </div>
-    <div class="live-chat-messages" id="chatMessages">
-      <div class="empty-state">No messages yet.</div>
-    </div>
-    <div class="live-chat-compose">
-      <input class="join-input live-chat-input" id="chatInput" maxlength="420" placeholder="Type a message..." />
-      <button class="action" id="chatSendButton" type="button">Send</button>
-    </div>
-  </section>
-
-  <div class="toast" id="toast"></div>
-
-  <section class="friend-invite-prompt" id="friendInvitePrompt" hidden aria-live="polite">
-    <p class="friend-invite-prompt-text" id="friendInvitePromptText">New invitation</p>
-    <div class="friend-invite-prompt-actions">
-      <button class="chip" id="friendInviteDeclineButton" type="button">Decline</button>
-      <button class="action cta-turquoise" id="friendInviteAcceptButton" type="button">Accept</button>
-    </div>
-  </section>
-`;
+    app.innerHTML = buildMainAppMarkup({
+      botButtonLabel: botDifficultySummary(getBotDifficultyPreset(savedBotLevel)),
+      botDifficultyOptions: BOT_DIFFICULTY_PRESETS,
+      timeControlOptions: TIME_CONTROL_PRESETS
+    });
     var board = must("#board");
     var boardWrap = board.parentElement;
     var pregamePlaceholder = must("#pregamePlaceholder");
@@ -32794,43 +33032,6 @@ var require_main = __commonJS({
     var gameNavRow = must("#gameNavRow");
     var arrowAnnotations = /* @__PURE__ */ new Set();
     var squareAnnotations = /* @__PURE__ */ new Set();
-    function buildPgnFromMoves(moves, headers) {
-      if (moves.length === 0) {
-        return null;
-      }
-      const replay = new Chess();
-      try {
-        if (headers?.whiteName || headers?.blackName || headers?.result) {
-          replay.header(
-            "White",
-            headers.whiteName?.trim() || "White",
-            "Black",
-            headers.blackName?.trim() || "Black",
-            "Result",
-            headers.result || "*"
-          );
-        }
-        for (const move of moves) {
-          const appliedMove = replay.move(move.san);
-          if (!appliedMove) {
-            return null;
-          }
-        }
-        return replay.pgn();
-      } catch {
-        return null;
-      }
-    }
-    function buildFinishedGameSignature(snapshot) {
-      return [
-        state.gameMode,
-        snapshot.roomId,
-        snapshot.moveCount,
-        snapshot.status,
-        snapshot.winner ?? "none",
-        snapshot.lastMove?.san ?? "none"
-      ].join(":");
-    }
     var accountSidebarController = createAccountSidebarController({
       socket,
       refs: {
@@ -32925,7 +33126,7 @@ var require_main = __commonJS({
       if (!gameEnded || snapshot.moveCount === 0) {
         return;
       }
-      const signature = buildFinishedGameSignature(snapshot);
+      const signature = buildFinishedGameSignature(state.gameMode, snapshot);
       const result = snapshot.draw ? "1/2-1/2" : snapshot.winner === "w" ? "1-0" : snapshot.winner === "b" ? "0-1" : "*";
       const pgn2 = buildPgnFromMoves(snapshot.moves, {
         whiteName: snapshot.players.whiteName,
@@ -33601,7 +33802,7 @@ var require_main = __commonJS({
       if (state.gameMode !== "bot" || !state.snapshot || state.snapshot.turn !== "b" || state.snapshot.winner !== null || state.snapshot.checkmate || state.snapshot.draw) {
         return;
       }
-      const selectedMoveUci = chooseBotMoveByDifficulty(bestMoveUci, botPreset);
+      const selectedMoveUci = chooseBotMoveByDifficulty(bestMoveUci, botPreset, chess.moves({ verbose: true }));
       let bMove = null;
       const attemptedMoves = selectedMoveUci === bestMoveUci ? [selectedMoveUci] : [selectedMoveUci, bestMoveUci];
       for (const moveUci of attemptedMoves) {
@@ -34822,129 +35023,6 @@ var require_main = __commonJS({
       </div>
     `;
       }
-    }
-    function materialFromPerspective(fen, color) {
-      const board2 = fen.split(" ")[0] ?? "";
-      let white = 0;
-      let black = 0;
-      for (const ch of board2) {
-        if (ch === "/" || /\d/.test(ch)) {
-          continue;
-        }
-        const value2 = PIECE_VALUES[ch.toLowerCase()] ?? 0;
-        if (ch === ch.toUpperCase()) {
-          white += value2;
-        } else {
-          black += value2;
-        }
-      }
-      return color === "w" ? white - black : black - white;
-    }
-    function classifyLiveMoveQuality(input) {
-      const {
-        cpl,
-        matchesBestMove,
-        materialDelta,
-        evalGain,
-        isCapture,
-        previousOpponentCategory,
-        brilliantOffer
-      } = input;
-      const opponentBlundered = previousOpponentCategory === "mistake" || previousOpponentCategory === "blunder";
-      const isSacrifice = materialDelta <= -100;
-      const brilliantSacrifice = isSacrifice && evalGain >= 80 && cpl <= 35;
-      const greatPunish = matchesBestMove && cpl <= 22 && opponentBlundered && (isCapture || materialDelta >= 100 || evalGain >= 110);
-      if (brilliantSacrifice || brilliantOffer) {
-        return { category: "brilliant", label: LIVE_CATEGORY_LABELS.brilliant };
-      }
-      if (greatPunish) {
-        return { category: "great", label: LIVE_CATEGORY_LABELS.great };
-      }
-      if (cpl <= 45) {
-        return { category: "excellent", label: LIVE_CATEGORY_LABELS.excellent };
-      }
-      if (cpl <= 90) {
-        return { category: "good", label: LIVE_CATEGORY_LABELS.good };
-      }
-      if (cpl <= 160) {
-        return { category: "inaccuracy", label: LIVE_CATEGORY_LABELS.inaccuracy };
-      }
-      if (cpl <= 280) {
-        return { category: "mistake", label: LIVE_CATEGORY_LABELS.mistake };
-      }
-      return { category: "blunder", label: LIVE_CATEGORY_LABELS.blunder };
-    }
-    async function verifyLiveBrilliantOffer(input) {
-      const {
-        engine,
-        move,
-        beforeFen,
-        afterFen,
-        beforeMoverCp,
-        afterMoverCp,
-        cpl,
-        matchesBestMove,
-        materialDelta
-      } = input;
-      if (materialDelta < 0 || cpl > 35 || !matchesBestMove && afterMoverCp < beforeMoverCp - 40) {
-        return false;
-      }
-      const board2 = new Chess(afterFen);
-      const movedPiece = board2.get(move.to)?.type ?? move.piece;
-      const movedPieceValue = movedPiece ? PIECE_VALUES[movedPiece] ?? 0 : 0;
-      if (movedPieceValue < 330) {
-        return false;
-      }
-      const captureReplies = board2.moves({ verbose: true }).filter((reply) => {
-        if (reply.to !== move.to || !reply.captured) {
-          return false;
-        }
-        const capturerValue = PIECE_VALUES[reply.piece] ?? 0;
-        return capturerValue <= movedPieceValue;
-      });
-      if (captureReplies.length === 0) {
-        return false;
-      }
-      let worstReplyScore = Number.POSITIVE_INFINITY;
-      for (const reply of captureReplies.slice(0, 3)) {
-        const replyBoard = new Chess(afterFen);
-        replyBoard.move(reply);
-        const replyEval = await engine.evaluateFen(replyBoard.fen(), LIVE_BRILLIANT_VERIFICATION_DEPTH);
-        worstReplyScore = Math.min(worstReplyScore, replyEval.cp);
-      }
-      return worstReplyScore >= Math.max(150, beforeMoverCp - 90);
-    }
-    function symbolForLiveCategory(category) {
-      return LIVE_CATEGORY_TEXT_SYMBOLS[category];
-    }
-    function appendLiveCategoryMarkerContent(marker, category) {
-      const iconPath = LIVE_CATEGORY_BADGE_ICON_PATHS[category];
-      if (iconPath) {
-        const icon = document.createElement("img");
-        icon.className = "piece-quality-marker-icon";
-        icon.src = iconPath;
-        icon.alt = `${LIVE_CATEGORY_LABELS[category]} move`;
-        icon.draggable = false;
-        marker.append(icon);
-        return;
-      }
-      marker.textContent = symbolForLiveCategory(category);
-    }
-    function summarizeLiveMove(label, cpl, san) {
-      return `${label}: ${san} (${cpl} CPL)`;
-    }
-    function buildBeforeAfterFenFromMoves(moves) {
-      if (moves.length === 0) {
-        return null;
-      }
-      const replay = new Chess();
-      for (let index = 0; index < moves.length - 1; index += 1) {
-        replay.move(moves[index].san);
-      }
-      const beforeFen = replay.fen();
-      replay.move(moves[moves.length - 1].san);
-      const afterFen = replay.fen();
-      return { beforeFen, afterFen };
     }
     async function maybeRunLiveAnalysis(snapshot) {
       const labelsOnlyMode = isLabelsOnlyMode(snapshot);
