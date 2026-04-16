@@ -29576,7 +29576,11 @@ function createAccountSidebarController({
     currentRoomRole = roomRole;
     renderFriendsPanel();
   };
-  const onSessionLeft = () => {
+  const onSessionLeft = (payload) => {
+    const roomId = payload && typeof payload === "object" ? normalizeRoomId2(payload.roomId) : null;
+    if (roomId && currentRoomId && roomId !== currentRoomId) {
+      return;
+    }
     if (currentRoomId === null && currentRoomRole === null) {
       return;
     }
@@ -31839,6 +31843,7 @@ function buildMainAppMarkup(params) {
           <button class="action cta-turquoise" id="createRoomButton" type="button">Create room</button>
           <button class="action cta-rainbow" id="playBotButton" type="button">Play vs Bot (${params.botButtonLabel})</button>
           <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
+          <button class="ghost" id="roomSettingsButton" type="button" hidden>Settings</button>
           <button class="ghost" id="undoRequestButton" type="button" hidden>Request undo</button>
           <button class="ghost" id="undoDeclineButton" type="button" hidden>Decline undo</button>
           <button class="ghost" id="labelsOnlyButton" type="button" hidden>Labels only: Off</button>
@@ -33289,6 +33294,7 @@ var require_main = __commonJS({
     var leaveRoomButton = must("#leaveRoomButton");
     var flipBoardButton = must("#flipBoardButton");
     var rematchButton = must("#rematchButton");
+    var roomSettingsButton = must("#roomSettingsButton");
     var undoRequestButton = must("#undoRequestButton");
     var undoDeclineButton = must("#undoDeclineButton");
     var labelsOnlyButton = must("#labelsOnlyButton");
@@ -33649,6 +33655,24 @@ var require_main = __commonJS({
         startBotGame();
       }
     });
+    roomSettingsButton.addEventListener("click", () => {
+      if (state.gameMode !== "multiplayer" || !state.roomId) {
+        return;
+      }
+      const snapshot = state.snapshot;
+      const isCreator = Boolean(snapshot?.ownerId && socket.id && snapshot.ownerId === socket.id);
+      if (!isCreator) {
+        showToast("Only the room creator can change game settings.");
+        return;
+      }
+      const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
+      const isGameInProgress = Boolean(snapshot?.isStarted && !gameEnded);
+      if (isGameInProgress) {
+        toggleConfirmModal(true, "settings");
+        return;
+      }
+      socket.emit("room:settings");
+    });
     undoRequestButton.addEventListener("click", () => {
       const snapshot = state.snapshot;
       if (!snapshot || state.gameMode !== "multiplayer") {
@@ -33710,6 +33734,9 @@ var require_main = __commonJS({
         if (type === "bot") {
           modalTitle.textContent = "Switch to Bot?";
           modalDescription.textContent = "You are currently in a room. Do you want to leave and start a local game against the AI?";
+        } else if (type === "settings") {
+          modalTitle.textContent = "Change Game Settings?";
+          modalDescription.textContent = "Are you sure you want to change the game settings? The current game will be ended if it is still in progress.";
         } else if (type === "resign") {
           modalTitle.textContent = "Resign Game?";
           modalDescription.textContent = "This will count as a loss. Are you sure you want to give up?";
@@ -33759,6 +33786,8 @@ var require_main = __commonJS({
           state.snapshot.status = "Resigned";
           render();
         }
+      } else if (action === "settings") {
+        socket.emit("room:settings");
       } else if (action === "leave") {
         socket.emit("room:leave");
         clearLocalRoomState();
@@ -34405,7 +34434,29 @@ var require_main = __commonJS({
     });
     socket.on("session:joined", (payload) => {
       const shouldAnimateRoomCreate = roomCreatePending && (payload.role === "w" || payload.role === "b");
+      const switchedRooms = Boolean(state.snapshot && state.snapshot.roomId !== payload.roomId);
+      if (switchedRooms) {
+        clearScheduledBotResponse();
+        pendingInGameFriendRequest = null;
+        setSendFriendRequestState(false);
+        state.snapshot = null;
+        state.pendingPromotion = null;
+        state.premoves = [];
+        state.selectedSquare = null;
+        state.legalTargets = [];
+        state.viewCursor = null;
+        state.liveAnalysisSummary = "Live analysis disabled.";
+        state.lastAnalyzedMoveKey = null;
+        state.liveMoveGrades = {};
+        suppressAnimationForMove = null;
+        lastAnimatedMoveKey = null;
+        _lastPlayedMoveCount = -1;
+        clearArrows();
+        chess.reset();
+        resetLowTimeWarningState();
+      }
       setRoomCreatePending(false);
+      state.gameMode = "multiplayer";
       state.roomId = payload.roomId;
       state.role = payload.role;
       state.shareUrl = payload.shareUrl || `${window.location.origin}/?room=${payload.roomId}`;
@@ -34434,14 +34485,21 @@ var require_main = __commonJS({
         triggerRoomCreateTransition();
       }
     });
-    socket.on("session:left", () => {
+    socket.on("session:left", (payload) => {
       setRoomCreatePending(false);
       clearRoomCreateTransitionClass();
       if (state.gameMode === "bot") return;
+      const leftRoomId = typeof payload?.roomId === "string" ? payload.roomId : null;
+      if (leftRoomId && state.roomId && leftRoomId !== state.roomId) {
+        return;
+      }
       clearLocalRoomState();
       render();
     });
     socket.on("room:state", (snapshot) => {
+      if (!state.roomId || state.gameMode !== "multiplayer" || snapshot.roomId !== state.roomId) {
+        return;
+      }
       if (!snapshot.checkmate && !snapshot.draw && snapshot.winner === null && snapshot.moveCount === 0) {
         accountSidebarController.resetFinishedGameTracking();
       }
@@ -34669,6 +34727,7 @@ var require_main = __commonJS({
       undoRequestButton.hidden = !isGameActive || !canVote || state.gameMode !== "multiplayer";
       undoDeclineButton.hidden = true;
       rematchButton.hidden = !gameEnded || !canVote || !hasRoom;
+      roomSettingsButton.hidden = !isMultiplayer || !hasRoom || !isCreator || !isSeatedPlayer;
       resignButton.hidden = !isGameActive || gameEnded || !canVote;
       if (!isGameActive && state.focusMode) {
         state.focusMode = false;

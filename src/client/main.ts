@@ -236,7 +236,7 @@ let liveAnalyzer: StockfishBridge | null = null;
 let botAnalyzer: StockfishBridge | null = null;
 let liveAnalysisToken = 0;
 let bestMoveArrowToken = 0;
-let currentModalAction: "leave" | "resign" | "bot" | null = null;
+let currentModalAction: "leave" | "resign" | "bot" | "settings" | null = null;
 let animationFinished = true; 
 let animatingToSquare: Square | null = null;
 let lastRoomStateReceivedAtMs = Date.now();
@@ -539,6 +539,7 @@ const copyLinkButton = must<HTMLButtonElement>("#copyLinkButton");
 const leaveRoomButton = must<HTMLButtonElement>("#leaveRoomButton");
 const flipBoardButton = must<HTMLButtonElement>("#flipBoardButton");
 const rematchButton = must<HTMLButtonElement>("#rematchButton");
+const roomSettingsButton = must<HTMLButtonElement>("#roomSettingsButton");
 const undoRequestButton = must<HTMLButtonElement>("#undoRequestButton");
 const undoDeclineButton = must<HTMLButtonElement>("#undoDeclineButton");
 const labelsOnlyButton = must<HTMLButtonElement>("#labelsOnlyButton");
@@ -967,6 +968,28 @@ rematchButton.addEventListener("click", () => {
   }
 });
 
+roomSettingsButton.addEventListener("click", () => {
+  if (state.gameMode !== "multiplayer" || !state.roomId) {
+    return;
+  }
+
+  const snapshot = state.snapshot;
+  const isCreator = Boolean(snapshot?.ownerId && socket.id && snapshot.ownerId === socket.id);
+  if (!isCreator) {
+    showToast("Only the room creator can change game settings.");
+    return;
+  }
+
+  const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
+  const isGameInProgress = Boolean(snapshot?.isStarted && !gameEnded);
+  if (isGameInProgress) {
+    toggleConfirmModal(true, "settings");
+    return;
+  }
+
+  socket.emit("room:settings");
+});
+
 undoRequestButton.addEventListener("click", () => {
   const snapshot = state.snapshot;
   if (!snapshot || state.gameMode !== "multiplayer") {
@@ -1039,7 +1062,7 @@ liveAnalysisButton.addEventListener("click", () => {
   }
 });
 
-const toggleConfirmModal = (show: boolean, type?: "leave" | "resign" | "bot") => {
+const toggleConfirmModal = (show: boolean, type?: "leave" | "resign" | "bot" | "settings") => {
   if (show && type) {
     currentModalAction = type;
     document.body.classList.add("modal-open");
@@ -1048,6 +1071,9 @@ const toggleConfirmModal = (show: boolean, type?: "leave" | "resign" | "bot") =>
     if (type === "bot") {
       modalTitle.textContent = "Switch to Bot?";
       modalDescription.textContent = "You are currently in a room. Do you want to leave and start a local game against the AI?";
+    } else if (type === "settings") {
+      modalTitle.textContent = "Change Game Settings?";
+      modalDescription.textContent = "Are you sure you want to change the game settings? The current game will be ended if it is still in progress.";
     } else if (type === "resign") {
       modalTitle.textContent = "Resign Game?";
       modalDescription.textContent = "This will count as a loss. Are you sure you want to give up?";
@@ -1111,6 +1137,8 @@ confirmYesBtn.addEventListener("click", () => {
       state.snapshot.status = "Resigned";
       render();
     }
+  } else if (action === "settings") {
+    socket.emit("room:settings");
   } else if (action === "leave") {
     socket.emit("room:leave");
     clearLocalRoomState();
@@ -1947,8 +1975,33 @@ socket.on("friends:request:response", (payload?: { accepted?: boolean; friendNam
 
 socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl: string }) => {
   const shouldAnimateRoomCreate = roomCreatePending && (payload.role === "w" || payload.role === "b");
+  const switchedRooms = Boolean(state.snapshot && state.snapshot.roomId !== payload.roomId);
+
+  if (switchedRooms) {
+    // Detach all room-scoped UI/game state so stale post-game context cannot leak across rooms.
+    clearScheduledBotResponse();
+    pendingInGameFriendRequest = null;
+    setSendFriendRequestState(false);
+    state.snapshot = null;
+    state.pendingPromotion = null;
+    state.premoves = [];
+    state.selectedSquare = null;
+    state.legalTargets = [];
+    state.viewCursor = null;
+    state.liveAnalysisSummary = "Live analysis disabled.";
+    state.lastAnalyzedMoveKey = null;
+    state.liveMoveGrades = {};
+    suppressAnimationForMove = null;
+    lastAnimatedMoveKey = null;
+    _lastPlayedMoveCount = -1;
+    clearArrows();
+    chess.reset();
+    resetLowTimeWarningState();
+  }
+
   setRoomCreatePending(false);
 
+  state.gameMode = "multiplayer";
   state.roomId = payload.roomId;
   state.role = payload.role;
   state.shareUrl = payload.shareUrl || `${window.location.origin}/?room=${payload.roomId}`;
@@ -1982,16 +2035,25 @@ socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl
   }
 });
 
-socket.on("session:left", () => {
+socket.on("session:left", (payload?: { roomId?: string }) => {
   setRoomCreatePending(false);
   clearRoomCreateTransitionClass();
   if (state.gameMode === "bot") return;
+
+  const leftRoomId = typeof payload?.roomId === "string" ? payload.roomId : null;
+  if (leftRoomId && state.roomId && leftRoomId !== state.roomId) {
+    return;
+  }
 
   clearLocalRoomState();
   render();
 });
 
 socket.on("room:state", (snapshot: RoomSnapshot) => {
+  if (!state.roomId || state.gameMode !== "multiplayer" || snapshot.roomId !== state.roomId) {
+    return;
+  }
+
   if (!snapshot.checkmate && !snapshot.draw && snapshot.winner === null && snapshot.moveCount === 0) {
     accountSidebarController.resetFinishedGameTracking();
   }
@@ -2310,6 +2372,7 @@ function renderSession(): void {
   undoRequestButton.hidden = !isGameActive || !canVote || state.gameMode !== "multiplayer";
   undoDeclineButton.hidden = true;
   rematchButton.hidden = !gameEnded || !canVote || !hasRoom;
+  roomSettingsButton.hidden = !isMultiplayer || !hasRoom || !isCreator || !isSeatedPlayer;
   resignButton.hidden = !isGameActive || gameEnded || !canVote;
 
   if (!isGameActive && state.focusMode) {

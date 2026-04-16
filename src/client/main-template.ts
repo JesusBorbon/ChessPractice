@@ -124,6 +124,7 @@ export function buildMainAppMarkup(params: BuildMainAppMarkupParams): string {
           <button class="action cta-turquoise" id="createRoomButton" type="button">Create room</button>
           <button class="action cta-rainbow" id="playBotButton" type="button">Play vs Bot (${params.botButtonLabel})</button>
           <button class="ghost" id="rematchButton" type="button" hidden>Request rematch</button>
+          <button class="ghost" id="roomSettingsButton" type="button" hidden>Settings</button>
           <button class="ghost" id="undoRequestButton" type="button" hidden>Request undo</button>
           <button class="ghost" id="undoDeclineButton" type="button" hidden>Decline undo</button>
           <button class="ghost" id="labelsOnlyButton" type="button" hidden>Labels only: Off</button>

@@ -209,6 +209,7 @@ const ROOM_CODE_LENGTH = 4;
 const ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
 const ROOM_TTL_MS = 1000 * 60 * 60 * 4;
 const PLAYER_DISCONNECT_GRACE_MS = 1000 * 60 * 3; // 3 minutos para reconectarse
+const POST_GAME_DISCONNECT_GRACE_MS = 1000 * 60 * 60 * 24; // keep finished-game seats for 24h
 const LOW_TIME_THRESHOLD_MS = 20_000;
 const VOICE_MAX_BASE64_LENGTH = 2_200_000;
 const VOICE_MAX_DURATION_MS = 20_000;
@@ -752,10 +753,11 @@ function areKnownFriendsForSocket(socketId: string, targetUserId: string): boole
 
 function pruneDisconnectedRoomSeats(room: GameRoom, now = Date.now()): boolean {
   let changed = false;
+  const seatGraceMs = getSeatDisconnectGraceMs(room);
 
   const shouldReleaseWhite = Boolean(
     room.white && (
-      (room.whiteDisconnectedAt && now - room.whiteDisconnectedAt > PLAYER_DISCONNECT_GRACE_MS)
+      (room.whiteDisconnectedAt && now - room.whiteDisconnectedAt > seatGraceMs)
       || (!isSocketConnected(room.white) && !room.whiteDisconnectedAt)
     ),
   );
@@ -774,7 +776,7 @@ function pruneDisconnectedRoomSeats(room: GameRoom, now = Date.now()): boolean {
 
   const shouldReleaseBlack = Boolean(
     room.black && (
-      (room.blackDisconnectedAt && now - room.blackDisconnectedAt > PLAYER_DISCONNECT_GRACE_MS)
+      (room.blackDisconnectedAt && now - room.blackDisconnectedAt > seatGraceMs)
       || (!isSocketConnected(room.black) && !room.blackDisconnectedAt)
     ),
   );
@@ -793,7 +795,7 @@ function pruneDisconnectedRoomSeats(room: GameRoom, now = Date.now()): boolean {
 
   const shouldReleaseOwner = Boolean(
     room.ownerId && (
-      (room.ownerDisconnectedAt && now - room.ownerDisconnectedAt > PLAYER_DISCONNECT_GRACE_MS)
+      (room.ownerDisconnectedAt && now - room.ownerDisconnectedAt > seatGraceMs)
       || (!isSocketConnected(room.ownerId) && !room.ownerDisconnectedAt)
     ),
   );
@@ -814,6 +816,16 @@ function pruneDisconnectedRoomSeats(room: GameRoom, now = Date.now()): boolean {
   }
 
   return changed;
+}
+
+function isFinishedStartedRoom(room: GameRoom): boolean {
+  return room.isStarted && (Boolean(room.winner) || room.chess.isGameOver());
+}
+
+function getSeatDisconnectGraceMs(room: GameRoom): number {
+  return isFinishedStartedRoom(room)
+    ? POST_GAME_DISCONNECT_GRACE_MS
+    : PLAYER_DISCONNECT_GRACE_MS;
 }
 
 function clearSocketUserIdentity(socketId: string): void {
@@ -1389,6 +1401,23 @@ function emitSessionJoinForSeatedPlayers(room: GameRoom): void {
   }
 }
 
+function resetRoomToPregame(room: GameRoom): void {
+  room.chess.reset();
+  room.isStarted = false;
+  room.colorChoices.clear();
+  room.readyPlayers.clear();
+  room.rematchVotes.clear();
+  room.analysisVotes.clear();
+  room.labelsVotes.clear();
+  room.analysisEnabled = false;
+  room.analysisLabelsOnlyEnabled = false;
+  delete room.pendingUndoRequester;
+  delete room.winner;
+  delete room.statusOverride;
+  resetRoomClock(room);
+  resetRoomChatConsent(room);
+}
+
 function maybeStartPregameMatch(room: GameRoom): boolean {
   if (!canStartPregameMatch({
     white: room.white,
@@ -1488,7 +1517,7 @@ function closeRoom(room: GameRoom, reason: "abandoned" | "room-closed" = "room-c
 
       memberSocket.leave(room.id);
       resetSocketState(socketId);
-      memberSocket.emit("session:left");
+      memberSocket.emit("session:left", { roomId: room.id });
       memberSocket.emit("room:error", { message: "Room closed because both players left." });
     }
   }
@@ -1517,7 +1546,7 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
 
   for (const room of rooms.values()) {
     let changed = false;
-    const shouldHoldSeat = !immediate && room.isStarted && !room.winner && !room.chess.isGameOver();
+    const shouldHoldSeat = !immediate && room.isStarted;
 
     // Si es desconexión normal (no inmediata), marcar como "desconectado temporalmente"
     // permitiendo reconexión dentro del grace period
@@ -1857,7 +1886,7 @@ io.on("connection", (socket) => {
       const isSeatedPlayer = room.white === socket.id || room.black === socket.id;
       if (!normalizedUserId && isSeatedPlayer) {
         removeFromRoom(socket.id, true);
-        socket.emit("session:left");
+        socket.emit("session:left", { roomId: room.id });
         socket.emit("room:error", { message: "Guest mode is spectator-only online. Sign in to play online PvP." });
         return;
       }
@@ -2426,10 +2455,11 @@ io.on("connection", (socket) => {
       const ownerWasBlack = room.ownerId && room.black === room.ownerId;
 
       const now = Date.now();
+      const seatGraceMs = getSeatDisconnectGraceMs(room);
       const canReclaimWhite = Boolean(
         room.white
         && room.whiteDisconnectedAt
-        && now - room.whiteDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS
+        && now - room.whiteDisconnectedAt < seatGraceMs
         && room.whiteUserId
         && requesterUserId
         && requesterUserId === room.whiteUserId,
@@ -2437,7 +2467,7 @@ io.on("connection", (socket) => {
       const canReclaimBlack = Boolean(
         room.black
         && room.blackDisconnectedAt
-        && now - room.blackDisconnectedAt < PLAYER_DISCONNECT_GRACE_MS
+        && now - room.blackDisconnectedAt < seatGraceMs
         && room.blackUserId
         && requesterUserId
         && requesterUserId === room.blackUserId,
@@ -2553,7 +2583,7 @@ io.on("connection", (socket) => {
 
     socket.leave(room.id);
     removeFromRoom(socket.id, true);
-    socket.emit("session:left");
+    socket.emit("session:left", { roomId: room.id });
   });
 
   socket.on("chat:consent:set", (payload?: { accept?: boolean }) => {
@@ -2682,6 +2712,49 @@ io.on("connection", (socket) => {
     emitChatState(room);
   });
 
+  socket.on("room:settings", () => {
+    const clientState = socket.data as ClientState;
+    const roomId = clientState.roomId;
+
+    if (!roomId) {
+      socket.emit("room:error", { message: "Join a room before opening settings." });
+      return;
+    }
+
+    const room = rooms.get(roomId);
+    if (!room) {
+      socket.emit("room:error", { message: "The room is no longer available." });
+      return;
+    }
+
+    const liveRole = getLiveRoomRole(room, socket.id);
+    if (!liveRole || liveRole === "spectator") {
+      socket.emit("room:error", { message: "Only seated players can open room settings." });
+      return;
+    }
+
+    if (room.ownerId !== socket.id) {
+      socket.emit("room:error", { message: "Only the room creator can change game settings." });
+      return;
+    }
+
+    if (!room.isStarted) {
+      emitRoomState(room);
+      return;
+    }
+
+    resetRoomToPregame(room);
+    emitSessionJoinForSeatedPlayers(room);
+    emitRoomState(room);
+    emitChatState(room);
+    if (room.white) {
+      emitChatMessages(room.white, room);
+    }
+    if (room.black) {
+      emitChatMessages(room.black, room);
+    }
+  });
+
   socket.on("pregame:mode", (payload?: { mode?: TimeControlPresetId }) => {
     if (!payload || !isTimeControlPresetId(payload.mode)) {
       socket.emit("room:error", { message: "Invalid game mode." });
@@ -2689,7 +2762,7 @@ io.on("connection", (socket) => {
     }
 
     const room = getRoomForSocket(socket.id);
-    if (!room || room.isStarted) {
+    if (!room) {
       return;
     }
 
@@ -2704,7 +2777,13 @@ io.on("connection", (socket) => {
       return;
     }
 
+    if (room.isStarted) {
+      socket.emit("room:error", { message: "Open Settings first to return to room setup." });
+      return;
+    }
+
     room.timeControl = payload.mode;
+    room.colorChoices.clear();
     room.readyPlayers.clear();
     resetRoomClock(room);
     emitRoomState(room);
@@ -3107,51 +3186,29 @@ socket.on("game:rematch", () => {
       return;
     }
 
+    if (!isFinishedStartedRoom(room)) {
+      socket.emit("room:error", { message: "Rematch is only available after a game finishes." });
+      return;
+    }
+
     room.rematchVotes.add(socket.id);
     const players = getActivePlayerSockets(room);
 
     
    if (players.length === 2 && players.every((playerId) => room.rematchVotes.has(playerId))) {
       room.chess.reset();
-      delete room.winner;      
-      delete room.statusOverride; 
-      delete room.pendingUndoRequester;
+      room.isStarted = true;
       room.rematchVotes.clear();
+      room.analysisVotes.clear();
+      room.labelsVotes.clear();
+      room.analysisEnabled = false;
+      room.analysisLabelsOnlyEnabled = false;
+      room.colorChoices.clear();
+      room.readyPlayers.clear();
+      delete room.pendingUndoRequester;
+      delete room.winner;
+      delete room.statusOverride;
       resetRoomClock(room);
-
-    
-      if (room.white && room.black) {
-        const w = room.white;
-        const b = room.black;
-        room.white = b;
-        room.black = w;
-
-        const whiteUserId = room.whiteUserId ?? null;
-        room.whiteUserId = room.blackUserId ?? null;
-        room.blackUserId = whiteUserId;
-      }
-
-      resetRoomChatConsent(room);
-
-      if (room.white) {
-        const wData = io.sockets.sockets.get(room.white)?.data as ClientState | undefined;
-        if (wData) wData.role = "w";
-        io.sockets.sockets.get(room.white)?.emit("session:joined", { roomId: room.id, role: "w", shareUrl: buildRoomShareUrl(room.white, room) });
-      }
-      if (room.black) {
-        const bData = io.sockets.sockets.get(room.black)?.data as ClientState | undefined;
-        if (bData) bData.role = "b";
-        io.sockets.sockets.get(room.black)?.emit("session:joined", { roomId: room.id, role: "b", shareUrl: buildRoomShareUrl(room.black, room) });
-      }
-
-      if (room.white) {
-        emitChatMessages(room.white, room);
-      }
-      if (room.black) {
-        emitChatMessages(room.black, room);
-      }
-      emitChatState(room);
-
       startClock(room);
     }
 

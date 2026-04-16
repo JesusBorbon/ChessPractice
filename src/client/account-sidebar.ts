@@ -495,7 +495,14 @@ export function createAccountSidebarController({
     renderFriendsPanel();
   };
 
-  const onSessionLeft = (): void => {
+  const onSessionLeft = (payload?: unknown): void => {
+    const roomId = payload && typeof payload === "object"
+      ? normalizeRoomId((payload as { roomId?: unknown }).roomId)
+      : null;
+    if (roomId && currentRoomId && roomId !== currentRoomId) {
+      return;
+    }
+
     if (currentRoomId === null && currentRoomRole === null) {
       return;
     }
