@@ -32183,6 +32183,8 @@ function createNotificationsUiController({
     const canShow = isOpen && !refs.button.disabled;
     refs.popover.hidden = !canShow;
     refs.button.setAttribute("aria-expanded", canShow ? "true" : "false");
+    refs.shell.classList.toggle("is-open", canShow);
+    document.body.classList.toggle("notifications-open-mobile", canShow && window.matchMedia("(max-width: 640px)").matches);
   }
   function createFriendRequestItem(item) {
     const card = document.createElement("article");
@@ -32282,6 +32284,8 @@ function createNotificationsUiController({
       refs.button.removeEventListener("click", onToggleOpen);
       document.removeEventListener("click", onDocumentClick);
       document.removeEventListener("keydown", onEscapeKey);
+      refs.shell.classList.remove("is-open");
+      document.body.classList.remove("notifications-open-mobile");
     }
   };
 }
@@ -32877,6 +32881,7 @@ var require_main = __commonJS({
       botDifficultyOptions: BOT_DIFFICULTY_PRESETS,
       timeControlOptions: TIME_CONTROL_PRESETS
     });
+    var appShell = must(".app-shell");
     var board = must("#board");
     var boardWrap = board.parentElement;
     var pregamePlaceholder = must("#pregamePlaceholder");
@@ -32987,6 +32992,37 @@ var require_main = __commonJS({
     var pregameConflictWarning = must("#pregameConflictWarning");
     var whiteClock = must("#whiteClock");
     var blackClock = must("#blackClock");
+    var ROOM_CREATE_BUTTON_LABEL = "Create room";
+    var ROOM_CREATE_BUTTON_PENDING_LABEL = "Creating room...";
+    var ROOM_CREATE_TRANSITION_CLASS = "room-create-transition";
+    var ROOM_CREATE_TRANSITION_MS = 620;
+    var roomCreatePending = false;
+    var roomCreateTransitionTimer = null;
+    function clearRoomCreateTransitionClass() {
+      appShell.classList.remove(ROOM_CREATE_TRANSITION_CLASS);
+      if (roomCreateTransitionTimer !== null) {
+        window.clearTimeout(roomCreateTransitionTimer);
+        roomCreateTransitionTimer = null;
+      }
+    }
+    function setRoomCreatePending(next) {
+      roomCreatePending = next;
+      createRoomButton.classList.toggle("is-pending", next);
+      createRoomButton.textContent = next ? ROOM_CREATE_BUTTON_PENDING_LABEL : ROOM_CREATE_BUTTON_LABEL;
+    }
+    function triggerRoomCreateTransition() {
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        clearRoomCreateTransitionClass();
+        return;
+      }
+      clearRoomCreateTransitionClass();
+      void appShell.offsetWidth;
+      appShell.classList.add(ROOM_CREATE_TRANSITION_CLASS);
+      roomCreateTransitionTimer = window.setTimeout(() => {
+        appShell.classList.remove(ROOM_CREATE_TRANSITION_CLASS);
+        roomCreateTransitionTimer = null;
+      }, ROOM_CREATE_TRANSITION_MS);
+    }
     multiplayerTimeControlSelect.addEventListener("change", () => {
       const nextMode = multiplayerTimeControlSelect.value;
       if (!isTimeControlPresetId(nextMode)) {
@@ -33272,10 +33308,14 @@ var require_main = __commonJS({
     });
     createRoomButton.addEventListener("click", () => {
       closeBotDifficultyPicker();
+      if (roomCreatePending) {
+        return;
+      }
       if (!accountSidebarController.canPlayOnlineMultiplayer()) {
         showToast("Guest mode is spectator-only online. Sign in to create a PvP room.");
         return;
       }
+      setRoomCreatePending(true);
       state.gameMode = "multiplayer";
       socket.emit("room:create");
       scrollToInviteJoinCardOnMobile();
@@ -34019,6 +34059,10 @@ var require_main = __commonJS({
     if (socket.connected) onSocketConnect();
     socket.on("disconnect", () => {
       state.connected = false;
+      if (roomCreatePending) {
+        setRoomCreatePending(false);
+        renderSession();
+      }
     });
     socket.on("connection:status", () => {
       state.connected = true;
@@ -34066,6 +34110,8 @@ var require_main = __commonJS({
       showToast(accepted ? `${friendName} accepted your friend request.` : `${friendName} declined your friend request.`);
     });
     socket.on("session:joined", (payload) => {
+      const shouldAnimateRoomCreate = roomCreatePending && (payload.role === "w" || payload.role === "b");
+      setRoomCreatePending(false);
       state.roomId = payload.roomId;
       state.role = payload.role;
       state.shareUrl = payload.shareUrl || `${window.location.origin}/?room=${payload.roomId}`;
@@ -34090,8 +34136,13 @@ var require_main = __commonJS({
       accountSidebarController.resetFinishedGameTracking();
       emitCurrentProfileName();
       render();
+      if (shouldAnimateRoomCreate) {
+        triggerRoomCreateTransition();
+      }
     });
     socket.on("session:left", () => {
+      setRoomCreatePending(false);
+      clearRoomCreateTransitionClass();
       if (state.gameMode === "bot") return;
       clearLocalRoomState();
       render();
@@ -34173,6 +34224,7 @@ var require_main = __commonJS({
       void maybePersistFinishedGame(snapshot);
     });
     socket.on("room:error", (payload) => {
+      setRoomCreatePending(false);
       setSendFriendRequestState(false);
       suppressAnimationForMove = null;
       if (state.autoJoinCode) {
@@ -34296,7 +34348,9 @@ var require_main = __commonJS({
       if (heroCopy) heroCopy.hidden = isGameActive;
       inviteJoinCard.hidden = isGameActive;
       createRoomButton.hidden = isGameActive || !canPlayOnlineMultiplayer;
-      createRoomButton.disabled = !canPlayOnlineMultiplayer;
+      createRoomButton.disabled = !canPlayOnlineMultiplayer || roomCreatePending;
+      createRoomButton.classList.toggle("is-pending", roomCreatePending);
+      createRoomButton.textContent = roomCreatePending ? ROOM_CREATE_BUTTON_PENDING_LABEL : ROOM_CREATE_BUTTON_LABEL;
       playBotButton.hidden = isGameActive;
       botDifficultyOverlay.hidden = isGameActive;
       leaveRoomButton.hidden = !hasRoom;
@@ -35790,6 +35844,8 @@ var require_main = __commonJS({
       window.history.replaceState({}, "", url2);
     }
     function clearLocalRoomState() {
+      setRoomCreatePending(false);
+      clearRoomCreateTransitionClass();
       clearScheduledBotResponse();
       pendingInGameFriendRequest = null;
       setSendFriendRequestState(false);

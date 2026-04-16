@@ -539,6 +539,29 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
 .promotion-button:focus {
   box-shadow: 0 12px 24px rgba(25, 63, 48, 0.18), 0 0 0 3px rgba(25, 63, 48, 0.1);
 }
+
+#createRoomButton.is-pending {
+  pointer-events: none;
+  opacity: 0.92;
+}
+
+#createRoomButton.is-pending::after {
+  content: "";
+  width: 12px;
+  height: 12px;
+  margin-left: 8px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 253, 248, 0.9);
+  border-right-color: transparent;
+  animation: room-create-spinner 640ms linear infinite;
+}
+
+@keyframes room-create-spinner {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 #board {
   border-radius: 12px;
 }
@@ -670,6 +693,59 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
 .pregame-placeholder:not([hidden]) ~ .board-wrap,
 .pregame-placeholder:not([hidden]) ~ .board-caption {
   display: none;
+}
+
+.app-shell.room-create-transition #inviteJoinCard,
+.app-shell.room-create-transition #seatCard,
+.app-shell.room-create-transition #pregamePlaceholder:not([hidden]) {
+  animation: room-create-fade-in 360ms cubic-bezier(0.22, 0.8, 0.3, 1) both;
+}
+
+.app-shell.room-create-transition #seatCard {
+  animation-delay: 38ms;
+}
+
+.app-shell.room-create-transition #pregamePlaceholder:not([hidden]) {
+  animation-delay: 74ms;
+}
+
+.app-shell.room-create-transition #roomBadge {
+  animation: room-create-badge-pop 460ms cubic-bezier(0.2, 0.85, 0.3, 1) both;
+}
+
+@keyframes room-create-fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.987);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes room-create-badge-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(5px) scale(0.92);
+  }
+  65% {
+    opacity: 1;
+    transform: translateY(-1px) scale(1.03);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #createRoomButton.is-pending::after,
+  .app-shell.room-create-transition #inviteJoinCard,
+  .app-shell.room-create-transition #seatCard,
+  .app-shell.room-create-transition #pregamePlaceholder:not([hidden]),
+  .app-shell.room-create-transition #roomBadge {
+    animation: none;
+  }
 }
 
 .board {

@@ -334,6 +334,7 @@ app.innerHTML = buildMainAppMarkup({
 
 
 
+const appShell = must<HTMLDivElement>(".app-shell");
 const board = must<HTMLDivElement>("#board");
 const boardWrap = board.parentElement as HTMLDivElement | null;
 const pregamePlaceholder = must<HTMLDivElement>("#pregamePlaceholder");
@@ -445,6 +446,44 @@ const pregameReadyBtn = must<HTMLButtonElement>("#pregameReadyBtn");
 const pregameConflictWarning = must<HTMLDivElement>("#pregameConflictWarning");
 const whiteClock = must<HTMLSpanElement>("#whiteClock");
 const blackClock = must<HTMLSpanElement>("#blackClock");
+
+const ROOM_CREATE_BUTTON_LABEL = "Create room";
+const ROOM_CREATE_BUTTON_PENDING_LABEL = "Creating room...";
+const ROOM_CREATE_TRANSITION_CLASS = "room-create-transition";
+const ROOM_CREATE_TRANSITION_MS = 620;
+
+let roomCreatePending = false;
+let roomCreateTransitionTimer: number | null = null;
+
+function clearRoomCreateTransitionClass(): void {
+  appShell.classList.remove(ROOM_CREATE_TRANSITION_CLASS);
+  if (roomCreateTransitionTimer !== null) {
+    window.clearTimeout(roomCreateTransitionTimer);
+    roomCreateTransitionTimer = null;
+  }
+}
+
+function setRoomCreatePending(next: boolean): void {
+  roomCreatePending = next;
+  createRoomButton.classList.toggle("is-pending", next);
+  createRoomButton.textContent = next ? ROOM_CREATE_BUTTON_PENDING_LABEL : ROOM_CREATE_BUTTON_LABEL;
+}
+
+function triggerRoomCreateTransition(): void {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    clearRoomCreateTransitionClass();
+    return;
+  }
+
+  clearRoomCreateTransitionClass();
+  // Force reflow so class-based entrance animations retrigger reliably.
+  void appShell.offsetWidth;
+  appShell.classList.add(ROOM_CREATE_TRANSITION_CLASS);
+  roomCreateTransitionTimer = window.setTimeout(() => {
+    appShell.classList.remove(ROOM_CREATE_TRANSITION_CLASS);
+    roomCreateTransitionTimer = null;
+  }, ROOM_CREATE_TRANSITION_MS);
+}
 
 multiplayerTimeControlSelect.addEventListener("change", () => {
   const nextMode = multiplayerTimeControlSelect.value;
@@ -787,10 +826,14 @@ window.addEventListener("resize", () => {
 
 createRoomButton.addEventListener("click", () => {
   closeBotDifficultyPicker();
+  if (roomCreatePending) {
+    return;
+  }
   if (!accountSidebarController.canPlayOnlineMultiplayer()) {
     showToast("Guest mode is spectator-only online. Sign in to create a PvP room.");
     return;
   }
+  setRoomCreatePending(true);
   state.gameMode = "multiplayer"; // forcing the mode to multiplayer to avoid "ghost bot" bugs when switching from bot games
   socket.emit("room:create");
   scrollToInviteJoinCardOnMobile();
@@ -1732,6 +1775,10 @@ if (socket.connected) onSocketConnect(); // Fires immediately if already connect
 
 socket.on("disconnect", () => {
   state.connected = false;
+  if (roomCreatePending) {
+    setRoomCreatePending(false);
+    renderSession();
+  }
 });
 
 socket.on("connection:status", () => {
@@ -1813,6 +1860,9 @@ socket.on("friends:request:response", (payload?: { accepted?: boolean; friendNam
 });
 
 socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl: string }) => {
+  const shouldAnimateRoomCreate = roomCreatePending && (payload.role === "w" || payload.role === "b");
+  setRoomCreatePending(false);
+
   state.roomId = payload.roomId;
   state.role = payload.role;
   state.shareUrl = payload.shareUrl || `${window.location.origin}/?room=${payload.roomId}`;
@@ -1841,9 +1891,14 @@ socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl
 
   emitCurrentProfileName();
   render();
+  if (shouldAnimateRoomCreate) {
+    triggerRoomCreateTransition();
+  }
 });
 
 socket.on("session:left", () => {
+  setRoomCreatePending(false);
+  clearRoomCreateTransitionClass();
   if (state.gameMode === "bot") return;
 
   clearLocalRoomState();
@@ -1964,6 +2019,7 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
 });
 
 socket.on("room:error", (payload: { message: string }) => {
+  setRoomCreatePending(false);
   setSendFriendRequestState(false);
   suppressAnimationForMove = null;
   if (state.autoJoinCode) {
@@ -2128,7 +2184,9 @@ function renderSession(): void {
 
   inviteJoinCard.hidden = isGameActive;
   createRoomButton.hidden = isGameActive || !canPlayOnlineMultiplayer;
-  createRoomButton.disabled = !canPlayOnlineMultiplayer;
+  createRoomButton.disabled = !canPlayOnlineMultiplayer || roomCreatePending;
+  createRoomButton.classList.toggle("is-pending", roomCreatePending);
+  createRoomButton.textContent = roomCreatePending ? ROOM_CREATE_BUTTON_PENDING_LABEL : ROOM_CREATE_BUTTON_LABEL;
   playBotButton.hidden = isGameActive;
   botDifficultyOverlay.hidden = isGameActive;
 
@@ -4094,6 +4152,8 @@ function syncUrl(roomId: string | null, inviteToken: string | null = null): void
 }
 
 function clearLocalRoomState(): void {  
+  setRoomCreatePending(false);
+  clearRoomCreateTransitionClass();
   clearScheduledBotResponse();
   pendingInGameFriendRequest = null;
   setSendFriendRequestState(false);

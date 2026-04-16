@@ -103,6 +103,8 @@ export function createNotificationsUiController({
     const canShow = isOpen && !refs.button.disabled;
     refs.popover.hidden = !canShow;
     refs.button.setAttribute("aria-expanded", canShow ? "true" : "false");
+    refs.shell.classList.toggle("is-open", canShow);
+    document.body.classList.toggle("notifications-open-mobile", canShow && window.matchMedia("(max-width: 640px)").matches);
   }
 
   function createFriendRequestItem(item: FriendRequestNotificationItem): HTMLElement {
@@ -230,6 +232,8 @@ export function createNotificationsUiController({
       refs.button.removeEventListener("click", onToggleOpen);
       document.removeEventListener("click", onDocumentClick);
       document.removeEventListener("keydown", onEscapeKey);
+      refs.shell.classList.remove("is-open");
+      document.body.classList.remove("notifications-open-mobile");
     },
   };
 }
