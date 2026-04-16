@@ -225,6 +225,8 @@ button {
     "level-select"
     "time-label"
     "time-select"
+    "side-label"
+    "side-select"
     "start";
   align-items: center;
   column-gap: 12px;
@@ -351,6 +353,10 @@ button {
   grid-area: time-label;
 }
 
+.bot-difficulty-side-label {
+  grid-area: side-label;
+}
+
 .bot-difficulty-select-wrap {
   position: relative;
   border-radius: 16px;
@@ -373,6 +379,10 @@ button {
 
 .bot-difficulty-time-select-wrap {
   grid-area: time-select;
+}
+
+.bot-difficulty-side-select-wrap {
+  grid-area: side-select;
 }
 
 .bot-difficulty-select {
@@ -468,8 +478,16 @@ button {
   transition-delay: 230ms;
 }
 
+.bot-difficulty-picker.is-open .bot-difficulty-side-label {
+  transition-delay: 250ms;
+}
+
+.bot-difficulty-picker.is-open .bot-difficulty-side-select-wrap {
+  transition-delay: 270ms;
+}
+
 .bot-difficulty-picker.is-open .bot-difficulty-start {
-  transition-delay: 260ms;
+  transition-delay: 300ms;
 }
 
 #playBotButton.is-active {
@@ -1826,6 +1844,8 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
       "level-select"
       "time-label"
       "time-select"
+      "side-label"
+      "side-select"
       "start";
     row-gap: 12px;
     border-radius: 24px;

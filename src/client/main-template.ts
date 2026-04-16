@@ -267,7 +267,7 @@ export function buildMainAppMarkup(params: BuildMainAppMarkupParams): string {
     <div class="bot-difficulty-backdrop" id="botDifficultyBackdrop" aria-hidden="true"></div>
     <div class="bot-difficulty-picker" id="botDifficultyPicker" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="botDifficultyTitle">
       <h2 class="bot-difficulty-title" id="botDifficultyTitle">Choose Bot Strength</h2>
-      <p class="bot-difficulty-subtitle">Pick bot strength and a clock mode before starting.</p>
+      <p class="bot-difficulty-subtitle">Pick bot strength, clock mode, and your side before starting.</p>
       <label class="bot-difficulty-label bot-difficulty-level-label" for="botDifficultySelect">Bot level</label>
       <div class="bot-difficulty-select-wrap bot-difficulty-level-select-wrap">
         <select id="botDifficultySelect" class="bot-difficulty-select" aria-label="Choose bot difficulty">
@@ -279,6 +279,14 @@ export function buildMainAppMarkup(params: BuildMainAppMarkupParams): string {
       <div class="bot-difficulty-select-wrap bot-difficulty-time-select-wrap">
         <select id="botTimeControlSelect" class="bot-difficulty-select" aria-label="Choose bot time control">
           ${timeControlOptionsHtml}
+        </select>
+        <span class="bot-difficulty-select-chevron" aria-hidden="true">▾</span>
+      </div>
+      <label class="bot-difficulty-label bot-difficulty-side-label" for="botSideSelect">Your side</label>
+      <div class="bot-difficulty-select-wrap bot-difficulty-side-select-wrap">
+        <select id="botSideSelect" class="bot-difficulty-select" aria-label="Choose your side against the bot">
+          <option value="w">White</option>
+          <option value="b">Black</option>
         </select>
         <span class="bot-difficulty-select-chevron" aria-hidden="true">▾</span>
       </div>

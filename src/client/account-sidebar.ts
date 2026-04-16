@@ -39,7 +39,8 @@ type SocketLike = {
   off: (event: string, listener: (payload?: unknown) => void) => void;
 };
 
-type FriendPresenceStatus = "online" | "in-room" | "offline";
+type FriendPresenceStatus = "online" | "in-room" | "playing-bot" | "offline";
+type FriendPresenceActivity = "playing-bot" | null;
 
 type SidebarFriendEntry = FriendListEntry & {
   status: FriendPresenceStatus;
@@ -103,6 +104,7 @@ export type AccountSidebarController = {
   dispose: () => void;
   emitCurrentProfileName: () => void;
   emitFriendshipState: () => void;
+  setFriendPresenceActivity: (activity: FriendPresenceActivity) => void;
   getCurrentPlayerName: () => string;
   getAuthenticatedUserId: () => string | null;
   isRegisteredOnlineUser: () => boolean;
@@ -158,6 +160,7 @@ export function createAccountSidebarController({
   let currentFriendId: string | null = null;
   let currentRoomId: string | null = null;
   let currentRoomRole: "w" | "b" | "spectator" | null = null;
+  let friendPresenceActivity: FriendPresenceActivity = null;
 
   let savingGameSignature: string | null = null;
   let savedGameSignature: string | null = null;
@@ -757,7 +760,18 @@ export function createAccountSidebarController({
     socket.emit("friends:state", {
       userId: authenticatedUser.uid,
       friendUserIds,
+      activity: friendPresenceActivity,
     });
+  }
+
+  function setFriendPresenceActivity(activity: FriendPresenceActivity): void {
+    const normalized = activity === "playing-bot" ? "playing-bot" : null;
+    if (friendPresenceActivity === normalized) {
+      return;
+    }
+
+    friendPresenceActivity = normalized;
+    emitFriendshipState();
   }
 
   function getAuthenticatedUserId(): string | null {
@@ -795,6 +809,10 @@ export function createAccountSidebarController({
       return "In Room";
     }
 
+    if (status === "playing-bot") {
+      return "Playing vs Bot";
+    }
+
     if (status === "online") {
       return "Online";
     }
@@ -805,8 +823,9 @@ export function createAccountSidebarController({
   function getInviteCandidates(): FriendInviteCandidate[] {
     const byStatusPriority: Record<FriendPresenceStatus, number> = {
       "in-room": 0,
-      online: 1,
-      offline: 2,
+      "playing-bot": 1,
+      online: 2,
+      offline: 3,
     };
 
     return [...friends]
@@ -1823,6 +1842,7 @@ export function createAccountSidebarController({
     dispose,
     emitCurrentProfileName,
     emitFriendshipState,
+    setFriendPresenceActivity,
     getCurrentPlayerName,
     getAuthenticatedUserId,
     isRegisteredOnlineUser,

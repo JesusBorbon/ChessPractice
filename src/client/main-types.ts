@@ -163,6 +163,7 @@ export type AppState = {
   gameMode: "multiplayer" | "bot";
   botLevel: number;
   botTimeControlId: TimeControlPresetId;
+  botPlayerSide: PlayerRole;
   botPickerOpen: boolean;
   viewCursor: number | null;
   trailFxEnabled: boolean;

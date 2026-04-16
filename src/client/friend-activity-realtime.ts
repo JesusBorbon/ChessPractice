@@ -5,7 +5,7 @@ type SocketLike = {
   off: (event: string, listener: (payload?: unknown) => void) => void;
 };
 
-export type FriendActivityStatus = "online" | "in-room" | "offline";
+export type FriendActivityStatus = "online" | "in-room" | "playing-bot" | "offline";
 
 export type FriendActivityState = {
   status: FriendActivityStatus;
@@ -37,7 +37,7 @@ function normalizeUserId(value: unknown): string {
 }
 
 function normalizeStatus(value: unknown): FriendActivityStatus {
-  if (value === "online" || value === "in-room") {
+  if (value === "online" || value === "in-room" || value === "playing-bot") {
     return value;
   }
 

@@ -41,6 +41,7 @@ type ClientState = {
   email?: string;
   friendId?: string;
   usernameChangeCount?: number;
+  friendPresenceActivity?: FriendPresenceActivity;
 };
 
 type OnlineMultiplayerAccountRole = "guest" | "registered";
@@ -52,7 +53,8 @@ type OnlineMultiplayerPermissions = {
   canUseAccountFeatures: boolean;
 };
 
-type FriendPresenceStatus = "online" | "in-room" | "offline";
+type FriendPresenceActivity = "playing-bot";
+type FriendPresenceStatus = "online" | "in-room" | "playing-bot" | "offline";
 
 type FriendPresenceInfo = {
   status: FriendPresenceStatus;
@@ -625,6 +627,14 @@ function normalizeFriendId(value: unknown): string | null {
   return normalized;
 }
 
+function normalizeFriendPresenceActivity(value: unknown): FriendPresenceActivity | null {
+  if (value === "playing-bot") {
+    return "playing-bot";
+  }
+
+  return null;
+}
+
 function normalizeUsernameChangeCount(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return 0;
@@ -880,10 +890,15 @@ function getFriendPresenceInfo(userId: string): FriendPresenceInfo {
   }
 
   let inRoomPresence: FriendPresenceInfo | null = null;
+  let hasBotActivity = false;
 
   for (const socketId of connectedSocketIds) {
     const socket = io.sockets.sockets.get(socketId);
     const state = socket?.data as ClientState | undefined;
+    if (normalizeFriendPresenceActivity(state?.friendPresenceActivity) === "playing-bot") {
+      hasBotActivity = true;
+    }
+
     if (!state?.roomId) {
       continue;
     }
@@ -921,6 +936,14 @@ function getFriendPresenceInfo(userId: string): FriendPresenceInfo {
 
   if (inRoomPresence) {
     return inRoomPresence;
+  }
+
+  if (hasBotActivity) {
+    return {
+      status: "playing-bot",
+      roomId: null,
+      canSpectate: false,
+    };
   }
 
   return {
@@ -1852,7 +1875,11 @@ io.on("connection", (socket) => {
     setFriendWatchForSocket(socket.id, friendIds);
   });
 
-  socket.on("friends:state", (payload?: { userId?: string | null; friendUserIds?: string[] }) => {
+  socket.on("friends:state", (payload?: {
+    userId?: string | null;
+    friendUserIds?: string[];
+    activity?: FriendPresenceActivity | null;
+  }) => {
     const senderUserId = getSocketUserId(socket.id);
     if (!senderUserId) {
       clearKnownFriendsForSocket(socket.id);
@@ -1871,6 +1898,19 @@ io.on("connection", (socket) => {
 
     const friendUserIds = Array.isArray(payload?.friendUserIds) ? payload.friendUserIds : [];
     setKnownFriendsForSocket(socket.id, friendUserIds);
+
+    const clientState = socket.data as ClientState;
+    const previousActivity = normalizeFriendPresenceActivity(clientState.friendPresenceActivity);
+    const nextActivity = normalizeFriendPresenceActivity(payload?.activity);
+    if (nextActivity) {
+      clientState.friendPresenceActivity = nextActivity;
+    } else {
+      delete clientState.friendPresenceActivity;
+    }
+
+    if (previousActivity !== nextActivity) {
+      notifyFriendWatchers(senderUserId);
+    }
   });
 
   socket.on("friends:notification:request", (payload?: {

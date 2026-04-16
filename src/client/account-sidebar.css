@@ -290,6 +290,11 @@
   color: #1a4f8f;
 }
 
+.friend-status--playing-bot {
+  background: rgba(174, 117, 30, 0.2);
+  color: #7a4e13;
+}
+
 .friend-status--offline {
   background: rgba(138, 138, 138, 0.2);
   color: #545454;

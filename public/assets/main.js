@@ -29028,7 +29028,7 @@ function normalizeUserId2(value2) {
   return value2.trim();
 }
 function normalizeStatus(value2) {
-  if (value2 === "online" || value2 === "in-room") {
+  if (value2 === "online" || value2 === "in-room" || value2 === "playing-bot") {
     return value2;
   }
   return "offline";
@@ -29198,6 +29198,7 @@ function createAccountSidebarController({
   let currentFriendId = null;
   let currentRoomId = null;
   let currentRoomRole = null;
+  let friendPresenceActivity = null;
   let savingGameSignature = null;
   let savedGameSignature = null;
   let failedGameSignature = null;
@@ -29687,8 +29688,17 @@ function createAccountSidebarController({
     const friendUserIds = Array.from(new Set(friends.map((entry) => entry.userId).filter(Boolean)));
     socket.emit("friends:state", {
       userId: authenticatedUser.uid,
-      friendUserIds
+      friendUserIds,
+      activity: friendPresenceActivity
     });
+  }
+  function setFriendPresenceActivity(activity) {
+    const normalized = activity === "playing-bot" ? "playing-bot" : null;
+    if (friendPresenceActivity === normalized) {
+      return;
+    }
+    friendPresenceActivity = normalized;
+    emitFriendshipState();
   }
   function getAuthenticatedUserId() {
     return authenticatedUser?.uid ?? null;
@@ -29717,6 +29727,9 @@ function createAccountSidebarController({
     if (status === "in-room") {
       return "In Room";
     }
+    if (status === "playing-bot") {
+      return "Playing vs Bot";
+    }
     if (status === "online") {
       return "Online";
     }
@@ -29725,8 +29738,9 @@ function createAccountSidebarController({
   function getInviteCandidates() {
     const byStatusPriority = {
       "in-room": 0,
-      online: 1,
-      offline: 2
+      "playing-bot": 1,
+      online: 2,
+      offline: 3
     };
     return [...friends].sort((left, right) => {
       const priorityDiff = byStatusPriority[left.status] - byStatusPriority[right.status];
@@ -30553,6 +30567,7 @@ function createAccountSidebarController({
     dispose,
     emitCurrentProfileName,
     emitFriendshipState,
+    setFriendPresenceActivity,
     getCurrentPlayerName,
     getAuthenticatedUserId,
     isRegisteredOnlineUser,
@@ -31766,7 +31781,7 @@ function buildMainAppMarkup(params) {
     <div class="bot-difficulty-backdrop" id="botDifficultyBackdrop" aria-hidden="true"></div>
     <div class="bot-difficulty-picker" id="botDifficultyPicker" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="botDifficultyTitle">
       <h2 class="bot-difficulty-title" id="botDifficultyTitle">Choose Bot Strength</h2>
-      <p class="bot-difficulty-subtitle">Pick bot strength and a clock mode before starting.</p>
+      <p class="bot-difficulty-subtitle">Pick bot strength, clock mode, and your side before starting.</p>
       <label class="bot-difficulty-label bot-difficulty-level-label" for="botDifficultySelect">Bot level</label>
       <div class="bot-difficulty-select-wrap bot-difficulty-level-select-wrap">
         <select id="botDifficultySelect" class="bot-difficulty-select" aria-label="Choose bot difficulty">
@@ -31778,6 +31793,14 @@ function buildMainAppMarkup(params) {
       <div class="bot-difficulty-select-wrap bot-difficulty-time-select-wrap">
         <select id="botTimeControlSelect" class="bot-difficulty-select" aria-label="Choose bot time control">
           ${timeControlOptionsHtml}
+        </select>
+        <span class="bot-difficulty-select-chevron" aria-hidden="true">\u25BE</span>
+      </div>
+      <label class="bot-difficulty-label bot-difficulty-side-label" for="botSideSelect">Your side</label>
+      <div class="bot-difficulty-select-wrap bot-difficulty-side-select-wrap">
+        <select id="botSideSelect" class="bot-difficulty-select" aria-label="Choose your side against the bot">
+          <option value="w">White</option>
+          <option value="b">Black</option>
         </select>
         <span class="bot-difficulty-select-chevron" aria-hidden="true">\u25BE</span>
       </div>
@@ -32676,7 +32699,8 @@ var require_main = __commonJS({
       const playerCaptured = Boolean(playerMove?.captured);
       const playerGaveCheck = Boolean(playerMove?.san.includes("+"));
       const forcedReply = legalReplies <= 2;
-      const botClockMs = state.snapshot?.clock.blackMs ?? null;
+      const botRole = getBotRole();
+      const botClockMs = state.snapshot ? botRole === "w" ? state.snapshot.clock.whiteMs : state.snapshot.clock.blackMs : null;
       const lowTimeThresholdMs = state.snapshot?.clock.lowTimeThresholdMs ?? 1e4;
       const inTimeTrouble = botClockMs !== null && botClockMs <= lowTimeThresholdMs;
       const veryLowTime = botClockMs !== null && botClockMs <= Math.max(2500, Math.floor(lowTimeThresholdMs * 0.55));
@@ -32779,6 +32803,7 @@ var require_main = __commonJS({
     var autoJoinInviteToken = initialInviteToken ?? (savedInviteToken || null);
     var savedBotLevel = clampBotLevel(Number(localStorage.getItem("chess-bot-level")) || 1);
     var savedBotTimeControlId = normalizeBotTimeControlId(localStorage.getItem("chess-bot-time-control"));
+    var savedBotPlayerSide = localStorage.getItem("chess-bot-player-side") === "b" ? "b" : "w";
     var state = {
       connected: false,
       roomId: null,
@@ -32802,6 +32827,7 @@ var require_main = __commonJS({
       gameMode: "multiplayer",
       botLevel: savedBotLevel,
       botTimeControlId: savedBotTimeControlId,
+      botPlayerSide: savedBotPlayerSide,
       botPickerOpen: false,
       viewCursor: null,
       trailFxEnabled: localStorage.getItem("chess-trail-fx") === "on",
@@ -32971,6 +32997,7 @@ var require_main = __commonJS({
     var botDifficultyBackdrop = must("#botDifficultyBackdrop");
     var botDifficultySelect = must("#botDifficultySelect");
     var botTimeControlSelect = must("#botTimeControlSelect");
+    var botSideSelect = must("#botSideSelect");
     var startBotGameButton = must("#startBotGameButton");
     var confirmDialog = must("#confirmDialog");
     var confirmYesBtn = must("#confirmYesBtn");
@@ -33185,6 +33212,7 @@ var require_main = __commonJS({
       playBotButton.classList.toggle("is-active", state.botPickerOpen);
       botDifficultySelect.value = String(getBotDifficultyPreset(state.botLevel).level);
       botTimeControlSelect.value = state.botTimeControlId;
+      botSideSelect.value = state.botPlayerSide;
       if (state.botPickerOpen) {
         botDifficultyOverlay.hidden = false;
         if (botPickerHideTimer !== null) {
@@ -33254,7 +33282,7 @@ var require_main = __commonJS({
       if (state.roomId && state.gameMode === "multiplayer") {
         toggleConfirmModal(true, "bot");
       } else {
-        startBotGame();
+        startBotGame(state.botPlayerSide);
       }
     }
     botDifficultySelect.addEventListener("change", () => {
@@ -33274,6 +33302,15 @@ var require_main = __commonJS({
       if (state.gameMode === "bot") {
         const preset = getBotTimeControlPreset(nextTimeControlId);
         showToast(`Bot timer set to ${preset.label} (applies to next bot game).`);
+      }
+    });
+    botSideSelect.addEventListener("change", () => {
+      const nextSide = botSideSelect.value === "b" ? "b" : "w";
+      state.botPlayerSide = nextSide;
+      localStorage.setItem("chess-bot-player-side", nextSide);
+      refreshBotDifficultyUi();
+      if (state.gameMode === "bot") {
+        showToast(`Bot side set to ${nextSide === "w" ? "White" : "Black"} (applies to next bot game).`);
       }
     });
     refreshBotDifficultyUi();
@@ -33765,6 +33802,15 @@ var require_main = __commonJS({
       clearScheduledBotResponse();
       showToast(state.snapshot.status);
     }
+    function getBotPlayerRole() {
+      if (state.role === "w" || state.role === "b") {
+        return state.role;
+      }
+      return state.botPlayerSide;
+    }
+    function getBotRole() {
+      return getBotPlayerRole() === "w" ? "b" : "w";
+    }
     function syncBotClockToNow(now = Date.now()) {
       if (state.gameMode !== "bot" || !state.snapshot) {
         return;
@@ -33829,8 +33875,9 @@ var require_main = __commonJS({
       }, timing.preDelayMs);
     }
     async function triggerBotResponse(engineMoveTimeMs) {
+      const botRole = getBotRole();
       syncBotClockToNow();
-      if (state.gameMode !== "bot" || !state.snapshot || state.snapshot.turn !== "b" || state.snapshot.winner !== null || state.snapshot.checkmate || state.snapshot.draw) {
+      if (state.gameMode !== "bot" || !state.snapshot || state.snapshot.turn !== botRole || state.snapshot.winner !== null || state.snapshot.checkmate || state.snapshot.draw) {
         return;
       }
       if (!botAnalyzer) {
@@ -33839,28 +33886,28 @@ var require_main = __commonJS({
       const botPreset = getBotDifficultyPreset(state.botLevel);
       const bestMoveUci = await botAnalyzer.getBotMove(chess.fen(), botPreset, engineMoveTimeMs);
       syncBotClockToNow();
-      if (state.gameMode !== "bot" || !state.snapshot || state.snapshot.turn !== "b" || state.snapshot.winner !== null || state.snapshot.checkmate || state.snapshot.draw) {
+      if (state.gameMode !== "bot" || !state.snapshot || state.snapshot.turn !== botRole || state.snapshot.winner !== null || state.snapshot.checkmate || state.snapshot.draw) {
         return;
       }
       const selectedMoveUci = chooseBotMoveByDifficulty(bestMoveUci, botPreset, chess.moves({ verbose: true }));
-      let bMove = null;
+      let botMove = null;
       const attemptedMoves = selectedMoveUci === bestMoveUci ? [selectedMoveUci] : [selectedMoveUci, bestMoveUci];
       for (const moveUci of attemptedMoves) {
         const bFrom = moveUci.substring(0, 2);
         const bTo = moveUci.substring(2, 4);
         const bPromo = moveUci.length === 5 ? moveUci[4] : "q";
         try {
-          bMove = chess.move({ from: bFrom, to: bTo, promotion: bPromo });
+          botMove = chess.move({ from: bFrom, to: bTo, promotion: bPromo });
         } catch {
-          bMove = null;
+          botMove = null;
         }
-        if (bMove) {
+        if (botMove) {
           break;
         }
       }
-      if (bMove && state.snapshot) {
-        updateManualSnapshot(bMove);
-        finalizeBotClockAfterMove("b");
+      if (botMove && state.snapshot) {
+        updateManualSnapshot(botMove);
+        finalizeBotClockAfterMove(botRole);
         playSoundForSnapshot(state.snapshot);
         if (state.premoves.length > 0) {
           checkAndExecutePremove();
@@ -33883,6 +33930,7 @@ var require_main = __commonJS({
       const promotion = button.dataset.promotion;
       const { from, to } = state.pendingPromotion;
       if (state.gameMode === "bot") {
+        const playerRole = getBotPlayerRole();
         syncBotClockToNow();
         if (state.snapshot?.winner !== null || state.snapshot?.checkmate || state.snapshot?.draw) {
           state.pendingPromotion = null;
@@ -33901,7 +33949,7 @@ var require_main = __commonJS({
         promotionDialog.hidden = true;
         if (moveResult) {
           updateManualSnapshot(moveResult);
-          finalizeBotClockAfterMove("w");
+          finalizeBotClockAfterMove(playerRole);
           suppressAnimationForMove = { from, to };
           render();
           playSoundForSnapshot(state.snapshot);
@@ -35548,6 +35596,7 @@ var require_main = __commonJS({
         const temp = new Chess(chess.fen());
         playerMoveResult = temp.move({ from, to, promotion: "q" });
       } else {
+        const playerRole = getBotPlayerRole();
         syncBotClockToNow();
         if (!state.snapshot || state.snapshot.winner !== null || state.snapshot.checkmate || state.snapshot.draw) {
           render();
@@ -35556,7 +35605,7 @@ var require_main = __commonJS({
         playerMoveResult = chess.move({ from, to, promotion: "q" });
         if (!playerMoveResult) return;
         updateManualSnapshot(playerMoveResult);
-        finalizeBotClockAfterMove("w");
+        finalizeBotClockAfterMove(playerRole);
         render(true);
         playSoundForSnapshot(state.snapshot);
         if (!state.snapshot.checkmate && !state.snapshot.draw) {
@@ -35575,15 +35624,29 @@ var require_main = __commonJS({
         );
       }
     }
-    function startBotGame() {
+    function startBotGame(playerSide = state.botPlayerSide) {
       clearScheduledBotResponse();
       accountSidebarController.resetFinishedGameTracking();
+      const normalizedPlayerSide = playerSide === "b" ? "b" : "w";
+      const botSide = normalizedPlayerSide === "w" ? "b" : "w";
       const botPreset = getBotDifficultyPreset(state.botLevel);
       const botTimeControl = getBotTimeControlPreset(state.botTimeControlId);
+      const playerName = getCurrentPlayerName();
+      const botName = `Bot (${botDifficultySummary(botPreset)})`;
       const now = Date.now();
       state.gameMode = "bot";
-      state.role = "w";
+      state.botPlayerSide = normalizedPlayerSide;
+      localStorage.setItem("chess-bot-player-side", normalizedPlayerSide);
+      state.role = normalizedPlayerSide;
+      state.orientation = normalizedPlayerSide;
       state.roomId = "BOT";
+      state.shareUrl = "";
+      state.pendingPromotion = null;
+      state.premoves = [];
+      state.selectedSquare = null;
+      state.legalTargets = [];
+      state.viewCursor = null;
+      accountSidebarController.setFriendPresenceActivity("playing-bot");
       chess.reset();
       state.snapshot = {
         roomId: "LOCAL",
@@ -35602,8 +35665,8 @@ var require_main = __commonJS({
           whiteConnected: true,
           blackConnected: true,
           spectatorCount: 0,
-          whiteName: getCurrentPlayerName(),
-          blackName: `Bot (${botDifficultySummary(botPreset)})`,
+          whiteName: normalizedPlayerSide === "w" ? playerName : botName,
+          blackName: normalizedPlayerSide === "b" ? playerName : botName,
           whiteUserId: null,
           blackUserId: null,
           whiteFriendId: null,
@@ -35613,7 +35676,7 @@ var require_main = __commonJS({
         analysis: { enabled: false, votes: 0, locked: false, labelsOnly: false, labelsVotes: 0 },
         undo: { pending: false, requester: null },
         isStarted: true,
-        pregame: { p1Choice: "w", p2Choice: "b", p1Ready: true, p2Ready: true },
+        pregame: { p1Choice: normalizedPlayerSide, p2Choice: botSide, p1Ready: true, p2Ready: true },
         timeControl: { ...botTimeControl },
         clock: {
           whiteMs: botTimeControl.initialMs,
@@ -35625,8 +35688,13 @@ var require_main = __commonJS({
         }
       };
       lastRoomStateReceivedAtMs = now;
-      showToast(`Bot mode active. ${botTimeControl.label}. You are White. ${botDifficultySummary(botPreset)}.`);
+      showToast(
+        `Bot mode active. ${botTimeControl.label}. You are ${normalizedPlayerSide === "w" ? "White" : "Black"}. ${botDifficultySummary(botPreset)}.`
+      );
       render();
+      if (state.snapshot.turn === botSide && !state.snapshot.checkmate && !state.snapshot.draw) {
+        scheduleBotResponse(null);
+      }
     }
     function updateManualSnapshot(move) {
       if (!state.snapshot) return;
@@ -35888,6 +35956,7 @@ var require_main = __commonJS({
       state.viewCursor = null;
       state.focusMode = false;
       state.gameMode = "multiplayer";
+      accountSidebarController.setFriendPresenceActivity(null);
       state.liveAnalysisSummary = "Live analysis disabled.";
       state.lastAnalyzedMoveKey = null;
       state.liveMoveGrades = {};
