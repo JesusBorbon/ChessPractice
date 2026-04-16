@@ -47,6 +47,7 @@ type SidebarFriendEntry = FriendListEntry & {
   status: FriendPresenceStatus;
   presenceRoomId: string | null;
   canSpectate: boolean;
+  canRequestJoin: boolean;
 };
 
 export type FriendInviteCandidate = {
@@ -697,10 +698,12 @@ export function createAccountSidebarController({
       const nextStatus = presence?.status ?? "offline";
       const nextRoomId = presence?.roomId ?? null;
       const nextCanSpectate = presence?.canSpectate ?? false;
+      const nextCanRequestJoin = presence?.canRequestJoin ?? false;
       if (
         entry.status === nextStatus
         && entry.presenceRoomId === nextRoomId
         && entry.canSpectate === nextCanSpectate
+        && entry.canRequestJoin === nextCanRequestJoin
       ) {
         return entry;
       }
@@ -711,6 +714,7 @@ export function createAccountSidebarController({
         status: nextStatus,
         presenceRoomId: nextRoomId,
         canSpectate: nextCanSpectate,
+        canRequestJoin: nextCanRequestJoin,
       };
     });
 
@@ -743,10 +747,6 @@ export function createAccountSidebarController({
 
   function emitCurrentProfileName(): void {
     if (!socket.connected) {
-      return;
-    }
-
-    if (authenticatedUser && isFirebaseAuthEnabled() && !currentProfile) {
       return;
     }
 
@@ -945,7 +945,31 @@ export function createAccountSidebarController({
       actions.appendChild(inviteButton);
     }
 
-    if (entry.canSpectate && entry.presenceRoomId && entry.presenceRoomId !== currentRoomId) {
+    if (entry.canRequestJoin && entry.presenceRoomId && entry.presenceRoomId !== currentRoomId) {
+      const joinButton = document.createElement("button");
+      joinButton.type = "button";
+      joinButton.className = "action friend-spectate-button";
+      joinButton.disabled = !socket.connected;
+      joinButton.textContent = "Join";
+      joinButton.addEventListener("click", () => {
+        if (!entry.presenceRoomId) {
+          return;
+        }
+
+        if (!canPlayOnlineMultiplayer()) {
+          showToast("Sign in to send room join requests.");
+          return;
+        }
+
+        // Push current friendship snapshot before validating join eligibility server-side.
+        emitFriendshipState();
+        socket.emit("friends:room-join:request", {
+          toUserId: entry.userId,
+          roomId: entry.presenceRoomId,
+        });
+      });
+      actions.appendChild(joinButton);
+    } else if (entry.canSpectate && entry.presenceRoomId && entry.presenceRoomId !== currentRoomId) {
       const spectateButton = document.createElement("button");
       spectateButton.type = "button";
       spectateButton.className = "action friend-spectate-button";
@@ -1072,6 +1096,7 @@ export function createAccountSidebarController({
         status: "offline",
         presenceRoomId: null,
         canSpectate: false,
+        canRequestJoin: false,
       }));
     } catch {
       friends = [];

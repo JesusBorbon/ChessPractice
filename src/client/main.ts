@@ -59,6 +59,13 @@ import { buildFinishedGameSignature, buildPgnFromMoves } from "./pgn-utils";
 import { StockfishBridge } from "./stockfish-bridge";
 import { mountThemeSwitcher } from "./theme";
 
+type IncomingRoomJoinRequest = {
+  requestId: string;
+  fromUserId: string;
+  fromName: string;
+  roomId: string;
+};
+
 function computeBotResponseTiming(preset: BotDifficultyPreset, playerMove: Move | null): BotResponseTiming {
   const legalReplies = chess.moves({ verbose: true }).length;
   const moveCount = state.snapshot?.moveCount ?? 0;
@@ -175,6 +182,55 @@ const chess = new Chess();
 const socket = io();
 const app = document.querySelector<HTMLDivElement>("#app");
 
+const ROOM_RETURN_CONTEXT_STORAGE_KEY = "chess_roomReturnContext";
+const ROOM_RETURN_CONTEXT_TTL_MS = 1000 * 60 * 60 * 24;
+
+type StoredRoomReturnContext = {
+  roomId: string;
+  inviteToken: string | null;
+  createdAt: number;
+};
+
+type AnalyzeLaunchPayload = {
+  postGameMeta?: {
+    whiteName?: string;
+    blackName?: string;
+  };
+  postGameMoves?: string[];
+  postGamePgn?: string;
+};
+
+const ANALYZE_LAUNCH_PARAM = "launch";
+const ANALYZE_LAUNCH_SESSION_PREFIX = "chess_analyzeLaunch_";
+
+function parseStoredRoomReturnContext(raw: string | null): StoredRoomReturnContext | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredRoomReturnContext>;
+    const roomId = typeof parsed.roomId === "string" ? parsed.roomId.trim() : "";
+    if (!/^\d{4}$/.test(roomId)) {
+      return null;
+    }
+
+    const inviteToken = typeof parsed.inviteToken === "string" && parsed.inviteToken.trim()
+      ? parsed.inviteToken.trim()
+      : null;
+    const createdAt = typeof parsed.createdAt === "number" && Number.isFinite(parsed.createdAt)
+      ? Math.floor(parsed.createdAt)
+      : 0;
+    if (!createdAt || Date.now() - createdAt > ROOM_RETURN_CONTEXT_TTL_MS) {
+      return null;
+    }
+
+    return { roomId, inviteToken, createdAt };
+  } catch {
+    return null;
+  }
+}
+
 if (!app) {
   throw new Error("Missing #app root element.");
 }
@@ -182,12 +238,18 @@ if (!app) {
 const initialQuery = new URLSearchParams(window.location.search);
 const initialRoomCode = initialQuery.get("room")?.trim() ?? null;
 const initialInviteToken = initialQuery.get("invite")?.trim() ?? null;
+const initialRejoinRequested = initialQuery.get("rejoin") === "1";
 
 // Restaurar roomId guardada en localStorage si existe
 const savedRoomId = localStorage.getItem("chess_roomId");
 const savedInviteToken = localStorage.getItem("chess_roomInviteToken");
-const autoJoinCode = initialRoomCode ?? (savedRoomId || null);
-const autoJoinInviteToken = initialInviteToken ?? (savedInviteToken || null);
+const storedRoomReturnContext = parseStoredRoomReturnContext(localStorage.getItem(ROOM_RETURN_CONTEXT_STORAGE_KEY));
+if (!storedRoomReturnContext) {
+  localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
+}
+const autoJoinCode = initialRoomCode ?? storedRoomReturnContext?.roomId ?? (savedRoomId || null);
+const autoJoinInviteToken = initialInviteToken ?? storedRoomReturnContext?.inviteToken ?? (savedInviteToken || null);
+const autoJoinFromPersistedRoom = initialRejoinRequested || (!initialRoomCode && Boolean(storedRoomReturnContext || savedRoomId));
 const savedBotLevel = clampBotLevel(Number(localStorage.getItem("chess-bot-level")) || 1);
 const savedBotTimeControlId = normalizeBotTimeControlId(localStorage.getItem("chess-bot-time-control"));
 const savedBotPlayerSide: PlayerRole = localStorage.getItem("chess-bot-player-side") === "b" ? "b" : "w";
@@ -247,8 +309,12 @@ let botPickerLockedScrollY: number | null = null;
 let botResponseTimer: number | null = null;
 let pendingFriendInvite: IncomingFriendInvite | null = null;
 let pendingInGameFriendRequest: IncomingInGameFriendRequest | null = null;
+let activeRoomJoinRequest: IncomingRoomJoinRequest | null = null;
+let queuedRoomJoinRequests: IncomingRoomJoinRequest[] = [];
 let sendFriendRequestBusy = false;
 let lowTimeWarningTimer: number | null = null;
+let profileIdentitySyncedForAutoJoin = false;
+let shouldCleanUiBeforeAutoJoin = initialRejoinRequested || Boolean(storedRoomReturnContext);
 const lowTimeWarningShownByColor: Record<PlayerRole, boolean> = { w: false, b: false };
 
 const SMOOTH_MOVE_DURATION_MS = 620;
@@ -421,6 +487,10 @@ const friendInvitePrompt = must<HTMLElement>("#friendInvitePrompt");
 const friendInvitePromptText = must<HTMLParagraphElement>("#friendInvitePromptText");
 const friendInviteDeclineButton = must<HTMLButtonElement>("#friendInviteDeclineButton");
 const friendInviteAcceptButton = must<HTMLButtonElement>("#friendInviteAcceptButton");
+const roomJoinRequestPrompt = must<HTMLElement>("#roomJoinRequestPrompt");
+const roomJoinRequestPromptText = must<HTMLParagraphElement>("#roomJoinRequestPromptText");
+const roomJoinRequestDeclineButton = must<HTMLButtonElement>("#roomJoinRequestDeclineButton");
+const roomJoinRequestAcceptButton = must<HTMLButtonElement>("#roomJoinRequestAcceptButton");
 const promotionDialog = must<HTMLDivElement>("#promotionDialog");
 const createRoomButton = must<HTMLButtonElement>("#createRoomButton");
 const backToMenuButton = must<HTMLButtonElement>("#backToMenuButton");
@@ -587,13 +657,13 @@ const accountSidebarController = createAccountSidebarController({
   },
   showToast,
   onIdentityUpdated: () => {
+    tryAutoJoinPendingRoom();
     render();
   },
   onOpenSavedGameForAnalysis: (pgn: string) => {
-    localStorage.removeItem("postGameMoves");
-    localStorage.removeItem("postGameMeta");
-    localStorage.setItem("postGamePgn", pgn);
-    window.location.assign("/analyze");
+    openAnalyzeInIsolatedTab({
+      postGamePgn: pgn,
+    });
   },
 });
 
@@ -647,6 +717,160 @@ function getCurrentPlayerName(): string {
 
 function emitCurrentProfileName(): void {
   accountSidebarController.emitCurrentProfileName();
+}
+
+function getCurrentRoomInviteToken(): string | null {
+  if (state.shareUrl) {
+    try {
+      const parsed = new URL(state.shareUrl, window.location.origin);
+      const token = parsed.searchParams.get("invite")?.trim() || "";
+      if (token) {
+        return token;
+      }
+    } catch {
+      // Ignore malformed share URL and fall back to persisted token.
+    }
+  }
+
+  const persistedToken = localStorage.getItem("chess_roomInviteToken")?.trim() || "";
+  return persistedToken || null;
+}
+
+function persistRoomReturnContextForAnalysis(): void {
+  if (!state.roomId || state.gameMode !== "multiplayer") {
+    localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
+    return;
+  }
+
+  const payload: StoredRoomReturnContext = {
+    roomId: state.roomId,
+    inviteToken: getCurrentRoomInviteToken(),
+    createdAt: Date.now(),
+  };
+  localStorage.setItem(ROOM_RETURN_CONTEXT_STORAGE_KEY, JSON.stringify(payload));
+}
+
+function openAnalyzeInIsolatedTab(payload: AnalyzeLaunchPayload | null = null): void {
+  persistRoomReturnContextForAnalysis();
+
+  const tab = window.open("about:blank", "_blank");
+  if (!tab) {
+    showToast("Pop-up blocked. Allow pop-ups to open analysis in a separate tab.");
+    return;
+  }
+
+  try {
+    tab.opener = null;
+  } catch {
+    // Ignore browsers that disallow overriding opener.
+  }
+
+  const targetUrl = new URL("/analyze", window.location.origin);
+  if (payload) {
+    const launchToken = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const sessionKey = `${ANALYZE_LAUNCH_SESSION_PREFIX}${launchToken}`;
+    try {
+      tab.sessionStorage.setItem(sessionKey, JSON.stringify(payload));
+      targetUrl.searchParams.set(ANALYZE_LAUNCH_PARAM, launchToken);
+    } catch {
+      // Fallback for storage failures: use existing localStorage bootstrap path.
+      if (payload.postGameMeta) {
+        localStorage.setItem("postGameMeta", JSON.stringify(payload.postGameMeta));
+      }
+      if (payload.postGamePgn) {
+        localStorage.removeItem("postGameMoves");
+        localStorage.setItem("postGamePgn", payload.postGamePgn);
+      } else if (payload.postGameMoves && payload.postGameMoves.length > 0) {
+        localStorage.removeItem("postGamePgn");
+        localStorage.setItem("postGameMoves", JSON.stringify(payload.postGameMoves));
+      }
+    }
+  }
+
+  tab.location.assign(targetUrl.toString());
+  tab.focus();
+}
+
+function resetTransientRoomUiBeforeControlledRejoin(): void {
+  setRoomCreatePending(false);
+  clearRoomCreateTransitionClass();
+  clearScheduledBotResponse();
+  pendingFriendInvite = null;
+  pendingInGameFriendRequest = null;
+  hideFriendInvitePrompt();
+  clearRoomJoinRequestQueue();
+  setSendFriendRequestState(false);
+  state.roomId = null;
+  state.role = null;
+  state.shareUrl = "";
+  state.snapshot = null;
+  state.pendingPromotion = null;
+  state.premoves = [];
+  state.selectedSquare = null;
+  state.legalTargets = [];
+  state.viewCursor = null;
+  state.focusMode = false;
+  state.gameMode = "multiplayer";
+  accountSidebarController.setFriendPresenceActivity(null);
+  state.liveAnalysisSummary = "Live analysis disabled.";
+  state.lastAnalyzedMoveKey = null;
+  state.liveMoveGrades = {};
+  currentModalAction = null;
+  suppressAnimationForMove = null;
+  lastAnimatedMoveKey = null;
+  pendingBoardRefresh = false;
+  animationFinished = true;
+  animatingToSquare = null;
+  _lastPlayedMoveCount = -1;
+  roomInput.value = "";
+  voiceChatController.syncSession({
+    roomId: null,
+    role: null,
+    gameMode: "multiplayer",
+    isGameActive: false,
+  });
+  clearArrows();
+  chess.reset();
+  resetLowTimeWarningState();
+  renderSession();
+  renderMoves();
+  updateCaption();
+}
+
+function tryAutoJoinPendingRoom(): void {
+  if (!state.autoJoinCode) {
+    return;
+  }
+
+  if (!ROOM_ID_PATTERN.test(state.autoJoinCode)) {
+    state.autoJoinCode = null;
+    state.autoJoinInviteToken = null;
+    return;
+  }
+
+  if (shouldCleanUiBeforeAutoJoin) {
+    resetTransientRoomUiBeforeControlledRejoin();
+    shouldCleanUiBeforeAutoJoin = false;
+  }
+
+  const hasInviteToken = Boolean(state.autoJoinInviteToken);
+  const shouldPreferSeatRecovery = autoJoinFromPersistedRoom && !hasInviteToken;
+  if (
+    shouldPreferSeatRecovery
+    && (!accountSidebarController.getAuthenticatedUserId() || !profileIdentitySyncedForAutoJoin)
+  ) {
+    // Wait for auth/profile hydration so server can restore by stable user identity.
+    return;
+  }
+
+  socket.emit("room:join", {
+    roomId: state.autoJoinCode,
+    inviteToken: state.autoJoinInviteToken,
+    spectateOnly: !hasInviteToken && !shouldPreferSeatRecovery,
+  });
+
+  state.autoJoinCode = null;
+  state.autoJoinInviteToken = null;
 }
 
 async function maybePersistFinishedGame(snapshot: RoomSnapshot | null): Promise<void> {
@@ -811,6 +1035,11 @@ botSideSelect.addEventListener("change", () => {
 });
 
 refreshBotDifficultyUi();
+
+analysisBoardLink.addEventListener("click", (event) => {
+  event.preventDefault();
+  openAnalyzeInIsolatedTab();
+});
 
 playBotButton.addEventListener("click", () => {
   if (state.botPickerOpen) {
@@ -1718,6 +1947,51 @@ function showFriendInvitePrompt(payload: IncomingFriendInvite): void {
   });
 }
 
+function hideRoomJoinRequestPrompt(): void {
+  roomJoinRequestPrompt.hidden = true;
+  roomJoinRequestPrompt.classList.remove("is-visible");
+}
+
+function renderActiveRoomJoinRequestPrompt(): void {
+  if (!activeRoomJoinRequest) {
+    hideRoomJoinRequestPrompt();
+    return;
+  }
+
+  roomJoinRequestPromptText.textContent = `${activeRoomJoinRequest.fromName} wants to join room ${activeRoomJoinRequest.roomId}`;
+  roomJoinRequestPrompt.hidden = false;
+  roomJoinRequestPrompt.classList.remove("is-visible");
+  requestAnimationFrame(() => {
+    roomJoinRequestPrompt.classList.add("is-visible");
+  });
+}
+
+function shiftToNextRoomJoinRequest(): void {
+  activeRoomJoinRequest = queuedRoomJoinRequests.shift() ?? null;
+  renderActiveRoomJoinRequestPrompt();
+}
+
+function clearRoomJoinRequestQueue(): void {
+  activeRoomJoinRequest = null;
+  queuedRoomJoinRequests = [];
+  hideRoomJoinRequestPrompt();
+}
+
+function enqueueRoomJoinRequest(request: IncomingRoomJoinRequest): void {
+  if (activeRoomJoinRequest?.requestId === request.requestId) {
+    return;
+  }
+
+  if (queuedRoomJoinRequests.some((entry) => entry.requestId === request.requestId)) {
+    return;
+  }
+
+  queuedRoomJoinRequests.push(request);
+  if (!activeRoomJoinRequest) {
+    shiftToNextRoomJoinRequest();
+  }
+}
+
 friendInviteAcceptButton.addEventListener("click", () => {
   if (!pendingFriendInvite) {
     return;
@@ -1749,6 +2023,40 @@ friendInviteDeclineButton.addEventListener("click", () => {
   });
   hideFriendInvitePrompt();
   showToast("Invitation declined.");
+});
+
+roomJoinRequestAcceptButton.addEventListener("click", () => {
+  if (!activeRoomJoinRequest) {
+    hideRoomJoinRequestPrompt();
+    return;
+  }
+
+  const request = activeRoomJoinRequest;
+  socket.emit("friends:room-join:respond", {
+    requestId: request.requestId,
+    fromUserId: request.fromUserId,
+    accepted: true,
+  });
+
+  showToast(`Accepted ${request.fromName}'s join request.`);
+  shiftToNextRoomJoinRequest();
+});
+
+roomJoinRequestDeclineButton.addEventListener("click", () => {
+  if (!activeRoomJoinRequest) {
+    hideRoomJoinRequestPrompt();
+    return;
+  }
+
+  const request = activeRoomJoinRequest;
+  socket.emit("friends:room-join:respond", {
+    requestId: request.requestId,
+    fromUserId: request.fromUserId,
+    accepted: false,
+  });
+
+  showToast(`Declined ${request.fromName}'s join request.`);
+  shiftToNextRoomJoinRequest();
 });
 
 function setSendFriendRequestState(nextBusy: boolean): void {
@@ -1849,27 +2157,19 @@ declineInGameFriendRequestButton.addEventListener("click", () => {
 
 function onSocketConnect() {
   state.connected = true;
+  profileIdentitySyncedForAutoJoin = false;
+  clearRoomJoinRequestQueue();
   emitCurrentProfileName();
   accountSidebarController.emitFriendshipState();
-
-  if (state.autoJoinCode) {
-    if (ROOM_ID_PATTERN.test(state.autoJoinCode)) {
-      const hasInviteToken = Boolean(state.autoJoinInviteToken);
-      socket.emit("room:join", {
-        roomId: state.autoJoinCode,
-        inviteToken: state.autoJoinInviteToken,
-        spectateOnly: !hasInviteToken,
-      });
-    }
-    state.autoJoinCode = null;
-    state.autoJoinInviteToken = null;
-  }
+  tryAutoJoinPendingRoom();
 }
 socket.on("connect", onSocketConnect);
 if (socket.connected) onSocketConnect(); // Fires immediately if already connected
 
 socket.on("disconnect", () => {
   state.connected = false;
+  profileIdentitySyncedForAutoJoin = false;
+  clearRoomJoinRequestQueue();
   if (roomCreatePending) {
     setRoomCreatePending(false);
     renderSession();
@@ -1878,6 +2178,11 @@ socket.on("disconnect", () => {
 
 socket.on("connection:status", () => {
   state.connected = true;
+});
+
+socket.on("profile:setName:applied", () => {
+  profileIdentitySyncedForAutoJoin = true;
+  tryAutoJoinPendingRoom();
 });
 
 socket.on("friends:invite:incoming", (payload?: {
@@ -1910,6 +2215,84 @@ socket.on("friends:invite:response", (payload?: { accepted?: boolean; friendName
     ? payload.friendName.trim().slice(0, 24)
     : "Friend";
   showToast(accepted ? `${friendName} accepted your invitation.` : `${friendName} declined your invitation.`);
+});
+
+socket.on("friends:room-join:incoming", (payload?: {
+  requestId?: string;
+  fromUserId?: string;
+  fromName?: string;
+  roomId?: string;
+}) => {
+  const requestId = typeof payload?.requestId === "string" ? payload.requestId.trim() : "";
+  const fromUserId = typeof payload?.fromUserId === "string" ? payload.fromUserId.trim() : "";
+  const roomId = typeof payload?.roomId === "string" ? payload.roomId.trim() : "";
+  if (!requestId || !fromUserId || !ROOM_ID_PATTERN.test(roomId)) {
+    return;
+  }
+
+  if (!state.roomId || state.roomId !== roomId) {
+    return;
+  }
+
+  const fromName = typeof payload?.fromName === "string" && payload.fromName.trim()
+    ? payload.fromName.trim().slice(0, 24)
+    : "A friend";
+
+  enqueueRoomJoinRequest({
+    requestId,
+    fromUserId,
+    fromName,
+    roomId,
+  });
+});
+
+socket.on("friends:room-join:requested", (payload?: { roomId?: string }) => {
+  const roomId = typeof payload?.roomId === "string" ? payload.roomId.trim() : "";
+  if (ROOM_ID_PATTERN.test(roomId)) {
+    showToast(`Join request sent for room ${roomId}.`);
+    return;
+  }
+
+  showToast("Join request sent.");
+});
+
+socket.on("friends:room-join:response", (payload?: {
+  accepted?: boolean;
+  fromName?: string;
+  roomId?: string;
+  inviteToken?: string | null;
+  message?: string;
+}) => {
+  const accepted = Boolean(payload?.accepted);
+  const fromName = typeof payload?.fromName === "string" && payload.fromName.trim()
+    ? payload.fromName.trim().slice(0, 24)
+    : "Friend";
+  const fallbackMessage = accepted
+    ? `${fromName} accepted your join request.`
+    : `${fromName} declined your join request.`;
+  const message = typeof payload?.message === "string" && payload.message.trim()
+    ? payload.message.trim()
+    : fallbackMessage;
+
+  showToast(message);
+
+  if (!accepted) {
+    return;
+  }
+
+  const roomId = typeof payload?.roomId === "string" ? payload.roomId.trim() : "";
+  if (!ROOM_ID_PATTERN.test(roomId) || state.roomId === roomId) {
+    return;
+  }
+
+  const inviteToken = typeof payload?.inviteToken === "string" && payload.inviteToken.trim()
+    ? payload.inviteToken.trim()
+    : undefined;
+  socket.emit("room:join", {
+    roomId,
+    inviteToken,
+    spectateOnly: false,
+  });
 });
 
 socket.on("friends:request:incoming", (payload?: {
@@ -1962,6 +2345,7 @@ socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl
     // Detach all room-scoped UI/game state so stale post-game context cannot leak across rooms.
     clearScheduledBotResponse();
     pendingInGameFriendRequest = null;
+    clearRoomJoinRequestQueue();
     setSendFriendRequestState(false);
     state.snapshot = null;
     state.pendingPromotion = null;
@@ -2164,8 +2548,10 @@ socket.on("room:error", (payload: { message: string }) => {
   if (state.autoJoinCode) {
     state.autoJoinCode = null;
     state.autoJoinInviteToken = null;
+    shouldCleanUiBeforeAutoJoin = false;
     localStorage.removeItem("chess_roomId");
     localStorage.removeItem("chess_roomInviteToken");
+    localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
     syncUrl(null);
     return;
   }
@@ -2861,12 +3247,13 @@ function renderBoard(): void {
     overlayAnalyzeBtn.className = "action cta-rainbow";
     overlayAnalyzeBtn.style.textDecoration = "none";
     overlayAnalyzeBtn.onclick = () => {
-      localStorage.setItem("postGameMeta", JSON.stringify({
-        whiteName: snapshot.players.whiteName,
-        blackName: snapshot.players.blackName,
-      }));
-      localStorage.setItem("postGameMoves", JSON.stringify(snapshot.moves.map(m => m.san)));
-      window.location.href = "/analyze";
+      openAnalyzeInIsolatedTab({
+        postGameMeta: {
+          whiteName: snapshot.players.whiteName,
+          blackName: snapshot.players.blackName,
+        },
+        postGameMoves: snapshot.moves.map((move) => move.san),
+      });
     };
     overlayAnalyzeBtn.textContent = "Analyze Game";
 
@@ -4318,6 +4705,8 @@ function humanRole(role: RoomRole | null): string {
 
 function syncUrl(roomId: string | null, inviteToken: string | null = null): void {
   const url = new URL(window.location.href);
+  url.searchParams.delete("rejoin");
+  url.searchParams.delete("rejoinTs");
   if (roomId) {
     url.searchParams.set("room", roomId);
   } else {
@@ -4333,11 +4722,12 @@ function syncUrl(roomId: string | null, inviteToken: string | null = null): void
   window.history.replaceState({}, "", url);
 }
 
-function clearLocalRoomState(): void {  
+function clearLocalRoomState(options: { preserveRoomReturnContext?: boolean } = {}): void {  
   setRoomCreatePending(false);
   clearRoomCreateTransitionClass();
   clearScheduledBotResponse();
   pendingInGameFriendRequest = null;
+  clearRoomJoinRequestQueue();
   setSendFriendRequestState(false);
   voiceChatController.syncSession({
     roomId: null,
@@ -4409,6 +4799,9 @@ function clearLocalRoomState(): void {
   
   localStorage.removeItem("chess_roomId");
   localStorage.removeItem("chess_roomInviteToken");
+  if (!options.preserveRoomReturnContext) {
+    localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
+  }
   
   // NEW: Ensure any active drag is killed when leaving or resetting
   cancelCurrentDrag();

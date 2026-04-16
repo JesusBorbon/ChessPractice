@@ -11,6 +11,7 @@ export type FriendActivityState = {
   status: FriendActivityStatus;
   roomId: string | null;
   canSpectate: boolean;
+  canRequestJoin: boolean;
 };
 
 type CreateFriendActivityRealtimeControllerOptions = {
@@ -58,13 +59,14 @@ function getOfflineState(): FriendActivityState {
     status: "offline",
     roomId: null,
     canSpectate: false,
+    canRequestJoin: false,
   };
 }
 
 function buildStateSignature(snapshot: Map<string, FriendActivityState>): string {
   const chunks: string[] = [];
   for (const [userId, state] of snapshot.entries()) {
-    chunks.push(`${userId}:${state.status}:${state.roomId ?? "-"}:${state.canSpectate ? "1" : "0"}`);
+    chunks.push(`${userId}:${state.status}:${state.roomId ?? "-"}:${state.canSpectate ? "1" : "0"}:${state.canRequestJoin ? "1" : "0"}`);
   }
 
   return chunks.join("|");
@@ -122,6 +124,7 @@ export function createFriendActivityRealtimeController({
           status?: unknown;
           roomId?: unknown;
           canSpectate?: unknown;
+          canRequestJoin?: unknown;
         };
         const userId = normalizeUserId(item.userId);
         if (!userId) {
@@ -132,6 +135,7 @@ export function createFriendActivityRealtimeController({
           status: normalizeStatus(item.status),
           roomId: normalizeRoomId(item.roomId),
           canSpectate: item.canSpectate === true,
+          canRequestJoin: item.canRequestJoin === true,
         });
       }
     }

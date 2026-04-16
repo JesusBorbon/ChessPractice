@@ -359,5 +359,13 @@ export function buildMainAppMarkup(params: BuildMainAppMarkupParams): string {
       <button class="action cta-turquoise" id="friendInviteAcceptButton" type="button">Accept</button>
     </div>
   </section>
+
+  <section class="friend-invite-prompt" id="roomJoinRequestPrompt" hidden aria-live="polite">
+    <p class="friend-invite-prompt-text" id="roomJoinRequestPromptText">Join request</p>
+    <div class="friend-invite-prompt-actions">
+      <button class="chip" id="roomJoinRequestDeclineButton" type="button">Decline</button>
+      <button class="action cta-turquoise" id="roomJoinRequestAcceptButton" type="button">Accept</button>
+    </div>
+  </section>
 `;
 }

@@ -318,6 +318,25 @@ const EPIC_MOVE_DURATION_MS = {
 const POST_GAME_MOVES_STORAGE_KEY = "postGameMoves";
 const POST_GAME_PGN_STORAGE_KEY = "postGamePgn";
 const POST_GAME_META_STORAGE_KEY = "postGameMeta";
+const ANALYZE_LAUNCH_PARAM = "launch";
+const ANALYZE_LAUNCH_SESSION_PREFIX = "chess_analyzeLaunch_";
+const ROOM_RETURN_CONTEXT_STORAGE_KEY = "chess_roomReturnContext";
+const ROOM_RETURN_CONTEXT_TTL_MS = 1000 * 60 * 60 * 24;
+
+type AnalyzeLaunchPayload = {
+  postGameMeta?: {
+    whiteName?: string;
+    blackName?: string;
+  };
+  postGamePgn?: string;
+  postGameMoves?: string[];
+};
+
+type StoredRoomReturnContext = {
+  roomId: string;
+  inviteToken: string | null;
+  createdAt: number;
+};
 
 let analyzedWhiteName = "White";
 let analyzedBlackName = "Black";
@@ -329,7 +348,7 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
 <div class="analyze-shell">
   <div class="analyze-topbar">
-    <a href="/">← Back to multiplayer</a>
+    <a id="backToMultiplayerLink" href="/">← Back to multiplayer</a>
     <h1>Analysis Board</h1>
   </div>
 
@@ -455,6 +474,7 @@ window.addEventListener("legalmoveschange", (event: Event) => {
 
 // ── Element refs ───────────────────────────────────────────────────────────────
 const arrowLayer = q<SVGSVGElement>("#arrowLayer");
+const backToMultiplayerLink = q<HTMLAnchorElement>("#backToMultiplayerLink");
 const boardEl    = q<HTMLDivElement>("#board");
 const boardWrap  = q<HTMLDivElement>(".board-wrap");
 const statusBar  = q<HTMLDivElement>("#statusBar");
@@ -484,6 +504,48 @@ const stopAnalyzeBtn = q<HTMLButtonElement>("#stopAnalyzeBtn");
 const bestMovesToggleButton = q<HTMLButtonElement>("#bestMovesToggleBtn");
 const returnGameLineButton = q<HTMLButtonElement>("#returnGameLineBtn");
 const focusModeButton = q<HTMLButtonElement>("#focusModeBtn");
+
+function resolveBackToMultiplayerHref(): { href: string; label: string } {
+  const raw = localStorage.getItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
+  if (!raw) {
+    return { href: "/", label: "← Back to multiplayer" };
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredRoomReturnContext>;
+    const roomId = typeof parsed.roomId === "string" ? parsed.roomId.trim() : "";
+    const createdAt = typeof parsed.createdAt === "number" && Number.isFinite(parsed.createdAt)
+      ? Math.floor(parsed.createdAt)
+      : 0;
+    if (!/^\d{4}$/.test(roomId) || !createdAt || Date.now() - createdAt > ROOM_RETURN_CONTEXT_TTL_MS) {
+      localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
+      return { href: "/", label: "← Back to multiplayer" };
+    }
+
+    const inviteToken = typeof parsed.inviteToken === "string" && parsed.inviteToken.trim()
+      ? parsed.inviteToken.trim()
+      : "";
+    const query = new URLSearchParams();
+    query.set("room", roomId);
+    query.set("rejoin", "1");
+    query.set("rejoinTs", String(Date.now()));
+    if (inviteToken) {
+      query.set("invite", inviteToken);
+    }
+
+    return {
+      href: `/?${query.toString()}`,
+      label: "← Back to room",
+    };
+  } catch {
+    localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
+    return { href: "/", label: "← Back to multiplayer" };
+  }
+}
+
+const resolvedBackLink = resolveBackToMultiplayerHref();
+backToMultiplayerLink.href = resolvedBackLink.href;
+backToMultiplayerLink.textContent = resolvedBackLink.label;
 
 analysisLoadingOverlay.addEventListener("wheel", (event) => {
   event.preventDefault();
@@ -2618,7 +2680,38 @@ window.addEventListener("beforeunload", () => {
 // ── Init ───────────────────────────────────────────────────────────────────────
 let shouldAutoAnalyzeOnInit = false;
 
-const postGameMetaRaw = localStorage.getItem(POST_GAME_META_STORAGE_KEY);
+function readAnalyzeLaunchPayloadFromSession(): AnalyzeLaunchPayload | null {
+  const currentUrl = new URL(window.location.href);
+  const launchToken = currentUrl.searchParams.get(ANALYZE_LAUNCH_PARAM)?.trim() || "";
+  if (!launchToken) {
+    return null;
+  }
+
+  currentUrl.searchParams.delete(ANALYZE_LAUNCH_PARAM);
+  window.history.replaceState({}, "", currentUrl.toString());
+
+  const sessionKey = `${ANALYZE_LAUNCH_SESSION_PREFIX}${launchToken}`;
+  const raw = sessionStorage.getItem(sessionKey);
+  if (!raw) {
+    return null;
+  }
+
+  sessionStorage.removeItem(sessionKey);
+
+  try {
+    const parsed = JSON.parse(raw) as AnalyzeLaunchPayload;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+const launchPayload = readAnalyzeLaunchPayloadFromSession();
+
+const payloadMeta = launchPayload?.postGameMeta;
+const postGameMetaRaw = payloadMeta
+  ? JSON.stringify(payloadMeta)
+  : localStorage.getItem(POST_GAME_META_STORAGE_KEY);
 if (postGameMetaRaw) {
   try {
     const parsedMeta = JSON.parse(postGameMetaRaw) as { whiteName?: string; blackName?: string };
@@ -2626,14 +2719,21 @@ if (postGameMetaRaw) {
   } catch {
     // Ignore malformed metadata and keep defaults.
   }
-  localStorage.removeItem(POST_GAME_META_STORAGE_KEY);
+  if (!payloadMeta) {
+    localStorage.removeItem(POST_GAME_META_STORAGE_KEY);
+  }
 }
 
-const postGamePgn = localStorage.getItem(POST_GAME_PGN_STORAGE_KEY);
+const launchPgn = typeof launchPayload?.postGamePgn === "string"
+  ? launchPayload.postGamePgn
+  : null;
+const postGamePgn = launchPgn ?? localStorage.getItem(POST_GAME_PGN_STORAGE_KEY);
 if (postGamePgn) {
   try {
-    localStorage.removeItem(POST_GAME_PGN_STORAGE_KEY);
-    localStorage.removeItem(POST_GAME_MOVES_STORAGE_KEY);
+    if (!launchPgn) {
+      localStorage.removeItem(POST_GAME_PGN_STORAGE_KEY);
+      localStorage.removeItem(POST_GAME_MOVES_STORAGE_KEY);
+    }
     shouldAutoAnalyzeOnInit = loadPgnIntoBoard(postGamePgn);
     if (!shouldAutoAnalyzeOnInit) {
       console.error("Failed to parse postGamePgn into move history");
@@ -2642,11 +2742,16 @@ if (postGamePgn) {
     console.error("Failed to parse postGamePgn", e);
   }
 } else {
-  const postGameMovesStr = localStorage.getItem(POST_GAME_MOVES_STORAGE_KEY);
+  const launchMoves = Array.isArray(launchPayload?.postGameMoves)
+    ? launchPayload.postGameMoves
+    : null;
+  const postGameMovesStr = launchMoves ? JSON.stringify(launchMoves) : localStorage.getItem(POST_GAME_MOVES_STORAGE_KEY);
   if (postGameMovesStr) {
     try {
       const movesToLoad = JSON.parse(postGameMovesStr) as string[];
-      localStorage.removeItem(POST_GAME_MOVES_STORAGE_KEY);
+      if (!launchMoves) {
+        localStorage.removeItem(POST_GAME_MOVES_STORAGE_KEY);
+      }
       shouldAutoAnalyzeOnInit = Array.isArray(movesToLoad)
         && movesToLoad.length > 0
         && loadMovesIntoBoard(movesToLoad);

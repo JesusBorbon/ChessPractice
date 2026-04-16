@@ -29143,13 +29143,14 @@ function getOfflineState() {
   return {
     status: "offline",
     roomId: null,
-    canSpectate: false
+    canSpectate: false,
+    canRequestJoin: false
   };
 }
 function buildStateSignature(snapshot) {
   const chunks = [];
   for (const [userId, state] of snapshot.entries()) {
-    chunks.push(`${userId}:${state.status}:${state.roomId ?? "-"}:${state.canSpectate ? "1" : "0"}`);
+    chunks.push(`${userId}:${state.status}:${state.roomId ?? "-"}:${state.canSpectate ? "1" : "0"}:${state.canRequestJoin ? "1" : "0"}`);
   }
   return chunks.join("|");
 }
@@ -29197,7 +29198,8 @@ function createFriendActivityRealtimeController({
         nextPresenceByUserId.set(userId, {
           status: normalizeStatus(item.status),
           roomId: normalizeRoomId(item.roomId),
-          canSpectate: item.canSpectate === true
+          canSpectate: item.canSpectate === true,
+          canRequestJoin: item.canRequestJoin === true
         });
       }
     }
@@ -29737,7 +29739,8 @@ function createAccountSidebarController({
       const nextStatus = presence?.status ?? "offline";
       const nextRoomId = presence?.roomId ?? null;
       const nextCanSpectate = presence?.canSpectate ?? false;
-      if (entry.status === nextStatus && entry.presenceRoomId === nextRoomId && entry.canSpectate === nextCanSpectate) {
+      const nextCanRequestJoin = presence?.canRequestJoin ?? false;
+      if (entry.status === nextStatus && entry.presenceRoomId === nextRoomId && entry.canSpectate === nextCanSpectate && entry.canRequestJoin === nextCanRequestJoin) {
         return entry;
       }
       changed = true;
@@ -29745,7 +29748,8 @@ function createAccountSidebarController({
         ...entry,
         status: nextStatus,
         presenceRoomId: nextRoomId,
-        canSpectate: nextCanSpectate
+        canSpectate: nextCanSpectate,
+        canRequestJoin: nextCanRequestJoin
       };
     });
     if (changed) {
@@ -29771,9 +29775,6 @@ function createAccountSidebarController({
   }
   function emitCurrentProfileName() {
     if (!socket.connected) {
-      return;
-    }
-    if (authenticatedUser && isFirebaseAuthEnabled() && !currentProfile) {
       return;
     }
     socket.emit("profile:setName", {
@@ -29930,7 +29931,28 @@ function createAccountSidebarController({
       });
       actions.appendChild(inviteButton);
     }
-    if (entry.canSpectate && entry.presenceRoomId && entry.presenceRoomId !== currentRoomId) {
+    if (entry.canRequestJoin && entry.presenceRoomId && entry.presenceRoomId !== currentRoomId) {
+      const joinButton = document.createElement("button");
+      joinButton.type = "button";
+      joinButton.className = "action friend-spectate-button";
+      joinButton.disabled = !socket.connected;
+      joinButton.textContent = "Join";
+      joinButton.addEventListener("click", () => {
+        if (!entry.presenceRoomId) {
+          return;
+        }
+        if (!canPlayOnlineMultiplayer()) {
+          showToast("Sign in to send room join requests.");
+          return;
+        }
+        emitFriendshipState();
+        socket.emit("friends:room-join:request", {
+          toUserId: entry.userId,
+          roomId: entry.presenceRoomId
+        });
+      });
+      actions.appendChild(joinButton);
+    } else if (entry.canSpectate && entry.presenceRoomId && entry.presenceRoomId !== currentRoomId) {
       const spectateButton = document.createElement("button");
       spectateButton.type = "button";
       spectateButton.className = "action friend-spectate-button";
@@ -30028,7 +30050,8 @@ function createAccountSidebarController({
         ...entry,
         status: "offline",
         presenceRoomId: null,
-        canSpectate: false
+        canSpectate: false,
+        canRequestJoin: false
       }));
     } catch {
       friends = [];
@@ -32078,6 +32101,14 @@ function buildMainAppMarkup(params) {
       <button class="action cta-turquoise" id="friendInviteAcceptButton" type="button">Accept</button>
     </div>
   </section>
+
+  <section class="friend-invite-prompt" id="roomJoinRequestPrompt" hidden aria-live="polite">
+    <p class="friend-invite-prompt-text" id="roomJoinRequestPromptText">Join request</p>
+    <div class="friend-invite-prompt-actions">
+      <button class="chip" id="roomJoinRequestDeclineButton" type="button">Decline</button>
+      <button class="action cta-turquoise" id="roomJoinRequestAcceptButton" type="button">Accept</button>
+    </div>
+  </section>
 `;
 }
 var init_main_template = __esm({
@@ -32996,16 +33027,46 @@ var require_main = __commonJS({
     var chess = new Chess();
     var socket = lookup2();
     var app = document.querySelector("#app");
+    var ROOM_RETURN_CONTEXT_STORAGE_KEY = "chess_roomReturnContext";
+    var ROOM_RETURN_CONTEXT_TTL_MS = 1e3 * 60 * 60 * 24;
+    var ANALYZE_LAUNCH_PARAM = "launch";
+    var ANALYZE_LAUNCH_SESSION_PREFIX = "chess_analyzeLaunch_";
+    function parseStoredRoomReturnContext(raw) {
+      if (!raw) {
+        return null;
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        const roomId = typeof parsed.roomId === "string" ? parsed.roomId.trim() : "";
+        if (!/^\d{4}$/.test(roomId)) {
+          return null;
+        }
+        const inviteToken = typeof parsed.inviteToken === "string" && parsed.inviteToken.trim() ? parsed.inviteToken.trim() : null;
+        const createdAt = typeof parsed.createdAt === "number" && Number.isFinite(parsed.createdAt) ? Math.floor(parsed.createdAt) : 0;
+        if (!createdAt || Date.now() - createdAt > ROOM_RETURN_CONTEXT_TTL_MS) {
+          return null;
+        }
+        return { roomId, inviteToken, createdAt };
+      } catch {
+        return null;
+      }
+    }
     if (!app) {
       throw new Error("Missing #app root element.");
     }
     var initialQuery = new URLSearchParams(window.location.search);
     var initialRoomCode = initialQuery.get("room")?.trim() ?? null;
     var initialInviteToken = initialQuery.get("invite")?.trim() ?? null;
+    var initialRejoinRequested = initialQuery.get("rejoin") === "1";
     var savedRoomId = localStorage.getItem("chess_roomId");
     var savedInviteToken = localStorage.getItem("chess_roomInviteToken");
-    var autoJoinCode = initialRoomCode ?? (savedRoomId || null);
-    var autoJoinInviteToken = initialInviteToken ?? (savedInviteToken || null);
+    var storedRoomReturnContext = parseStoredRoomReturnContext(localStorage.getItem(ROOM_RETURN_CONTEXT_STORAGE_KEY));
+    if (!storedRoomReturnContext) {
+      localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
+    }
+    var autoJoinCode = initialRoomCode ?? storedRoomReturnContext?.roomId ?? (savedRoomId || null);
+    var autoJoinInviteToken = initialInviteToken ?? storedRoomReturnContext?.inviteToken ?? (savedInviteToken || null);
+    var autoJoinFromPersistedRoom = initialRejoinRequested || !initialRoomCode && Boolean(storedRoomReturnContext || savedRoomId);
     var savedBotLevel = clampBotLevel(Number(localStorage.getItem("chess-bot-level")) || 1);
     var savedBotTimeControlId = normalizeBotTimeControlId(localStorage.getItem("chess-bot-time-control"));
     var savedBotPlayerSide = localStorage.getItem("chess-bot-player-side") === "b" ? "b" : "w";
@@ -33062,8 +33123,12 @@ var require_main = __commonJS({
     var botResponseTimer = null;
     var pendingFriendInvite = null;
     var pendingInGameFriendRequest = null;
+    var activeRoomJoinRequest = null;
+    var queuedRoomJoinRequests = [];
     var sendFriendRequestBusy = false;
     var lowTimeWarningTimer = null;
+    var profileIdentitySyncedForAutoJoin = false;
+    var shouldCleanUiBeforeAutoJoin = initialRejoinRequested || Boolean(storedRoomReturnContext);
     var lowTimeWarningShownByColor = { w: false, b: false };
     var SMOOTH_MOVE_DURATION_MS = 620;
     var EPIC_MOVE_DURATION_MS = {
@@ -33194,6 +33259,10 @@ var require_main = __commonJS({
     var friendInvitePromptText = must("#friendInvitePromptText");
     var friendInviteDeclineButton = must("#friendInviteDeclineButton");
     var friendInviteAcceptButton = must("#friendInviteAcceptButton");
+    var roomJoinRequestPrompt = must("#roomJoinRequestPrompt");
+    var roomJoinRequestPromptText = must("#roomJoinRequestPromptText");
+    var roomJoinRequestDeclineButton = must("#roomJoinRequestDeclineButton");
+    var roomJoinRequestAcceptButton = must("#roomJoinRequestAcceptButton");
     var promotionDialog = must("#promotionDialog");
     var createRoomButton = must("#createRoomButton");
     var backToMenuButton = must("#backToMenuButton");
@@ -33338,13 +33407,13 @@ var require_main = __commonJS({
       },
       showToast,
       onIdentityUpdated: () => {
+        tryAutoJoinPendingRoom();
         render();
       },
       onOpenSavedGameForAnalysis: (pgn2) => {
-        localStorage.removeItem("postGameMoves");
-        localStorage.removeItem("postGameMeta");
-        localStorage.setItem("postGamePgn", pgn2);
-        window.location.assign("/analyze");
+        openAnalyzeInIsolatedTab({
+          postGamePgn: pgn2
+        });
       }
     });
     var voiceChatController = createVoiceChatController({
@@ -33391,6 +33460,137 @@ var require_main = __commonJS({
     }
     function emitCurrentProfileName() {
       accountSidebarController.emitCurrentProfileName();
+    }
+    function getCurrentRoomInviteToken() {
+      if (state.shareUrl) {
+        try {
+          const parsed = new URL(state.shareUrl, window.location.origin);
+          const token = parsed.searchParams.get("invite")?.trim() || "";
+          if (token) {
+            return token;
+          }
+        } catch {
+        }
+      }
+      const persistedToken = localStorage.getItem("chess_roomInviteToken")?.trim() || "";
+      return persistedToken || null;
+    }
+    function persistRoomReturnContextForAnalysis() {
+      if (!state.roomId || state.gameMode !== "multiplayer") {
+        localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
+        return;
+      }
+      const payload = {
+        roomId: state.roomId,
+        inviteToken: getCurrentRoomInviteToken(),
+        createdAt: Date.now()
+      };
+      localStorage.setItem(ROOM_RETURN_CONTEXT_STORAGE_KEY, JSON.stringify(payload));
+    }
+    function openAnalyzeInIsolatedTab(payload = null) {
+      persistRoomReturnContextForAnalysis();
+      const tab = window.open("about:blank", "_blank");
+      if (!tab) {
+        showToast("Pop-up blocked. Allow pop-ups to open analysis in a separate tab.");
+        return;
+      }
+      try {
+        tab.opener = null;
+      } catch {
+      }
+      const targetUrl = new URL("/analyze", window.location.origin);
+      if (payload) {
+        const launchToken = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        const sessionKey = `${ANALYZE_LAUNCH_SESSION_PREFIX}${launchToken}`;
+        try {
+          tab.sessionStorage.setItem(sessionKey, JSON.stringify(payload));
+          targetUrl.searchParams.set(ANALYZE_LAUNCH_PARAM, launchToken);
+        } catch {
+          if (payload.postGameMeta) {
+            localStorage.setItem("postGameMeta", JSON.stringify(payload.postGameMeta));
+          }
+          if (payload.postGamePgn) {
+            localStorage.removeItem("postGameMoves");
+            localStorage.setItem("postGamePgn", payload.postGamePgn);
+          } else if (payload.postGameMoves && payload.postGameMoves.length > 0) {
+            localStorage.removeItem("postGamePgn");
+            localStorage.setItem("postGameMoves", JSON.stringify(payload.postGameMoves));
+          }
+        }
+      }
+      tab.location.assign(targetUrl.toString());
+      tab.focus();
+    }
+    function resetTransientRoomUiBeforeControlledRejoin() {
+      setRoomCreatePending(false);
+      clearRoomCreateTransitionClass();
+      clearScheduledBotResponse();
+      pendingFriendInvite = null;
+      pendingInGameFriendRequest = null;
+      hideFriendInvitePrompt();
+      clearRoomJoinRequestQueue();
+      setSendFriendRequestState(false);
+      state.roomId = null;
+      state.role = null;
+      state.shareUrl = "";
+      state.snapshot = null;
+      state.pendingPromotion = null;
+      state.premoves = [];
+      state.selectedSquare = null;
+      state.legalTargets = [];
+      state.viewCursor = null;
+      state.focusMode = false;
+      state.gameMode = "multiplayer";
+      accountSidebarController.setFriendPresenceActivity(null);
+      state.liveAnalysisSummary = "Live analysis disabled.";
+      state.lastAnalyzedMoveKey = null;
+      state.liveMoveGrades = {};
+      currentModalAction = null;
+      suppressAnimationForMove = null;
+      lastAnimatedMoveKey = null;
+      pendingBoardRefresh = false;
+      animationFinished = true;
+      animatingToSquare = null;
+      _lastPlayedMoveCount = -1;
+      roomInput.value = "";
+      voiceChatController.syncSession({
+        roomId: null,
+        role: null,
+        gameMode: "multiplayer",
+        isGameActive: false
+      });
+      clearArrows();
+      chess.reset();
+      resetLowTimeWarningState();
+      renderSession();
+      renderMoves();
+      updateCaption();
+    }
+    function tryAutoJoinPendingRoom() {
+      if (!state.autoJoinCode) {
+        return;
+      }
+      if (!ROOM_ID_PATTERN3.test(state.autoJoinCode)) {
+        state.autoJoinCode = null;
+        state.autoJoinInviteToken = null;
+        return;
+      }
+      if (shouldCleanUiBeforeAutoJoin) {
+        resetTransientRoomUiBeforeControlledRejoin();
+        shouldCleanUiBeforeAutoJoin = false;
+      }
+      const hasInviteToken = Boolean(state.autoJoinInviteToken);
+      const shouldPreferSeatRecovery = autoJoinFromPersistedRoom && !hasInviteToken;
+      if (shouldPreferSeatRecovery && (!accountSidebarController.getAuthenticatedUserId() || !profileIdentitySyncedForAutoJoin)) {
+        return;
+      }
+      socket.emit("room:join", {
+        roomId: state.autoJoinCode,
+        inviteToken: state.autoJoinInviteToken,
+        spectateOnly: !hasInviteToken && !shouldPreferSeatRecovery
+      });
+      state.autoJoinCode = null;
+      state.autoJoinInviteToken = null;
     }
     async function maybePersistFinishedGame(snapshot) {
       if (!snapshot) {
@@ -33525,6 +33725,10 @@ var require_main = __commonJS({
       }
     });
     refreshBotDifficultyUi();
+    analysisBoardLink.addEventListener("click", (event) => {
+      event.preventDefault();
+      openAnalyzeInIsolatedTab();
+    });
     playBotButton.addEventListener("click", () => {
       if (state.botPickerOpen) {
         closeBotDifficultyPicker();
@@ -34240,6 +34444,43 @@ var require_main = __commonJS({
         friendInvitePrompt.classList.add("is-visible");
       });
     }
+    function hideRoomJoinRequestPrompt() {
+      roomJoinRequestPrompt.hidden = true;
+      roomJoinRequestPrompt.classList.remove("is-visible");
+    }
+    function renderActiveRoomJoinRequestPrompt() {
+      if (!activeRoomJoinRequest) {
+        hideRoomJoinRequestPrompt();
+        return;
+      }
+      roomJoinRequestPromptText.textContent = `${activeRoomJoinRequest.fromName} wants to join room ${activeRoomJoinRequest.roomId}`;
+      roomJoinRequestPrompt.hidden = false;
+      roomJoinRequestPrompt.classList.remove("is-visible");
+      requestAnimationFrame(() => {
+        roomJoinRequestPrompt.classList.add("is-visible");
+      });
+    }
+    function shiftToNextRoomJoinRequest() {
+      activeRoomJoinRequest = queuedRoomJoinRequests.shift() ?? null;
+      renderActiveRoomJoinRequestPrompt();
+    }
+    function clearRoomJoinRequestQueue() {
+      activeRoomJoinRequest = null;
+      queuedRoomJoinRequests = [];
+      hideRoomJoinRequestPrompt();
+    }
+    function enqueueRoomJoinRequest(request) {
+      if (activeRoomJoinRequest?.requestId === request.requestId) {
+        return;
+      }
+      if (queuedRoomJoinRequests.some((entry) => entry.requestId === request.requestId)) {
+        return;
+      }
+      queuedRoomJoinRequests.push(request);
+      if (!activeRoomJoinRequest) {
+        shiftToNextRoomJoinRequest();
+      }
+    }
     friendInviteAcceptButton.addEventListener("click", () => {
       if (!pendingFriendInvite) {
         return;
@@ -34268,6 +34509,34 @@ var require_main = __commonJS({
       });
       hideFriendInvitePrompt();
       showToast("Invitation declined.");
+    });
+    roomJoinRequestAcceptButton.addEventListener("click", () => {
+      if (!activeRoomJoinRequest) {
+        hideRoomJoinRequestPrompt();
+        return;
+      }
+      const request = activeRoomJoinRequest;
+      socket.emit("friends:room-join:respond", {
+        requestId: request.requestId,
+        fromUserId: request.fromUserId,
+        accepted: true
+      });
+      showToast(`Accepted ${request.fromName}'s join request.`);
+      shiftToNextRoomJoinRequest();
+    });
+    roomJoinRequestDeclineButton.addEventListener("click", () => {
+      if (!activeRoomJoinRequest) {
+        hideRoomJoinRequestPrompt();
+        return;
+      }
+      const request = activeRoomJoinRequest;
+      socket.emit("friends:room-join:respond", {
+        requestId: request.requestId,
+        fromUserId: request.fromUserId,
+        accepted: false
+      });
+      showToast(`Declined ${request.fromName}'s join request.`);
+      shiftToNextRoomJoinRequest();
     });
     function setSendFriendRequestState(nextBusy) {
       sendFriendRequestBusy = nextBusy;
@@ -34349,25 +34618,18 @@ var require_main = __commonJS({
     });
     function onSocketConnect() {
       state.connected = true;
+      profileIdentitySyncedForAutoJoin = false;
+      clearRoomJoinRequestQueue();
       emitCurrentProfileName();
       accountSidebarController.emitFriendshipState();
-      if (state.autoJoinCode) {
-        if (ROOM_ID_PATTERN3.test(state.autoJoinCode)) {
-          const hasInviteToken = Boolean(state.autoJoinInviteToken);
-          socket.emit("room:join", {
-            roomId: state.autoJoinCode,
-            inviteToken: state.autoJoinInviteToken,
-            spectateOnly: !hasInviteToken
-          });
-        }
-        state.autoJoinCode = null;
-        state.autoJoinInviteToken = null;
-      }
+      tryAutoJoinPendingRoom();
     }
     socket.on("connect", onSocketConnect);
     if (socket.connected) onSocketConnect();
     socket.on("disconnect", () => {
       state.connected = false;
+      profileIdentitySyncedForAutoJoin = false;
+      clearRoomJoinRequestQueue();
       if (roomCreatePending) {
         setRoomCreatePending(false);
         renderSession();
@@ -34375,6 +34637,10 @@ var require_main = __commonJS({
     });
     socket.on("connection:status", () => {
       state.connected = true;
+    });
+    socket.on("profile:setName:applied", () => {
+      profileIdentitySyncedForAutoJoin = true;
+      tryAutoJoinPendingRoom();
     });
     socket.on("friends:invite:incoming", (payload) => {
       const inviteId = typeof payload?.inviteId === "string" ? payload.inviteId : "";
@@ -34391,6 +34657,52 @@ var require_main = __commonJS({
       const accepted = Boolean(payload?.accepted);
       const friendName = typeof payload?.friendName === "string" && payload.friendName.trim() ? payload.friendName.trim().slice(0, 24) : "Friend";
       showToast(accepted ? `${friendName} accepted your invitation.` : `${friendName} declined your invitation.`);
+    });
+    socket.on("friends:room-join:incoming", (payload) => {
+      const requestId = typeof payload?.requestId === "string" ? payload.requestId.trim() : "";
+      const fromUserId = typeof payload?.fromUserId === "string" ? payload.fromUserId.trim() : "";
+      const roomId = typeof payload?.roomId === "string" ? payload.roomId.trim() : "";
+      if (!requestId || !fromUserId || !ROOM_ID_PATTERN3.test(roomId)) {
+        return;
+      }
+      if (!state.roomId || state.roomId !== roomId) {
+        return;
+      }
+      const fromName2 = typeof payload?.fromName === "string" && payload.fromName.trim() ? payload.fromName.trim().slice(0, 24) : "A friend";
+      enqueueRoomJoinRequest({
+        requestId,
+        fromUserId,
+        fromName: fromName2,
+        roomId
+      });
+    });
+    socket.on("friends:room-join:requested", (payload) => {
+      const roomId = typeof payload?.roomId === "string" ? payload.roomId.trim() : "";
+      if (ROOM_ID_PATTERN3.test(roomId)) {
+        showToast(`Join request sent for room ${roomId}.`);
+        return;
+      }
+      showToast("Join request sent.");
+    });
+    socket.on("friends:room-join:response", (payload) => {
+      const accepted = Boolean(payload?.accepted);
+      const fromName2 = typeof payload?.fromName === "string" && payload.fromName.trim() ? payload.fromName.trim().slice(0, 24) : "Friend";
+      const fallbackMessage = accepted ? `${fromName2} accepted your join request.` : `${fromName2} declined your join request.`;
+      const message = typeof payload?.message === "string" && payload.message.trim() ? payload.message.trim() : fallbackMessage;
+      showToast(message);
+      if (!accepted) {
+        return;
+      }
+      const roomId = typeof payload?.roomId === "string" ? payload.roomId.trim() : "";
+      if (!ROOM_ID_PATTERN3.test(roomId) || state.roomId === roomId) {
+        return;
+      }
+      const inviteToken = typeof payload?.inviteToken === "string" && payload.inviteToken.trim() ? payload.inviteToken.trim() : void 0;
+      socket.emit("room:join", {
+        roomId,
+        inviteToken,
+        spectateOnly: false
+      });
     });
     socket.on("friends:request:incoming", (payload) => {
       const requestId = typeof payload?.requestId === "string" ? payload.requestId.trim() : "";
@@ -34424,6 +34736,7 @@ var require_main = __commonJS({
       if (switchedRooms) {
         clearScheduledBotResponse();
         pendingInGameFriendRequest = null;
+        clearRoomJoinRequestQueue();
         setSendFriendRequestState(false);
         state.snapshot = null;
         state.pendingPromotion = null;
@@ -34571,8 +34884,10 @@ var require_main = __commonJS({
       if (state.autoJoinCode) {
         state.autoJoinCode = null;
         state.autoJoinInviteToken = null;
+        shouldCleanUiBeforeAutoJoin = false;
         localStorage.removeItem("chess_roomId");
         localStorage.removeItem("chess_roomInviteToken");
+        localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
         syncUrl(null);
         return;
       }
@@ -35089,12 +35404,13 @@ var require_main = __commonJS({
         overlayAnalyzeBtn.className = "action cta-rainbow";
         overlayAnalyzeBtn.style.textDecoration = "none";
         overlayAnalyzeBtn.onclick = () => {
-          localStorage.setItem("postGameMeta", JSON.stringify({
-            whiteName: snapshot.players.whiteName,
-            blackName: snapshot.players.blackName
-          }));
-          localStorage.setItem("postGameMoves", JSON.stringify(snapshot.moves.map((m) => m.san)));
-          window.location.href = "/analyze";
+          openAnalyzeInIsolatedTab({
+            postGameMeta: {
+              whiteName: snapshot.players.whiteName,
+              blackName: snapshot.players.blackName
+            },
+            postGameMoves: snapshot.moves.map((move) => move.san)
+          });
         };
         overlayAnalyzeBtn.textContent = "Analyze Game";
         actionContainer.append(overlayRematchBtn, overlayAnalyzeBtn);
@@ -36204,6 +36520,8 @@ var require_main = __commonJS({
     }
     function syncUrl(roomId, inviteToken = null) {
       const url2 = new URL(window.location.href);
+      url2.searchParams.delete("rejoin");
+      url2.searchParams.delete("rejoinTs");
       if (roomId) {
         url2.searchParams.set("room", roomId);
       } else {
@@ -36216,11 +36534,12 @@ var require_main = __commonJS({
       }
       window.history.replaceState({}, "", url2);
     }
-    function clearLocalRoomState() {
+    function clearLocalRoomState(options = {}) {
       setRoomCreatePending(false);
       clearRoomCreateTransitionClass();
       clearScheduledBotResponse();
       pendingInGameFriendRequest = null;
+      clearRoomJoinRequestQueue();
       setSendFriendRequestState(false);
       voiceChatController.syncSession({
         roomId: null,
@@ -36281,6 +36600,9 @@ var require_main = __commonJS({
       lastRoomStateReceivedAtMs = Date.now();
       localStorage.removeItem("chess_roomId");
       localStorage.removeItem("chess_roomInviteToken");
+      if (!options.preserveRoomReturnContext) {
+        localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
+      }
       cancelCurrentDrag();
       clearArrows();
       chess.reset();

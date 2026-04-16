@@ -4083,13 +4083,17 @@ var require_analyze = __commonJS({
     var POST_GAME_MOVES_STORAGE_KEY = "postGameMoves";
     var POST_GAME_PGN_STORAGE_KEY = "postGamePgn";
     var POST_GAME_META_STORAGE_KEY = "postGameMeta";
+    var ANALYZE_LAUNCH_PARAM = "launch";
+    var ANALYZE_LAUNCH_SESSION_PREFIX = "chess_analyzeLaunch_";
+    var ROOM_RETURN_CONTEXT_STORAGE_KEY = "chess_roomReturnContext";
+    var ROOM_RETURN_CONTEXT_TTL_MS = 1e3 * 60 * 60 * 24;
     var analyzedWhiteName = "White";
     var analyzedBlackName = "Black";
     var app = document.querySelector("#app");
     app.innerHTML = `
 <div class="analyze-shell">
   <div class="analyze-topbar">
-    <a href="/">\u2190 Back to multiplayer</a>
+    <a id="backToMultiplayerLink" href="/">\u2190 Back to multiplayer</a>
     <h1>Analysis Board</h1>
   </div>
 
@@ -4208,6 +4212,7 @@ var require_analyze = __commonJS({
       renderBoard();
     });
     var arrowLayer = q("#arrowLayer");
+    var backToMultiplayerLink = q("#backToMultiplayerLink");
     var boardEl = q("#board");
     var boardWrap = q(".board-wrap");
     var statusBar = q("#statusBar");
@@ -4237,6 +4242,39 @@ var require_analyze = __commonJS({
     var bestMovesToggleButton = q("#bestMovesToggleBtn");
     var returnGameLineButton = q("#returnGameLineBtn");
     var focusModeButton = q("#focusModeBtn");
+    function resolveBackToMultiplayerHref() {
+      const raw = localStorage.getItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
+      if (!raw) {
+        return { href: "/", label: "\u2190 Back to multiplayer" };
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        const roomId = typeof parsed.roomId === "string" ? parsed.roomId.trim() : "";
+        const createdAt = typeof parsed.createdAt === "number" && Number.isFinite(parsed.createdAt) ? Math.floor(parsed.createdAt) : 0;
+        if (!/^\d{4}$/.test(roomId) || !createdAt || Date.now() - createdAt > ROOM_RETURN_CONTEXT_TTL_MS) {
+          localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
+          return { href: "/", label: "\u2190 Back to multiplayer" };
+        }
+        const inviteToken = typeof parsed.inviteToken === "string" && parsed.inviteToken.trim() ? parsed.inviteToken.trim() : "";
+        const query = new URLSearchParams();
+        query.set("room", roomId);
+        query.set("rejoin", "1");
+        query.set("rejoinTs", String(Date.now()));
+        if (inviteToken) {
+          query.set("invite", inviteToken);
+        }
+        return {
+          href: `/?${query.toString()}`,
+          label: "\u2190 Back to room"
+        };
+      } catch {
+        localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
+        return { href: "/", label: "\u2190 Back to multiplayer" };
+      }
+    }
+    var resolvedBackLink = resolveBackToMultiplayerHref();
+    backToMultiplayerLink.href = resolvedBackLink.href;
+    backToMultiplayerLink.textContent = resolvedBackLink.label;
     analysisLoadingOverlay.addEventListener("wheel", (event) => {
       event.preventDefault();
     }, { passive: false });
@@ -5932,20 +5970,48 @@ var require_analyze = __commonJS({
       stockfish?.terminate();
     });
     var shouldAutoAnalyzeOnInit = false;
-    var postGameMetaRaw = localStorage.getItem(POST_GAME_META_STORAGE_KEY);
+    function readAnalyzeLaunchPayloadFromSession() {
+      const currentUrl = new URL(window.location.href);
+      const launchToken = currentUrl.searchParams.get(ANALYZE_LAUNCH_PARAM)?.trim() || "";
+      if (!launchToken) {
+        return null;
+      }
+      currentUrl.searchParams.delete(ANALYZE_LAUNCH_PARAM);
+      window.history.replaceState({}, "", currentUrl.toString());
+      const sessionKey = `${ANALYZE_LAUNCH_SESSION_PREFIX}${launchToken}`;
+      const raw = sessionStorage.getItem(sessionKey);
+      if (!raw) {
+        return null;
+      }
+      sessionStorage.removeItem(sessionKey);
+      try {
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object" ? parsed : null;
+      } catch {
+        return null;
+      }
+    }
+    var launchPayload = readAnalyzeLaunchPayloadFromSession();
+    var payloadMeta = launchPayload?.postGameMeta;
+    var postGameMetaRaw = payloadMeta ? JSON.stringify(payloadMeta) : localStorage.getItem(POST_GAME_META_STORAGE_KEY);
     if (postGameMetaRaw) {
       try {
         const parsedMeta = JSON.parse(postGameMetaRaw);
         applyAnalyzedPlayerNames(parsedMeta.whiteName, parsedMeta.blackName);
       } catch {
       }
-      localStorage.removeItem(POST_GAME_META_STORAGE_KEY);
+      if (!payloadMeta) {
+        localStorage.removeItem(POST_GAME_META_STORAGE_KEY);
+      }
     }
-    var postGamePgn = localStorage.getItem(POST_GAME_PGN_STORAGE_KEY);
+    var launchPgn = typeof launchPayload?.postGamePgn === "string" ? launchPayload.postGamePgn : null;
+    var postGamePgn = launchPgn ?? localStorage.getItem(POST_GAME_PGN_STORAGE_KEY);
     if (postGamePgn) {
       try {
-        localStorage.removeItem(POST_GAME_PGN_STORAGE_KEY);
-        localStorage.removeItem(POST_GAME_MOVES_STORAGE_KEY);
+        if (!launchPgn) {
+          localStorage.removeItem(POST_GAME_PGN_STORAGE_KEY);
+          localStorage.removeItem(POST_GAME_MOVES_STORAGE_KEY);
+        }
         shouldAutoAnalyzeOnInit = loadPgnIntoBoard(postGamePgn);
         if (!shouldAutoAnalyzeOnInit) {
           console.error("Failed to parse postGamePgn into move history");
@@ -5954,11 +6020,14 @@ var require_analyze = __commonJS({
         console.error("Failed to parse postGamePgn", e);
       }
     } else {
-      const postGameMovesStr = localStorage.getItem(POST_GAME_MOVES_STORAGE_KEY);
+      const launchMoves = Array.isArray(launchPayload?.postGameMoves) ? launchPayload.postGameMoves : null;
+      const postGameMovesStr = launchMoves ? JSON.stringify(launchMoves) : localStorage.getItem(POST_GAME_MOVES_STORAGE_KEY);
       if (postGameMovesStr) {
         try {
           const movesToLoad = JSON.parse(postGameMovesStr);
-          localStorage.removeItem(POST_GAME_MOVES_STORAGE_KEY);
+          if (!launchMoves) {
+            localStorage.removeItem(POST_GAME_MOVES_STORAGE_KEY);
+          }
           shouldAutoAnalyzeOnInit = Array.isArray(movesToLoad) && movesToLoad.length > 0 && loadMovesIntoBoard(movesToLoad);
           if (!shouldAutoAnalyzeOnInit) {
             console.error("Failed to parse postGameMoves into move history");

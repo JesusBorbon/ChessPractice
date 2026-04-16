@@ -20,6 +20,7 @@ import {
   grantDirectRoomInvite,
   RoomAccessState,
 } from "./room-access";
+import { createRoomJoinRequestStore, StoredRoomJoinRequest } from "./room-join-request-store";
 import { canStartPregameMatch, sanitizePregameSeatState } from "./room-readiness";
 
 type PlayerRole = "w" | "b";
@@ -60,6 +61,7 @@ type FriendPresenceInfo = {
   status: FriendPresenceStatus;
   roomId: string | null;
   canSpectate: boolean;
+  canRequestJoin: boolean;
 };
 
 type PendingFriendInvite = {
@@ -217,6 +219,7 @@ const VOICE_MIN_DURATION_MS = 250;
 const VOICE_ALLOWED_MIME_PREFIX = "audio/";
 const CHAT_MAX_TEXT_LENGTH = 420;
 const FRIEND_INVITE_EXPIRY_MS = 1000 * 60 * 30;
+const ROOM_JOIN_REQUEST_EXPIRY_MS = 1000 * 60 * 20;
 
 type FirebaseClientConfig = {
   apiKey: string;
@@ -244,6 +247,7 @@ const publicDir =
     ? path.join(projectRoot, "dist", "public")
     : path.join(projectRoot, "public");
 const liveChatStore = createLiveChatStore(projectRoot);
+const roomJoinRequestStore = createRoomJoinRequestStore(projectRoot);
 
 const MAX_IMPORT_SOURCE_LENGTH = 200_000;
 const IMPORT_FETCH_TIMEOUT_MS = 12_000;
@@ -751,14 +755,75 @@ function areKnownFriendsForSocket(socketId: string, targetUserId: string): boole
   return knownFriends.has(normalizedTargetUserId);
 }
 
+function isWatchedFriendForSocket(socketId: string, targetUserId: string): boolean {
+  const normalizedTargetUserId = normalizeUserId(targetUserId);
+  if (!normalizedTargetUserId) {
+    return false;
+  }
+
+  const watchedFriendIds = watchedFriendIdsBySocket.get(socketId);
+  if (!watchedFriendIds) {
+    return false;
+  }
+
+  return watchedFriendIds.has(normalizedTargetUserId);
+}
+
+function hasLiveFriendSignalForSocket(socketId: string, targetUserId: string): boolean {
+  return areKnownFriendsForSocket(socketId, targetUserId)
+    || isWatchedFriendForSocket(socketId, targetUserId);
+}
+
+function areLikelyFriendsForJoinRequest(
+  requesterSocketId: string,
+  requesterUserId: string,
+  targetUserId: string,
+): boolean {
+  if (hasLiveFriendSignalForSocket(requesterSocketId, targetUserId)) {
+    return true;
+  }
+
+  const targetSockets = getConnectedUserSocketIds(targetUserId);
+  for (const targetSocketId of targetSockets) {
+    if (hasLiveFriendSignalForSocket(targetSocketId, requesterUserId)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function pruneDisconnectedRoomSeats(room: GameRoom, now = Date.now()): boolean {
   let changed = false;
   const seatGraceMs = getSeatDisconnectGraceMs(room);
 
+  const whiteConnected = isSocketConnected(room.white);
+  const blackConnected = isSocketConnected(room.black);
+  const ownerConnected = isSocketConnected(room.ownerId);
+
+  if (room.white && !whiteConnected && !room.whiteDisconnectedAt && room.whiteUserId) {
+    room.whiteDisconnectedAt = now;
+    changed = true;
+  }
+
+  if (room.black && !blackConnected && !room.blackDisconnectedAt && room.blackUserId) {
+    room.blackDisconnectedAt = now;
+    changed = true;
+  }
+
+  const ownerHasPersistentIdentity = Boolean(
+    room.ownerId
+    && ((room.ownerId === room.white && room.whiteUserId) || (room.ownerId === room.black && room.blackUserId)),
+  );
+  if (room.ownerId && !ownerConnected && !room.ownerDisconnectedAt && ownerHasPersistentIdentity) {
+    room.ownerDisconnectedAt = now;
+    changed = true;
+  }
+
   const shouldReleaseWhite = Boolean(
     room.white && (
       (room.whiteDisconnectedAt && now - room.whiteDisconnectedAt > seatGraceMs)
-      || (!isSocketConnected(room.white) && !room.whiteDisconnectedAt)
+      || (!whiteConnected && !room.whiteDisconnectedAt && !room.whiteUserId)
     ),
   );
 
@@ -777,7 +842,7 @@ function pruneDisconnectedRoomSeats(room: GameRoom, now = Date.now()): boolean {
   const shouldReleaseBlack = Boolean(
     room.black && (
       (room.blackDisconnectedAt && now - room.blackDisconnectedAt > seatGraceMs)
-      || (!isSocketConnected(room.black) && !room.blackDisconnectedAt)
+      || (!blackConnected && !room.blackDisconnectedAt && !room.blackUserId)
     ),
   );
 
@@ -796,7 +861,7 @@ function pruneDisconnectedRoomSeats(room: GameRoom, now = Date.now()): boolean {
   const shouldReleaseOwner = Boolean(
     room.ownerId && (
       (room.ownerDisconnectedAt && now - room.ownerDisconnectedAt > seatGraceMs)
-      || (!isSocketConnected(room.ownerId) && !room.ownerDisconnectedAt)
+      || (!ownerConnected && !room.ownerDisconnectedAt && !ownerHasPersistentIdentity)
     ),
   );
 
@@ -900,6 +965,7 @@ function getFriendPresenceInfo(userId: string): FriendPresenceInfo {
       status: "offline",
       roomId: null,
       canSpectate: false,
+      canRequestJoin: false,
     };
   }
 
@@ -923,6 +989,7 @@ function getFriendPresenceInfo(userId: string): FriendPresenceInfo {
         status: "in-room",
         roomId: state.roomId,
         canSpectate: false,
+        canRequestJoin: false,
       };
       continue;
     }
@@ -930,14 +997,27 @@ function getFriendPresenceInfo(userId: string): FriendPresenceInfo {
     const liveRole = getLiveRoomRole(room, socketId);
     const isSeatedPlayer = liveRole === "w" || liveRole === "b";
     const bothPlayersSeated = Boolean(room.white && room.black);
+    const exactlyOneSeatFilled = Boolean((room.white && !room.black) || (!room.white && room.black));
+    const inPregameSetup = !room.isStarted;
     const inLiveGame = room.isStarted && !room.winner && !room.chess.isGameOver();
     const canSpectate = isSeatedPlayer && bothPlayersSeated && inLiveGame;
+    const canRequestJoin = isSeatedPlayer && exactlyOneSeatFilled && inPregameSetup;
+
+    if (canRequestJoin) {
+      return {
+        status: "in-room",
+        roomId: room.id,
+        canSpectate: false,
+        canRequestJoin: true,
+      };
+    }
 
     if (canSpectate) {
       return {
         status: "in-room",
         roomId: room.id,
         canSpectate: true,
+        canRequestJoin: false,
       };
     }
 
@@ -945,6 +1025,7 @@ function getFriendPresenceInfo(userId: string): FriendPresenceInfo {
       status: "in-room",
       roomId: room.id,
       canSpectate: false,
+      canRequestJoin: false,
     };
   }
 
@@ -957,6 +1038,7 @@ function getFriendPresenceInfo(userId: string): FriendPresenceInfo {
       status: "playing-bot",
       roomId: null,
       canSpectate: false,
+      canRequestJoin: false,
     };
   }
 
@@ -964,6 +1046,7 @@ function getFriendPresenceInfo(userId: string): FriendPresenceInfo {
     status: "online",
     roomId: null,
     canSpectate: false,
+    canRequestJoin: false,
   };
 }
 
@@ -976,6 +1059,7 @@ function emitFriendPresenceToSocket(socketId: string): void {
       status: presence.status,
       roomId: presence.roomId,
       canSpectate: presence.canSpectate,
+      canRequestJoin: presence.canRequestJoin,
     };
   });
 
@@ -983,7 +1067,7 @@ function emitFriendPresenceToSocket(socketId: string): void {
 }
 
 function buildFriendPresenceSignature(presence: FriendPresenceInfo): string {
-  return `${presence.status}:${presence.roomId ?? "-"}:${presence.canSpectate ? "1" : "0"}`;
+  return `${presence.status}:${presence.roomId ?? "-"}:${presence.canSpectate ? "1" : "0"}:${presence.canRequestJoin ? "1" : "0"}`;
 }
 
 function notifyFriendWatchers(userId: string): void {
@@ -1494,6 +1578,10 @@ function emitRoomState(room: GameRoom): void {
     maybeStartPregameMatch(room);
   }
 
+  if (!isRoomOpenForJoinRequests(room)) {
+    clearPendingRoomJoinRequestsForRoom(room, "Room no longer accepts join requests right now.");
+  }
+
   if (isLiveCompetitiveMatch(room) && (room.analysisEnabled || room.analysisVotes.size > 0)) {
     room.analysisEnabled = false;
     room.analysisVotes.clear();
@@ -1506,6 +1594,7 @@ function emitRoomState(room: GameRoom): void {
 
 function closeRoom(room: GameRoom, reason: "abandoned" | "room-closed" = "room-closed"): void {
   purgeRoomChatData(room, reason);
+  clearPendingRoomJoinRequestsForRoom(room, "Room closed before your join request could be accepted.");
 
   const socketsInRoom = io.sockets.adapter.rooms.get(room.id);
   if (socketsInRoom) {
@@ -1543,16 +1632,18 @@ function resetSocketState(socketId: string): void {
 
 function removeFromRoom(socketId: string, immediate: boolean = false): void {
   const socket = io.sockets.sockets.get(socketId);
+  const socketUserId = getSocketUserId(socketId);
 
   for (const room of rooms.values()) {
     let changed = false;
-    const shouldHoldSeat = !immediate && room.isStarted;
+    const shouldHoldSeat = !immediate && Boolean(socketUserId);
 
     // Si es desconexión normal (no inmediata), marcar como "desconectado temporalmente"
     // permitiendo reconexión dentro del grace period
     if (room.white === socketId) {
-      const canHoldWhiteSeat = shouldHoldSeat && Boolean(room.whiteUserId);
+      const canHoldWhiteSeat = shouldHoldSeat && Boolean(room.whiteUserId || socketUserId);
       if (canHoldWhiteSeat) {
+        room.whiteUserId = room.whiteUserId ?? socketUserId;
         room.whiteDisconnectedAt = Date.now();
       } else {
         room.colorChoices.delete(socketId);
@@ -1564,8 +1655,9 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
     }
 
     if (room.black === socketId) {
-      const canHoldBlackSeat = shouldHoldSeat && Boolean(room.blackUserId);
+      const canHoldBlackSeat = shouldHoldSeat && Boolean(room.blackUserId || socketUserId);
       if (canHoldBlackSeat) {
+        room.blackUserId = room.blackUserId ?? socketUserId;
         room.blackDisconnectedAt = Date.now();
       } else {
         room.colorChoices.delete(socketId);
@@ -1713,6 +1805,127 @@ function isSquare(value: unknown): value is Square {
   return typeof value === "string" && /^[a-h][1-8]$/.test(value);
 }
 
+function isRoomOpenForJoinRequests(room: GameRoom): boolean {
+  if (room.isStarted) {
+    return false;
+  }
+
+  const hasExactlyOneSeatedPlayer = Boolean((room.white && !room.black) || (!room.white && room.black));
+  return hasExactlyOneSeatedPlayer;
+}
+
+function findJoinRequestTargetRoom(targetUserId: string, requestedRoomId: string | null = null): GameRoom | null {
+  const normalizedRoomId = requestedRoomId && ROOM_ID_PATTERN.test(requestedRoomId)
+    ? requestedRoomId
+    : null;
+
+  const targetSockets = getConnectedUserSocketIds(targetUserId);
+  for (const targetSocketId of targetSockets) {
+    const room = getRoomForSocket(targetSocketId);
+    if (!room) {
+      continue;
+    }
+
+    if (normalizedRoomId && room.id !== normalizedRoomId) {
+      continue;
+    }
+
+    const liveRole = getLiveRoomRole(room, targetSocketId);
+    const isSeatedPlayer = liveRole === "w" || liveRole === "b";
+    if (!isSeatedPlayer) {
+      continue;
+    }
+
+    if (!isRoomOpenForJoinRequests(room)) {
+      continue;
+    }
+
+    return room;
+  }
+
+  return null;
+}
+
+function emitRoomJoinRequestResultToRequester(
+  request: StoredRoomJoinRequest,
+  payload: {
+    accepted: boolean;
+    fromName: string;
+    message: string;
+    roomId?: string;
+    inviteToken?: string | null;
+  },
+): void {
+  const requesterSockets = getConnectedUserSocketIds(request.requesterUserId);
+  if (requesterSockets.length === 0) {
+    return;
+  }
+
+  for (const requesterSocketId of requesterSockets) {
+    io.to(requesterSocketId).emit("friends:room-join:response", {
+      requestId: request.requestId,
+      accepted: payload.accepted,
+      fromName: payload.fromName,
+      roomId: payload.roomId,
+      inviteToken: payload.inviteToken ?? null,
+      message: payload.message,
+    });
+  }
+}
+
+function emitPendingRoomJoinRequestsForUser(targetUserId: string): void {
+  const pendingRequests = roomJoinRequestStore.getPendingForTarget(targetUserId);
+  if (pendingRequests.length === 0) {
+    return;
+  }
+
+  const targetSockets = getConnectedUserSocketIds(targetUserId);
+  if (targetSockets.length === 0) {
+    return;
+  }
+
+  for (const request of pendingRequests) {
+    const requestableRoom = findJoinRequestTargetRoom(targetUserId, request.roomId);
+    if (!requestableRoom) {
+      roomJoinRequestStore.delete(request.requestId);
+      emitRoomJoinRequestResultToRequester(request, {
+        accepted: false,
+        fromName: "Room host",
+        message: "Join request expired because the room is no longer available.",
+      });
+      continue;
+    }
+
+    for (const targetSocketId of targetSockets) {
+      io.to(targetSocketId).emit("friends:room-join:incoming", {
+        requestId: request.requestId,
+        fromUserId: request.requesterUserId,
+        fromName: request.requesterName,
+        roomId: request.roomId,
+      });
+    }
+  }
+}
+
+function clearPendingRoomJoinRequestsForRoom(room: GameRoom, message: string): void {
+  const pendingRequests = roomJoinRequestStore.getPendingForRoom(room.id);
+  if (pendingRequests.length === 0) {
+    return;
+  }
+
+  const sourceSocketId = room.ownerId ?? room.white ?? room.black;
+  const sourceName = sourceSocketId ? getSocketDisplayName(sourceSocketId) : "Room host";
+
+  for (const request of pendingRequests) {
+    roomJoinRequestStore.delete(request.requestId);
+    emitRoomJoinRequestResultToRequester(request, {
+      accepted: false,
+      fromName: sourceName,
+      message,
+    });
+  }
+}
+
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
 
@@ -1759,6 +1972,15 @@ const cleanupTimer = setInterval(() => {
     if (now - request.createdAt > FRIEND_INVITE_EXPIRY_MS) {
       pendingFriendRequests.delete(requestId);
     }
+  }
+
+  const expiredRoomJoinRequests = roomJoinRequestStore.pruneExpired(ROOM_JOIN_REQUEST_EXPIRY_MS, now);
+  for (const request of expiredRoomJoinRequests) {
+    emitRoomJoinRequestResultToRequester(request, {
+      accepted: false,
+      fromName: "Room host",
+      message: "Join request expired.",
+    });
   }
 }, 60_000);
 
@@ -1809,6 +2031,9 @@ io.on("connection", (socket) => {
     const normalizedEmail = normalizeEmail(payload?.email);
     const normalizedFriendId = normalizeFriendId(payload?.friendId);
     const requestedChangeCount = normalizeUsernameChangeCount(payload?.usernameChangeCount);
+    const emitProfileApplied = (): void => {
+      socket.emit("profile:setName:applied", { userId: normalizedUserId || null });
+    };
 
     if (normalizedUserId) {
       const previousCount = normalizeUsernameChangeCount(state.usernameChangeCount);
@@ -1888,6 +2113,7 @@ io.on("connection", (socket) => {
         removeFromRoom(socket.id, true);
         socket.emit("session:left", { roomId: room.id });
         socket.emit("room:error", { message: "Guest mode is spectator-only online. Sign in to play online PvP." });
+        emitProfileApplied();
         return;
       }
 
@@ -1899,6 +2125,12 @@ io.on("connection", (socket) => {
       }
       emitRoomState(room);
     }
+
+    if (normalizedUserId) {
+      emitPendingRoomJoinRequestsForUser(normalizedUserId);
+    }
+
+    emitProfileApplied();
   });
 
   socket.on("friends:watch", (payload?: { friendIds?: string[] }) => {
@@ -2312,6 +2544,154 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("friends:room-join:request", (payload?: { toUserId?: string; roomId?: string }) => {
+    const onlinePermissions = getOnlineMultiplayerPermissions(socket.id);
+    if (!onlinePermissions.canPlayOnlineMatches) {
+      socket.emit("room:error", { message: "Sign in to request joining a friend's room." });
+      return;
+    }
+
+    const requesterUserId = getSocketUserId(socket.id);
+    if (!requesterUserId) {
+      socket.emit("room:error", { message: "Sign in to request joining a friend's room." });
+      return;
+    }
+
+    const toUserId = normalizeUserId(payload?.toUserId);
+    if (!toUserId) {
+      socket.emit("room:error", { message: "Invalid friend target for join request." });
+      return;
+    }
+
+    if (toUserId === requesterUserId) {
+      socket.emit("room:error", { message: "You cannot request to join your own room." });
+      return;
+    }
+
+    if (!areLikelyFriendsForJoinRequest(socket.id, requesterUserId, toUserId)) {
+      socket.emit("room:error", { message: "Join requests are only available for friends in your list." });
+      return;
+    }
+
+    const normalizedRequestedRoomId = typeof payload?.roomId === "string"
+      ? payload.roomId.trim()
+      : "";
+    const requestedRoomId = ROOM_ID_PATTERN.test(normalizedRequestedRoomId)
+      ? normalizedRequestedRoomId
+      : null;
+
+    const room = findJoinRequestTargetRoom(toUserId, requestedRoomId);
+    if (!room) {
+      socket.emit("room:error", { message: "This room is not accepting join requests right now." });
+      return;
+    }
+
+    if (room.whiteUserId === requesterUserId || room.blackUserId === requesterUserId) {
+      socket.emit("room:error", { message: "You are already in that room." });
+      return;
+    }
+
+    const duplicateRequest = roomJoinRequestStore.findDuplicatePending({
+      requesterUserId,
+      targetUserId: toUserId,
+      roomId: room.id,
+    });
+    if (duplicateRequest) {
+      socket.emit("room:error", { message: "A join request for that room is already pending." });
+      return;
+    }
+
+    const requestId = randomUUID();
+    const requesterName = getSocketDisplayName(socket.id);
+    const requestRecord: StoredRoomJoinRequest = {
+      requestId,
+      roomId: room.id,
+      requesterUserId,
+      targetUserId: toUserId,
+      requesterName,
+      createdAt: Date.now(),
+    };
+    roomJoinRequestStore.save(requestRecord);
+
+    const targetSockets = getConnectedUserSocketIds(toUserId);
+    for (const targetSocketId of targetSockets) {
+      io.to(targetSocketId).emit("friends:room-join:incoming", {
+        requestId,
+        fromUserId: requesterUserId,
+        fromName: requesterName,
+        roomId: room.id,
+      });
+    }
+
+    socket.emit("friends:room-join:requested", {
+      requestId,
+      toUserId,
+      roomId: room.id,
+    });
+  });
+
+  socket.on("friends:room-join:respond", (payload?: { requestId?: string; fromUserId?: string; accepted?: boolean }) => {
+    if (typeof payload?.accepted !== "boolean") {
+      socket.emit("room:error", { message: "Invalid join request response." });
+      return;
+    }
+
+    const targetUserId = getSocketUserId(socket.id);
+    if (!targetUserId) {
+      socket.emit("room:error", { message: "Sign in to respond to join requests." });
+      return;
+    }
+
+    const requestId = normalizeUserId(payload?.requestId);
+    const fromUserId = normalizeUserId(payload?.fromUserId);
+    if (!requestId || !fromUserId) {
+      socket.emit("room:error", { message: "Invalid join request response." });
+      return;
+    }
+
+    const request = roomJoinRequestStore.getById(requestId);
+    if (!request) {
+      socket.emit("room:error", { message: "Join request has expired." });
+      return;
+    }
+
+    if (request.targetUserId !== targetUserId || request.requesterUserId !== fromUserId) {
+      socket.emit("room:error", { message: "Join request does not match this account." });
+      return;
+    }
+
+    roomJoinRequestStore.delete(requestId);
+    const responderName = getSocketDisplayName(socket.id);
+
+    if (!payload.accepted) {
+      emitRoomJoinRequestResultToRequester(request, {
+        accepted: false,
+        fromName: responderName,
+        message: `${responderName} declined your join request.`,
+      });
+      return;
+    }
+
+    const room = findJoinRequestTargetRoom(targetUserId, request.roomId);
+    if (!room) {
+      emitRoomJoinRequestResultToRequester(request, {
+        accepted: false,
+        fromName: responderName,
+        message: "Room is no longer available for join requests.",
+      });
+      return;
+    }
+
+    grantDirectRoomInvite(room.access, request.requesterUserId, true);
+    emitRoomJoinRequestResultToRequester(request, {
+      accepted: true,
+      fromName: responderName,
+      roomId: room.id,
+      inviteToken: room.access.inviteLinkToken,
+      message: `${responderName} accepted your join request. Joining room ${room.id}...`,
+    });
+  });
+
   socket.on("room:create", () => {
     const onlinePermissions = getOnlineMultiplayerPermissions(socket.id);
     if (!onlinePermissions.canPlayOnlineMatches) {
@@ -2398,13 +2778,13 @@ io.on("connection", (socket) => {
       : null;
     const requestedSpectateOnly = payload?.spectateOnly === true;
     const onlinePermissions = getOnlineMultiplayerPermissions(socket.id);
-    const enforceSpectatorOnly = requestedSpectateOnly || !onlinePermissions.canPlayOnlineMatches;
     const requesterUserId = getSocketUserId(socket.id);
     const isSocketMember = room.white === socket.id || room.black === socket.id || room.spectators.has(socket.id);
     const isSeatedIdentityMember = Boolean(
       requesterUserId
       && (requesterUserId === room.whiteUserId || requesterUserId === room.blackUserId),
     );
+    const enforceSpectatorOnly = (requestedSpectateOnly || !onlinePermissions.canPlayOnlineMatches) && !isSeatedIdentityMember;
     const isInvitedPlayerCandidate = Boolean(
       requesterUserId && room.access.invitedUserIds.has(requesterUserId),
     );
@@ -2575,15 +2955,17 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("room:leave", () => {
+  socket.on("room:leave", (ack?: () => void) => {
     const room = getRoomForSocket(socket.id);
     if (!room) {
+      ack?.();
       return;
     }
 
     socket.leave(room.id);
     removeFromRoom(socket.id, true);
     socket.emit("session:left", { roomId: room.id });
+    ack?.();
   });
 
   socket.on("chat:consent:set", (payload?: { accept?: boolean }) => {
