@@ -30719,9 +30719,6 @@ function botDifficultySummary(preset) {
 function moveToUci(move) {
   return `${move.from}${move.to}${move.promotion ?? ""}`;
 }
-function pickRandomMove(moves) {
-  return moves[Math.floor(Math.random() * moves.length)];
-}
 function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
@@ -30745,7 +30742,93 @@ function scoreMoveForHumanizedBot(move) {
   if (move.flags.includes("k") || move.flags.includes("q")) score += 40;
   return score;
 }
-function chooseBotMoveByDifficulty(bestMoveUci, preset, legalMoves) {
+function pickBiasedFromSlice(items, towardFrontBias = 1.5) {
+  if (items.length === 1) {
+    return items[0];
+  }
+  const biasedRoll = Math.pow(Math.random(), Math.max(1, towardFrontBias));
+  const index = Math.min(items.length - 1, Math.floor(biasedRoll * items.length));
+  return items[index];
+}
+function getSliceByPercentiles(items, start, end) {
+  if (items.length === 0) {
+    return [];
+  }
+  const clampedStart = Math.max(0, Math.min(1, start));
+  const clampedEnd = Math.max(clampedStart, Math.min(1, end));
+  const startIndex = Math.min(items.length - 1, Math.floor(items.length * clampedStart));
+  const endIndex = Math.max(startIndex + 1, Math.ceil(items.length * clampedEnd));
+  return items.slice(startIndex, Math.min(items.length, endIndex));
+}
+function getComplexityPenaltyFactor(legalMoveCount) {
+  if (legalMoveCount <= 2) {
+    return 0.15;
+  }
+  if (legalMoveCount <= 4) {
+    return 0.45;
+  }
+  if (legalMoveCount <= 8) {
+    return 0.72;
+  }
+  return 1;
+}
+function evaluateTacticalPenalty(positionFen, move) {
+  const board = new Chess(positionFen);
+  const applied = board.move(
+    move.promotion ? { from: move.from, to: move.to, promotion: move.promotion } : { from: move.from, to: move.to }
+  );
+  if (!applied) {
+    return 0;
+  }
+  const destination = applied.to;
+  const movedValue = PIECE_VALUES[applied.piece] ?? 0;
+  if (movedValue <= 0) {
+    return 0;
+  }
+  const opponentColor = applied.color === "w" ? "b" : "w";
+  const legalCaptureReplies = board.moves({ verbose: true }).filter((reply) => {
+    return reply.to === destination && Boolean(reply.captured);
+  });
+  if (legalCaptureReplies.length === 0) {
+    return 0;
+  }
+  const defenderCount = board.attackers(destination, applied.color).length;
+  const leastCapturerValue = Math.min(...legalCaptureReplies.map((reply) => PIECE_VALUES[reply.piece] ?? 0));
+  const capturedValue = move.captured ? PIECE_VALUES[move.captured] ?? 0 : 0;
+  const isHanging = defenderCount === 0;
+  let penalty = 0;
+  if (leastCapturerValue < movedValue) {
+    penalty += (movedValue - leastCapturerValue) * 1.15;
+  }
+  if (isHanging) {
+    penalty += movedValue * 0.85;
+  }
+  if (!move.captured) {
+    penalty += 40;
+  }
+  if (capturedValue >= leastCapturerValue && capturedValue > 0) {
+    penalty *= 0.74;
+  }
+  if (move.san.includes("+")) {
+    penalty *= 0.68;
+  }
+  if (applied.piece === "q" && isHanging && leastCapturerValue <= 330 && !move.captured && !move.san.includes("+")) {
+    penalty += 1300;
+  }
+  const isSquareAttackedByOpponent = board.isAttacked(destination, opponentColor);
+  if (!isSquareAttackedByOpponent) {
+    return 0;
+  }
+  return penalty;
+}
+function getCatastrophicPenaltyThreshold(level) {
+  if (level <= 1) return 760;
+  if (level <= 2) return 700;
+  if (level <= 3) return 660;
+  if (level <= 5) return 620;
+  return 580;
+}
+function chooseBotMoveByDifficulty(bestMoveUci, preset, legalMoves, currentFen) {
   if (preset.fullStrength || preset.level >= 10) {
     return bestMoveUci;
   }
@@ -30753,34 +30836,54 @@ function chooseBotMoveByDifficulty(bestMoveUci, preset, legalMoves) {
     return bestMoveUci;
   }
   const bestMove = bestMoveUci.trim();
-  const alternatives = legalMoves.filter((move) => moveToUci(move) !== bestMove);
-  if (alternatives.length === 0) {
+  const scoredMoves = legalMoves.map((move) => ({
+    uci: moveToUci(move),
+    baseScore: scoreMoveForHumanizedBot(move),
+    tacticalPenalty: currentFen ? evaluateTacticalPenalty(currentFen, move) : 0
+  })).map((entry) => ({
+    uci: entry.uci,
+    score: entry.baseScore - entry.tacticalPenalty,
+    tacticalPenalty: entry.tacticalPenalty
+  })).sort((left, right) => right.score - left.score);
+  const bestMoveIsLegal = scoredMoves.some((entry) => entry.uci === bestMove);
+  if (!bestMoveIsLegal) {
+    return scoredMoves[0]?.uci ?? bestMoveUci;
+  }
+  const scoredAlternatives = scoredMoves.filter((entry) => entry.uci !== bestMove);
+  if (scoredAlternatives.length === 0) {
     return bestMoveUci;
   }
-  const levelGap = 10 - preset.level;
-  const blunderChance = Math.max(0, (levelGap - 1) * 0.03);
-  const inaccuracyChance = Math.max(0, levelGap * 0.045);
+  const catastrophicThreshold = getCatastrophicPenaltyThreshold(preset.level);
+  const nonCatastrophicAlternatives = scoredAlternatives.filter((entry) => entry.tacticalPenalty < catastrophicThreshold);
+  const candidatePool = nonCatastrophicAlternatives.length > 0 ? nonCatastrophicAlternatives : scoredAlternatives;
+  const levelTuning = BOT_MOVE_QUALITY_TUNING_BY_LEVEL[preset.level] ?? BOT_MOVE_QUALITY_TUNING_BY_LEVEL[1];
+  const complexityPenalty = getComplexityPenaltyFactor(legalMoves.length);
+  const blunderChance = levelTuning.blunderChance * complexityPenalty;
+  const inaccuracyChance = levelTuning.inaccuracyChance * complexityPenalty;
+  const slightInaccuracyChance = levelTuning.slightInaccuracyChance * complexityPenalty;
   const roll = Math.random();
   if (roll < blunderChance) {
-    const sorted = [...alternatives].sort((a, b2) => scoreMoveForHumanizedBot(a) - scoreMoveForHumanizedBot(b2));
-    const worstSlice = sorted.slice(0, Math.max(1, Math.floor(sorted.length / 3)));
-    return moveToUci(pickRandomMove(worstSlice));
+    const worstSlice = getSliceByPercentiles(candidatePool.slice().reverse(), 0, 0.2);
+    const picked = pickBiasedFromSlice(worstSlice, 1.7);
+    return picked.uci;
   }
   if (roll < blunderChance + inaccuracyChance) {
-    const sorted = [...alternatives].sort((a, b2) => scoreMoveForHumanizedBot(a) - scoreMoveForHumanizedBot(b2));
-    const start = Math.floor(sorted.length * 0.2);
-    const end = Math.max(start + 1, Math.floor(sorted.length * 0.7));
-    const candidateSlice = sorted.slice(start, end);
-    if (candidateSlice.length > 0) {
-      return moveToUci(pickRandomMove(candidateSlice));
-    }
+    const inaccurateSlice = getSliceByPercentiles(candidatePool.slice().reverse(), 0.18, 0.62);
+    const picked = pickBiasedFromSlice(inaccurateSlice, 1.2);
+    return picked.uci;
   }
-  return bestMoveUci;
+  if (roll < blunderChance + inaccuracyChance + slightInaccuracyChance) {
+    const topAlternatives = getSliceByPercentiles(candidatePool, 0, 0.3);
+    const picked = pickBiasedFromSlice(topAlternatives, 1.35);
+    return picked.uci;
+  }
+  return bestMove;
 }
-var PIECE_VALUES, BOT_DIFFICULTY_PRESETS, TIME_CONTROL_PRESETS, DEFAULT_BOT_TIME_CONTROL_ID;
+var PIECE_VALUES, BOT_DIFFICULTY_PRESETS, TIME_CONTROL_PRESETS, DEFAULT_BOT_TIME_CONTROL_ID, BOT_MOVE_QUALITY_TUNING_BY_LEVEL;
 var init_bot_config = __esm({
   "src/client/bot-config.ts"() {
     "use strict";
+    init_chess();
     PIECE_VALUES = {
       p: 100,
       n: 320,
@@ -30790,16 +30893,16 @@ var init_bot_config = __esm({
       k: 0
     };
     BOT_DIFFICULTY_PRESETS = [
-      { level: 1, label: "Level 1 - 800 Elo", elo: 800, skillLevel: 0, moveTimeMs: 90, fullStrength: false },
-      { level: 2, label: "Level 2 - 1000 Elo", elo: 1e3, skillLevel: 2, moveTimeMs: 120, fullStrength: false },
-      { level: 3, label: "Level 3 - 1200 Elo", elo: 1200, skillLevel: 4, moveTimeMs: 170, fullStrength: false },
-      { level: 4, label: "Level 4 - 1400 Elo", elo: 1400, skillLevel: 6, moveTimeMs: 240, fullStrength: false },
-      { level: 5, label: "Level 5 - 1600 Elo", elo: 1600, skillLevel: 8, moveTimeMs: 330, fullStrength: false },
-      { level: 6, label: "Level 6 - 1800 Elo", elo: 1800, skillLevel: 10, moveTimeMs: 460, fullStrength: false },
-      { level: 7, label: "Level 7 - 2000 Elo", elo: 2e3, skillLevel: 12, moveTimeMs: 620, fullStrength: false },
-      { level: 8, label: "Level 8 - 2200 Elo", elo: 2200, skillLevel: 14, moveTimeMs: 820, fullStrength: false },
-      { level: 9, label: "Level 9 - 2400 Elo", elo: 2400, skillLevel: 17, moveTimeMs: 1100, fullStrength: false },
-      { level: 10, label: "Level 10 - Full Strength", elo: null, skillLevel: 20, moveTimeMs: 2200, fullStrength: true }
+      { level: 1, label: "Level 1 - 800 Elo", elo: 800, skillLevel: 2, moveTimeMs: 170, fullStrength: false },
+      { level: 2, label: "Level 2 - 1000 Elo", elo: 1e3, skillLevel: 4, moveTimeMs: 230, fullStrength: false },
+      { level: 3, label: "Level 3 - 1200 Elo", elo: 1200, skillLevel: 4, moveTimeMs: 240, fullStrength: false },
+      { level: 4, label: "Level 4 - 1400 Elo", elo: 1400, skillLevel: 6, moveTimeMs: 340, fullStrength: false },
+      { level: 5, label: "Level 5 - 1600 Elo", elo: 1600, skillLevel: 9, moveTimeMs: 470, fullStrength: false },
+      { level: 6, label: "Level 6 - 1800 Elo", elo: 1800, skillLevel: 12, moveTimeMs: 650, fullStrength: false },
+      { level: 7, label: "Level 7 - 2000 Elo", elo: 2e3, skillLevel: 14, moveTimeMs: 900, fullStrength: false },
+      { level: 8, label: "Level 8 - 2200 Elo", elo: 2200, skillLevel: 16, moveTimeMs: 1250, fullStrength: false },
+      { level: 9, label: "Level 9 - 2400 Elo", elo: 2400, skillLevel: 18, moveTimeMs: 1700, fullStrength: false },
+      { level: 10, label: "Level 10 - Full Strength", elo: null, skillLevel: 20, moveTimeMs: 2600, fullStrength: true }
     ];
     TIME_CONTROL_PRESETS = [
       { id: "bullet1", label: "1+0 Bullet", initialMs: 6e4, incrementMs: 0 },
@@ -30811,6 +30914,18 @@ var init_bot_config = __esm({
       { id: "rapid15p10", label: "15+10 Rapid", initialMs: 9e5, incrementMs: 1e4 }
     ];
     DEFAULT_BOT_TIME_CONTROL_ID = "blitz3";
+    BOT_MOVE_QUALITY_TUNING_BY_LEVEL = {
+      1: { blunderChance: 0.11, inaccuracyChance: 0.34, slightInaccuracyChance: 0.29 },
+      2: { blunderChance: 0.08, inaccuracyChance: 0.31, slightInaccuracyChance: 0.29 },
+      3: { blunderChance: 0.06, inaccuracyChance: 0.26, slightInaccuracyChance: 0.28 },
+      4: { blunderChance: 0.1, inaccuracyChance: 0.23, slightInaccuracyChance: 0.26 },
+      5: { blunderChance: 0.08, inaccuracyChance: 0.18, slightInaccuracyChance: 0.26 },
+      6: { blunderChance: 0.05, inaccuracyChance: 0.13, slightInaccuracyChance: 0.24 },
+      7: { blunderChance: 0.02, inaccuracyChance: 0.08, slightInaccuracyChance: 0.2 },
+      8: { blunderChance: 0.01, inaccuracyChance: 0.05, slightInaccuracyChance: 0.16 },
+      9: { blunderChance: 3e-3, inaccuracyChance: 0.025, slightInaccuracyChance: 0.11 },
+      10: { blunderChance: 0, inaccuracyChance: 0, slightInaccuracyChance: 0 }
+    };
   }
 });
 
@@ -31768,7 +31883,7 @@ function buildMainAppMarkup(params) {
             </div>
             <div style="margin-top: 24px;">
               <button class="action" id="pregameReadyBtn">Ready to Play</button>
-              <div id="pregameConflictWarning" hidden>Both players cannot select the same color.</div>
+              <div id="pregameConflictWarning" hidden>Both players selected the same color. Please choose different colors to continue.</div>
             </div>
           </div>
         </div>
@@ -33114,6 +33229,7 @@ var require_main = __commonJS({
     var ROOM_CREATE_BUTTON_PENDING_LABEL = "Creating room...";
     var ROOM_CREATE_TRANSITION_CLASS = "room-create-transition";
     var ROOM_CREATE_TRANSITION_MS = 620;
+    var PREGAME_COLOR_CONFLICT_ERROR = "Both players selected the same color. Please choose different colors to continue.";
     var roomCreatePending = false;
     var roomCreateTransitionTimer = null;
     function clearRoomCreateTransitionClass() {
@@ -34014,7 +34130,12 @@ var require_main = __commonJS({
       if (state.gameMode !== "bot" || !state.snapshot || state.snapshot.turn !== botRole || state.snapshot.winner !== null || state.snapshot.checkmate || state.snapshot.draw) {
         return;
       }
-      const selectedMoveUci = chooseBotMoveByDifficulty(bestMoveUci, botPreset, chess.moves({ verbose: true }));
+      const selectedMoveUci = chooseBotMoveByDifficulty(
+        bestMoveUci,
+        botPreset,
+        chess.moves({ verbose: true }),
+        chess.fen()
+      );
       let botMove = null;
       const attemptedMoves = selectedMoveUci === bestMoveUci ? [selectedMoveUci] : [selectedMoveUci, bestMoveUci];
       for (const moveUci of attemptedMoves) {
@@ -34411,6 +34532,10 @@ var require_main = __commonJS({
         syncUrl(null);
         return;
       }
+      if (payload.message === PREGAME_COLOR_CONFLICT_ERROR && !pregameSelection.hidden) {
+        pregameConflictWarning.textContent = payload.message;
+        pregameConflictWarning.hidden = false;
+      }
       showToast(payload.message);
     });
     socket.on("undo:requested", () => {
@@ -34603,16 +34728,16 @@ var require_main = __commonJS({
           myReadyBadge.classList.toggle("is-ready", myReady);
           opReadyBadge.classList.toggle("is-ready", opReady);
           const hasConflict = myChoice !== null && opChoice !== null && myChoice === opChoice;
+          pregameConflictWarning.textContent = PREGAME_COLOR_CONFLICT_ERROR;
           pregameConflictWarning.hidden = !hasConflict;
           pregameReadyBtn.hidden = false;
-          pregameReadyBtn.disabled = !bothConnected || myChoice === null || hasConflict || myReady;
-          if (!bothConnected || myReady) {
-            pregameReadyBtn.textContent = "Waiting for Opponent...";
+          pregameReadyBtn.disabled = !myReady && myChoice === null;
+          if (myReady) {
+            pregameReadyBtn.textContent = "Unready";
+          } else if (!bothConnected) {
+            pregameReadyBtn.textContent = "Ready (Waiting Opponent)";
           } else {
             pregameReadyBtn.textContent = "Ready to Play";
-          }
-          if (!bothConnected) {
-            pregameConflictWarning.hidden = true;
           }
         } else {
           pregameReadyBtn.hidden = true;

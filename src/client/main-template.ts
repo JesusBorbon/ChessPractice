@@ -168,7 +168,7 @@ export function buildMainAppMarkup(params: BuildMainAppMarkupParams): string {
             </div>
             <div style="margin-top: 24px;">
               <button class="action" id="pregameReadyBtn">Ready to Play</button>
-              <div id="pregameConflictWarning" hidden>Both players cannot select the same color.</div>
+              <div id="pregameConflictWarning" hidden>Both players selected the same color. Please choose different colors to continue.</div>
             </div>
           </div>
         </div>

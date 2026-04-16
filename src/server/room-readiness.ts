@@ -39,17 +39,6 @@ export function sanitizePregameSeatState(state: PregameSeatState): boolean {
     return changed;
   }
 
-  const whiteChoice = state.colorChoices.get(state.white);
-  const blackChoice = state.colorChoices.get(state.black);
-  if (whiteChoice && blackChoice && whiteChoice === blackChoice) {
-    if (state.readyPlayers.delete(state.white)) {
-      changed = true;
-    }
-    if (state.readyPlayers.delete(state.black)) {
-      changed = true;
-    }
-  }
-
   return changed;
 }
 

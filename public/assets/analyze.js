@@ -5752,13 +5752,28 @@ var require_analyze = __commonJS({
       }
       return Math.round(totalAccuracy / moves.length);
     }
-    function estimatePlayerElo(accuracy, averageCpl) {
+    function estimatePlayerElo(input) {
+      const { accuracy, averageCpl, moves } = input;
       const normalizedAccuracy = Math.max(0, Math.min(100, accuracy));
       const normalizedCpl = Math.max(0, Math.min(600, averageCpl));
-      const fromAccuracy = 700 + Math.pow(normalizedAccuracy / 100, 1.7) * 2200;
-      const fromCpl = 2900 - normalizedCpl * 4.1;
-      const estimated = fromAccuracy * 0.58 + fromCpl * 0.42;
-      return Math.round(Math.max(400, Math.min(3e3, estimated)));
+      const moveCount = moves.length;
+      const blunderCount = moves.filter((move) => move.category === "blunder").length;
+      const mistakeCount = moves.filter((move) => move.category === "mistake").length;
+      const inaccuracyCount = moves.filter((move) => move.category === "inaccuracy").length;
+      const excellentCount = moves.filter((move) => move.category === "excellent").length;
+      const greatCount = moves.filter((move) => move.category === "great").length;
+      const brilliantCount = moves.filter((move) => move.category === "brilliant").length;
+      const accuracyComponent = 560 + Math.pow(normalizedAccuracy / 100, 1.9) * 2380;
+      const cplComponent = 2860 - normalizedCpl * 3.2;
+      const tacticalErrorRate = (blunderCount * 1.8 + mistakeCount * 1.1 + inaccuracyCount * 0.45) / Math.max(1, moveCount);
+      const tacticalPenalty = tacticalErrorRate * 235 + blunderCount * 92 + mistakeCount * 38 + inaccuracyCount * 11;
+      const qualityBonusRate = (excellentCount + greatCount * 1.2 + brilliantCount * 1.6) / Math.max(1, moveCount);
+      const qualityBonus = qualityBonusRate * 95;
+      const rawEstimate = accuracyComponent * 0.5 + cplComponent * 0.5 + qualityBonus - tacticalPenalty;
+      const confidence = Math.max(0.2, Math.min(1, moveCount / 38));
+      const neutralBaseline = 1450;
+      const stabilizedEstimate = neutralBaseline + (rawEstimate - neutralBaseline) * (0.32 + confidence * 0.68);
+      return Math.round(Math.max(400, Math.min(3e3, stabilizedEstimate)));
     }
     function escapeHtml(text) {
       return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&#039;");
@@ -5782,7 +5797,7 @@ var require_analyze = __commonJS({
           moveCount: moves.length,
           accuracy,
           averageCpl,
-          estimatedElo: estimatePlayerElo(accuracy, averageCpl),
+          estimatedElo: estimatePlayerElo({ accuracy, averageCpl, moves }),
           categoryCounts: {
             excellent,
             great,

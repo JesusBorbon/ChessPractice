@@ -462,6 +462,7 @@ const ROOM_CREATE_BUTTON_LABEL = "Create room";
 const ROOM_CREATE_BUTTON_PENDING_LABEL = "Creating room...";
 const ROOM_CREATE_TRANSITION_CLASS = "room-create-transition";
 const ROOM_CREATE_TRANSITION_MS = 620;
+const PREGAME_COLOR_CONFLICT_ERROR = "Both players selected the same color. Please choose different colors to continue.";
 
 let roomCreatePending = false;
 let roomCreateTransitionTimer: number | null = null;
@@ -1594,7 +1595,12 @@ async function triggerBotResponse(engineMoveTimeMs?: number) {
     return;
   }
 
-  const selectedMoveUci = chooseBotMoveByDifficulty(bestMoveUci, botPreset, chess.moves({ verbose: true }));
+  const selectedMoveUci = chooseBotMoveByDifficulty(
+    bestMoveUci,
+    botPreset,
+    chess.moves({ verbose: true }),
+    chess.fen(),
+  );
 
   let botMove: Move | null = null;
   const attemptedMoves = selectedMoveUci === bestMoveUci
@@ -2120,6 +2126,12 @@ socket.on("room:error", (payload: { message: string }) => {
     syncUrl(null);
     return;
   }
+
+  if (payload.message === PREGAME_COLOR_CONFLICT_ERROR && !pregameSelection.hidden) {
+    pregameConflictWarning.textContent = payload.message;
+    pregameConflictWarning.hidden = false;
+  }
+
   showToast(payload.message);
 });
 
@@ -2371,18 +2383,17 @@ function renderSession(): void {
        opReadyBadge.classList.toggle("is-ready", opReady);
 
        const hasConflict = myChoice !== null && opChoice !== null && myChoice === opChoice;
+       pregameConflictWarning.textContent = PREGAME_COLOR_CONFLICT_ERROR;
        pregameConflictWarning.hidden = !hasConflict;
 
        pregameReadyBtn.hidden = false;
-       pregameReadyBtn.disabled = !bothConnected || myChoice === null || hasConflict || myReady;
-       if (!bothConnected || myReady) {
-         pregameReadyBtn.textContent = "Waiting for Opponent...";
+       pregameReadyBtn.disabled = !myReady && myChoice === null;
+       if (myReady) {
+         pregameReadyBtn.textContent = "Unready";
+       } else if (!bothConnected) {
+         pregameReadyBtn.textContent = "Ready (Waiting Opponent)";
        } else {
          pregameReadyBtn.textContent = "Ready to Play";
-       }
-
-       if (!bothConnected) {
-         pregameConflictWarning.hidden = true;
        }
     } else {
        pregameReadyBtn.hidden = true;

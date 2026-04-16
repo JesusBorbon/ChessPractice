@@ -180,6 +180,8 @@ type GameRoom = {
   access: RoomAccessState;
 };
 
+const PREGAME_COLOR_CONFLICT_ERROR = "Both players selected the same color. Please choose different colors to continue.";
+
 const app = express();
 const server = createServer(app);
 const io = new Server(server, {
@@ -3045,13 +3047,6 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const opponentId = room.white === socket.id ? room.black : room.white;
-    const opponentChoice = opponentId ? room.colorChoices.get(opponentId) : null;
-    if (opponentChoice === payload.color) {
-      socket.emit("room:error", { message: "Both players cannot select the same color." });
-      return;
-    }
-
     room.colorChoices.set(socket.id, payload.color);
     room.readyPlayers.delete(socket.id); // Un-ready them if they switch colors
     emitRoomState(room);
@@ -3072,6 +3067,12 @@ io.on("connection", (socket) => {
       return;
     }
 
+    if (room.readyPlayers.has(socket.id)) {
+      room.readyPlayers.delete(socket.id);
+      emitRoomState(room);
+      return;
+    }
+
     const choice = room.colorChoices.get(socket.id);
     if (!choice) {
       socket.emit("room:error", { message: "Choose a color first." });
@@ -3081,7 +3082,7 @@ io.on("connection", (socket) => {
     const opponentId = room.white === socket.id ? room.black : room.white;
     const opponentChoice = opponentId ? room.colorChoices.get(opponentId) : null;
     if (opponentChoice && opponentChoice === choice) {
-      socket.emit("room:error", { message: "Both players cannot select the same color." });
+      socket.emit("room:error", { message: PREGAME_COLOR_CONFLICT_ERROR });
       return;
     }
 
