@@ -32858,12 +32858,17 @@ var require_main = __commonJS({
     var pendingFriendInvite = null;
     var pendingInGameFriendRequest = null;
     var sendFriendRequestBusy = false;
+    var lowTimeWarningTimer = null;
+    var lowTimeWarningShownByColor = { w: false, b: false };
     var SMOOTH_MOVE_DURATION_MS = 620;
     var EPIC_MOVE_DURATION_MS = {
       smash: 860,
       spin: 760,
       slide: 620
     };
+    var LOW_TIME_WARNING_TRIGGER_MS = 3e4;
+    var LOW_TIME_WARNING_CLEAR_MS = 2e4;
+    var LOW_TIME_WARNING_EFFECT_MS = 1e4;
     var ROOM_CODE_LENGTH = 4;
     var ROOM_ID_PATTERN3 = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
     function applyAnimationTiming(style) {
@@ -33800,7 +33805,41 @@ var require_main = __commonJS({
       state.snapshot.clock.active = null;
       state.snapshot.clock.serverNowMs = Date.now();
       clearScheduledBotResponse();
+      render(true);
       showToast(state.snapshot.status);
+    }
+    function clearLowTimeWarningEffect() {
+      if (!boardWrap) {
+        return;
+      }
+      if (lowTimeWarningTimer !== null) {
+        window.clearTimeout(lowTimeWarningTimer);
+        lowTimeWarningTimer = null;
+      }
+      boardWrap.classList.remove("low-time-warning");
+    }
+    function resetLowTimeWarningState() {
+      clearLowTimeWarningEffect();
+      lowTimeWarningShownByColor.w = false;
+      lowTimeWarningShownByColor.b = false;
+    }
+    function triggerLowTimeWarningEffect(color) {
+      if (!boardWrap || lowTimeWarningShownByColor[color]) {
+        return;
+      }
+      lowTimeWarningShownByColor[color] = true;
+      boardWrap.classList.remove("low-time-warning");
+      void boardWrap.offsetWidth;
+      boardWrap.classList.add("low-time-warning");
+      if (lowTimeWarningTimer !== null) {
+        window.clearTimeout(lowTimeWarningTimer);
+      }
+      lowTimeWarningTimer = window.setTimeout(() => {
+        if (boardWrap) {
+          boardWrap.classList.remove("low-time-warning");
+        }
+        lowTimeWarningTimer = null;
+      }, LOW_TIME_WARNING_EFFECT_MS);
     }
     function getBotPlayerRole() {
       if (state.role === "w" || state.role === "b") {
@@ -34212,6 +34251,9 @@ var require_main = __commonJS({
       const previousLegalTargetsKey = state.legalTargets.join(",");
       const previousFen = chess.fen();
       let boardRefreshForcedByArrowClear = false;
+      if (!snapshot.checkmate && !snapshot.draw && snapshot.winner === null && snapshot.moveCount === 0 && previousMoveCount > 0) {
+        resetLowTimeWarningState();
+      }
       state.snapshot = snapshot;
       chess.load(snapshot.fen);
       const isActuallyNewMove = _lastPlayedMoveCount !== -1 && snapshot.moveCount > _lastPlayedMoveCount;
@@ -34422,6 +34464,7 @@ var require_main = __commonJS({
         applyFocusMode();
       }
       if (!snapshot) {
+        clearLowTimeWarningEffect();
         pregamePlaceholder.hidden = false;
         pregameWaiting.hidden = false;
         pregameSelection.hidden = true;
@@ -34504,6 +34547,16 @@ var require_main = __commonJS({
       blackClock.textContent = formatClockMs(blackMs);
       whiteClock.classList.toggle("is-low", snapshot.isStarted && whiteMs <= snapshot.clock.lowTimeThresholdMs);
       blackClock.classList.toggle("is-low", snapshot.isStarted && blackMs <= snapshot.clock.lowTimeThresholdMs);
+      const activeClockMs = snapshot.clock.active === "w" ? whiteMs : snapshot.clock.active === "b" ? blackMs : null;
+      const activeClockColor = snapshot.clock.active;
+      const showLowTimeWarning = Boolean(
+        isGameActive && !gameEnded && snapshot.clock.running && (activeClockColor === "w" || activeClockColor === "b") && activeClockMs !== null && activeClockMs <= LOW_TIME_WARNING_TRIGGER_MS && activeClockMs > LOW_TIME_WARNING_CLEAR_MS
+      );
+      if (showLowTimeWarning && (activeClockColor === "w" || activeClockColor === "b")) {
+        triggerLowTimeWarningEffect(activeClockColor);
+      } else if (gameEnded || !isGameActive || !snapshot.clock.running) {
+        clearLowTimeWarningEffect();
+      }
       const opponentSeat = getOpponentSeatInfo(snapshot);
       const currentSeat = getCurrentSeatInfo(snapshot);
       const currentUserIsRegistered = Boolean(currentSeat?.userId && currentSeat.friendId);
@@ -35626,6 +35679,7 @@ var require_main = __commonJS({
     }
     function startBotGame(playerSide = state.botPlayerSide) {
       clearScheduledBotResponse();
+      resetLowTimeWarningState();
       accountSidebarController.resetFinishedGameTracking();
       const normalizedPlayerSide = playerSide === "b" ? "b" : "w";
       const botSide = normalizedPlayerSide === "w" ? "b" : "w";
@@ -35979,6 +36033,7 @@ var require_main = __commonJS({
       cancelCurrentDrag();
       clearArrows();
       chess.reset();
+      resetLowTimeWarningState();
       syncUrl(null);
     }
     function isTypingTarget(target) {

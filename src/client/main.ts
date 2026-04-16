@@ -248,6 +248,8 @@ let botResponseTimer: number | null = null;
 let pendingFriendInvite: IncomingFriendInvite | null = null;
 let pendingInGameFriendRequest: IncomingInGameFriendRequest | null = null;
 let sendFriendRequestBusy = false;
+let lowTimeWarningTimer: number | null = null;
+const lowTimeWarningShownByColor: Record<PlayerRole, boolean> = { w: false, b: false };
 
 const SMOOTH_MOVE_DURATION_MS = 620;
 const EPIC_MOVE_DURATION_MS = {
@@ -255,6 +257,9 @@ const EPIC_MOVE_DURATION_MS = {
   spin: 760,
   slide: 620,
 } as const;
+const LOW_TIME_WARNING_TRIGGER_MS = 30_000;
+const LOW_TIME_WARNING_CLEAR_MS = 20_000;
+const LOW_TIME_WARNING_EFFECT_MS = 10_000;
 
 const PIECE_SYMBOLS_MAP: Record<string, string> = {
   p: "♟",
@@ -1422,7 +1427,50 @@ function finishBotGameOnTime(timeoutColor: PlayerRole): void {
   state.snapshot.clock.serverNowMs = Date.now();
 
   clearScheduledBotResponse();
+  render(true);
   showToast(state.snapshot.status);
+}
+
+function clearLowTimeWarningEffect(): void {
+  if (!boardWrap) {
+    return;
+  }
+
+  if (lowTimeWarningTimer !== null) {
+    window.clearTimeout(lowTimeWarningTimer);
+    lowTimeWarningTimer = null;
+  }
+  boardWrap.classList.remove("low-time-warning");
+}
+
+function resetLowTimeWarningState(): void {
+  clearLowTimeWarningEffect();
+  lowTimeWarningShownByColor.w = false;
+  lowTimeWarningShownByColor.b = false;
+}
+
+function triggerLowTimeWarningEffect(color: PlayerRole): void {
+  if (!boardWrap || lowTimeWarningShownByColor[color]) {
+    return;
+  }
+
+  lowTimeWarningShownByColor[color] = true;
+
+  boardWrap.classList.remove("low-time-warning");
+  // Force reflow so the animation retriggers reliably when the class is re-added.
+  void boardWrap.offsetWidth;
+  boardWrap.classList.add("low-time-warning");
+
+  if (lowTimeWarningTimer !== null) {
+    window.clearTimeout(lowTimeWarningTimer);
+  }
+
+  lowTimeWarningTimer = window.setTimeout(() => {
+    if (boardWrap) {
+      boardWrap.classList.remove("low-time-warning");
+    }
+    lowTimeWarningTimer = null;
+  }, LOW_TIME_WARNING_EFFECT_MS);
 }
 
 function getBotPlayerRole(): PlayerRole {
@@ -1956,6 +2004,16 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
   const previousFen = chess.fen();
   let boardRefreshForcedByArrowClear = false;
   
+  if (
+    !snapshot.checkmate
+    && !snapshot.draw
+    && snapshot.winner === null
+    && snapshot.moveCount === 0
+    && previousMoveCount > 0
+  ) {
+    resetLowTimeWarningState();
+  }
+
   state.snapshot = snapshot;
   
   chess.load(snapshot.fen);
@@ -2249,6 +2307,7 @@ function renderSession(): void {
   
   // 3. Early Exit if No Snapshot (Lobby State)
   if (!snapshot) {
+    clearLowTimeWarningEffect();
     pregamePlaceholder.hidden = false;
     pregameWaiting.hidden = false;
     pregameSelection.hidden = true;
@@ -2351,6 +2410,28 @@ function renderSession(): void {
   blackClock.textContent = formatClockMs(blackMs);
   whiteClock.classList.toggle("is-low", snapshot.isStarted && whiteMs <= snapshot.clock.lowTimeThresholdMs);
   blackClock.classList.toggle("is-low", snapshot.isStarted && blackMs <= snapshot.clock.lowTimeThresholdMs);
+
+  const activeClockMs = snapshot.clock.active === "w"
+    ? whiteMs
+    : snapshot.clock.active === "b"
+    ? blackMs
+    : null;
+  const activeClockColor = snapshot.clock.active;
+  const showLowTimeWarning = Boolean(
+    isGameActive
+    && !gameEnded
+    && snapshot.clock.running
+    && (activeClockColor === "w" || activeClockColor === "b")
+    && activeClockMs !== null
+    && activeClockMs <= LOW_TIME_WARNING_TRIGGER_MS
+    && activeClockMs > LOW_TIME_WARNING_CLEAR_MS,
+  );
+
+  if (showLowTimeWarning && (activeClockColor === "w" || activeClockColor === "b")) {
+    triggerLowTimeWarningEffect(activeClockColor);
+  } else if (gameEnded || !isGameActive || !snapshot.clock.running) {
+    clearLowTimeWarningEffect();
+  }
 
   const opponentSeat = getOpponentSeatInfo(snapshot);
   const currentSeat = getCurrentSeatInfo(snapshot);
@@ -3833,6 +3914,7 @@ function tryMoveFromTo(from: Square, to: Square): void {
 /** Starts a local game against the AI */
 function startBotGame(playerSide: PlayerRole = state.botPlayerSide) {
   clearScheduledBotResponse();
+  resetLowTimeWarningState();
   accountSidebarController.resetFinishedGameTracking();
 
   const normalizedPlayerSide: PlayerRole = playerSide === "b" ? "b" : "w";
@@ -4286,6 +4368,7 @@ function clearLocalRoomState(): void {
   
   clearArrows();
   chess.reset();
+  resetLowTimeWarningState();
   syncUrl(null);
 }
 
