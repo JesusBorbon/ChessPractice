@@ -28950,6 +28950,105 @@ var init_firebase = __esm({
   }
 });
 
+// src/client/game-display.ts
+function normalizeWhitespace(value2) {
+  return value2.trim().replace(/\s+/g, " ");
+}
+function decodePgnHeaderValue(value2) {
+  return value2.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+}
+function parsePgnHeaderValue(pgn2, key) {
+  const pattern = new RegExp(`\\[${key}\\s+"${PGN_HEADER_VALUE_PATTERN.source}"\\]`, "i");
+  const match = pgn2.match(pattern);
+  if (!match?.[1]) {
+    return null;
+  }
+  const decoded = normalizeWhitespace(decodePgnHeaderValue(match[1]));
+  return decoded || null;
+}
+function normalizeBotName(value2) {
+  const normalized = normalizeWhitespace(value2);
+  if (!normalized) {
+    return "Bot";
+  }
+  const exactBotMatch = normalized.match(/^bot(?:\s*\(([^)]+)\))?$/i);
+  if (exactBotMatch) {
+    const details = normalizeWhitespace(exactBotMatch[1] ?? "");
+    return details ? `Bot (${details})` : "Bot";
+  }
+  const ratingMatch = normalized.match(/\b(\d{3,4})\b/);
+  if (ratingMatch?.[1]) {
+    return `Bot (${ratingMatch[1]})`;
+  }
+  const levelMatch = normalized.match(/\blevel\s*(\d{1,2})\b/i);
+  if (levelMatch?.[1]) {
+    return `Bot (Level ${levelMatch[1]})`;
+  }
+  return "Bot";
+}
+function normalizeParticipantDisplayName(value2, fallback) {
+  const normalized = normalizeWhitespace(value2 ?? "");
+  if (!normalized) {
+    return fallback;
+  }
+  if (BOT_KEYWORD_PATTERN.test(normalized)) {
+    return normalizeBotName(normalized);
+  }
+  return normalized;
+}
+function parseRawGameParticipantsFromPgn(pgn2) {
+  const normalizedPgn = pgn2.trim();
+  if (!normalizedPgn) {
+    return { whiteName: null, blackName: null };
+  }
+  return {
+    whiteName: parsePgnHeaderValue(normalizedPgn, "White"),
+    blackName: parsePgnHeaderValue(normalizedPgn, "Black")
+  };
+}
+function resolveGameParticipants(input) {
+  return {
+    whiteName: normalizeParticipantDisplayName(input.whiteName, "White"),
+    blackName: normalizeParticipantDisplayName(input.blackName, "Black")
+  };
+}
+function resolveGameParticipantsFromPgn(pgn2) {
+  const parsed = parseRawGameParticipantsFromPgn(pgn2);
+  return resolveGameParticipants(parsed);
+}
+function buildMatchTitle(participants) {
+  return `${participants.whiteName} vs ${participants.blackName}`;
+}
+function buildMatchTitleFromPgn(pgn2) {
+  return buildMatchTitle(resolveGameParticipantsFromPgn(pgn2));
+}
+function padTwo(value2) {
+  return String(value2).padStart(2, "0");
+}
+function formatSavedGameDateTime(savedAt) {
+  if (!savedAt) {
+    return "Date unavailable";
+  }
+  const date = new Date(savedAt);
+  if (Number.isNaN(date.getTime())) {
+    return "Date unavailable";
+  }
+  const year = date.getFullYear();
+  const month = padTwo(date.getMonth() + 1);
+  const day = padTwo(date.getDate());
+  const hours = padTwo(date.getHours());
+  const minutes = padTwo(date.getMinutes());
+  return `Played ${year}-${month}-${day} ${hours}:${minutes}`;
+}
+var BOT_KEYWORD_PATTERN, PGN_HEADER_VALUE_PATTERN;
+var init_game_display = __esm({
+  "src/client/game-display.ts"() {
+    "use strict";
+    BOT_KEYWORD_PATTERN = /\b(bot|stockfish|engine|ai)\b/i;
+    PGN_HEADER_VALUE_PATTERN = /((?:[^"\\]|\\.)*)/;
+  }
+});
+
 // src/client/friend-system.ts
 function normalizeLookup(value2) {
   return value2.trim().replace(/\s+/g, " ");
@@ -30004,20 +30103,6 @@ function createAccountSidebarController({
       return left.index - right.index;
     }).map((item) => item.entry);
   }
-  function formatSavedGameDate(savedAt) {
-    if (!savedAt) {
-      return "Date unavailable";
-    }
-    const date = new Date(savedAt);
-    if (Number.isNaN(date.getTime())) {
-      return "Date unavailable";
-    }
-    return `Played ${date.toLocaleDateString(void 0, {
-      year: "numeric",
-      month: "short",
-      day: "2-digit"
-    })}`;
-  }
   function openSavedGameInAnalysis(pgn2) {
     const normalizedPgn = pgn2.trim();
     if (!normalizedPgn) {
@@ -30250,7 +30335,7 @@ function createAccountSidebarController({
       return;
     }
     refs.historyPanelStatus.textContent = `Showing ${sortedGames.length} saved game${sortedGames.length === 1 ? "" : "s"}. Select one to analyze.`;
-    sortedGames.forEach((game, index) => {
+    sortedGames.forEach((game) => {
       const deletingThisGame = deletingGameId === game.id;
       const item = document.createElement("article");
       item.className = "saved-game-item";
@@ -30262,10 +30347,10 @@ function createAccountSidebarController({
       const header = document.createElement("div");
       header.className = "saved-game-header";
       const heading = document.createElement("h3");
-      heading.textContent = `Game ${index + 1}`;
+      heading.textContent = buildMatchTitleFromPgn(game.pgn);
       const dateLabel = document.createElement("p");
       dateLabel.className = "saved-game-date";
-      dateLabel.textContent = formatSavedGameDate(game.savedAt);
+      dateLabel.textContent = formatSavedGameDateTime(game.savedAt);
       const actions = document.createElement("div");
       actions.className = "saved-game-actions";
       const deleteButton = document.createElement("button");
@@ -30589,6 +30674,7 @@ var init_account_sidebar2 = __esm({
     "use strict";
     init_chess();
     init_firebase();
+    init_game_display();
     init_friend_system();
     init_friend_activity_realtime();
     MOBILE_BREAKPOINT_PX = 640;

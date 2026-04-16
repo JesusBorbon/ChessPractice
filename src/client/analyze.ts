@@ -5,6 +5,7 @@ import "./arrows.css";
 import "./badge-icon-colors.css";
 import { buildArrowLayerMarkup } from "./arrow-render";
 import { BestMoveArrow, parseBestMoveArrow } from "./best-move-arrow";
+import { resolveGameParticipants, resolveGameParticipantsFromPgn } from "./game-display";
 import { mountThemeSwitcher } from "./theme";
 
 type PromotionPiece = "q" | "r" | "b" | "n";
@@ -368,6 +369,16 @@ app.innerHTML = `
           <div class="turn-dot" id="turnDot"></div>
           <span id="turnLabel">White</span>
         </div>
+        <div class="turn-player-map">
+          <div class="turn-player-row" id="whitePlayerRow">
+            <span class="turn-player-color">White</span>
+            <span class="turn-player-name" id="whitePlayerName">White</span>
+          </div>
+          <div class="turn-player-row" id="blackPlayerRow">
+            <span class="turn-player-color">Black</span>
+            <span class="turn-player-name" id="blackPlayerName">Black</span>
+          </div>
+        </div>
       </div>
 
       <div class="info-card fen-card">
@@ -452,6 +463,10 @@ const moveList   = q<HTMLDivElement>("#moveList");
 const engineFeedback = q<HTMLDivElement>("#engineFeedback");
 const turnDot    = q<HTMLDivElement>("#turnDot");
 const turnLabel  = q<HTMLSpanElement>("#turnLabel");
+const whitePlayerRow = q<HTMLDivElement>("#whitePlayerRow");
+const blackPlayerRow = q<HTMLDivElement>("#blackPlayerRow");
+const whitePlayerName = q<HTMLSpanElement>("#whitePlayerName");
+const blackPlayerName = q<HTMLSpanElement>("#blackPlayerName");
 const promoDialog= q<HTMLDivElement>("#promoDialog");
 const toast      = q<HTMLDivElement>("#toast");
 const analysisLoadingOverlay = q<HTMLDivElement>("#analysisLoadingOverlay");
@@ -1239,6 +1254,10 @@ function renderSide(): void {
   const isWhite = chess.turn() === "w";
   turnDot.className = `turn-dot ${isWhite ? "white" : "black"}`;
   turnLabel.textContent = isWhite ? "White" : "Black";
+  whitePlayerName.textContent = analyzedWhiteName;
+  blackPlayerName.textContent = analyzedBlackName;
+  whitePlayerRow.classList.toggle("active", isWhite);
+  blackPlayerRow.classList.toggle("active", !isWhite);
   fenDisplay.value = chess.fen();
   renderMoveList();
   renderEngineFeedback();
@@ -2518,13 +2537,12 @@ function showToast(msg: string): void {
 }
 
 function applyAnalyzedPlayerNames(whiteName?: string | null, blackName?: string | null): void {
-  analyzedWhiteName = whiteName?.trim() || "White";
-  analyzedBlackName = blackName?.trim() || "Black";
-}
-
-function parsePgnHeaderValue(pgn: string, key: "White" | "Black"): string | null {
-  const match = pgn.match(new RegExp(`\\[${key}\\s+"([^"]+)"\\]`, "i"));
-  return match?.[1]?.trim() || null;
+  const participants = resolveGameParticipants({
+    whiteName: whiteName ?? null,
+    blackName: blackName ?? null,
+  });
+  analyzedWhiteName = participants.whiteName;
+  analyzedBlackName = participants.blackName;
 }
 
 function loadMovesIntoBoard(sans: string[]): boolean {
@@ -2552,11 +2570,8 @@ function loadPgnIntoBoard(pgn: string): boolean {
     return false;
   }
 
-  const pgnWhite = parsePgnHeaderValue(normalizedPgn, "White");
-  const pgnBlack = parsePgnHeaderValue(normalizedPgn, "Black");
-  if (pgnWhite || pgnBlack) {
-    applyAnalyzedPlayerNames(pgnWhite, pgnBlack);
-  }
+  const participants = resolveGameParticipantsFromPgn(normalizedPgn);
+  applyAnalyzedPlayerNames(participants.whiteName, participants.blackName);
 
   const replay = new Chess();
   try {

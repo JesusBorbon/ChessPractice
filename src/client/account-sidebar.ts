@@ -21,6 +21,7 @@ import {
   signOutCurrentUser,
   syncUserProfile,
 } from "./firebase";
+import { buildMatchTitleFromPgn, formatSavedGameDateTime } from "./game-display";
 import {
   getLookupRequestState,
   loadFriendSystemSnapshot,
@@ -1162,23 +1163,6 @@ export function createAccountSidebarController({
       .map((item) => item.entry);
   }
 
-  function formatSavedGameDate(savedAt: string | null): string {
-    if (!savedAt) {
-      return "Date unavailable";
-    }
-
-    const date = new Date(savedAt);
-    if (Number.isNaN(date.getTime())) {
-      return "Date unavailable";
-    }
-
-    return `Played ${date.toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "2-digit",
-    })}`;
-  }
-
   function openSavedGameInAnalysis(pgn: string): void {
     const normalizedPgn = pgn.trim();
     if (!normalizedPgn) {
@@ -1467,7 +1451,7 @@ export function createAccountSidebarController({
 
     refs.historyPanelStatus.textContent = `Showing ${sortedGames.length} saved game${sortedGames.length === 1 ? "" : "s"}. Select one to analyze.`;
 
-    sortedGames.forEach((game, index) => {
+    sortedGames.forEach((game) => {
       const deletingThisGame = deletingGameId === game.id;
 
       const item = document.createElement("article");
@@ -1482,11 +1466,11 @@ export function createAccountSidebarController({
       header.className = "saved-game-header";
 
       const heading = document.createElement("h3");
-      heading.textContent = `Game ${index + 1}`;
+      heading.textContent = buildMatchTitleFromPgn(game.pgn);
 
       const dateLabel = document.createElement("p");
       dateLabel.className = "saved-game-date";
-      dateLabel.textContent = formatSavedGameDate(game.savedAt);
+      dateLabel.textContent = formatSavedGameDateTime(game.savedAt);
 
       const actions = document.createElement("div");
       actions.className = "saved-game-actions";

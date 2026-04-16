@@ -3615,6 +3615,81 @@ var init_best_move_arrow = __esm({
   }
 });
 
+// src/client/game-display.ts
+function normalizeWhitespace(value) {
+  return value.trim().replace(/\s+/g, " ");
+}
+function decodePgnHeaderValue(value) {
+  return value.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+}
+function parsePgnHeaderValue(pgn2, key) {
+  const pattern = new RegExp(`\\[${key}\\s+"${PGN_HEADER_VALUE_PATTERN.source}"\\]`, "i");
+  const match = pgn2.match(pattern);
+  if (!match?.[1]) {
+    return null;
+  }
+  const decoded = normalizeWhitespace(decodePgnHeaderValue(match[1]));
+  return decoded || null;
+}
+function normalizeBotName(value) {
+  const normalized = normalizeWhitespace(value);
+  if (!normalized) {
+    return "Bot";
+  }
+  const exactBotMatch = normalized.match(/^bot(?:\s*\(([^)]+)\))?$/i);
+  if (exactBotMatch) {
+    const details = normalizeWhitespace(exactBotMatch[1] ?? "");
+    return details ? `Bot (${details})` : "Bot";
+  }
+  const ratingMatch = normalized.match(/\b(\d{3,4})\b/);
+  if (ratingMatch?.[1]) {
+    return `Bot (${ratingMatch[1]})`;
+  }
+  const levelMatch = normalized.match(/\blevel\s*(\d{1,2})\b/i);
+  if (levelMatch?.[1]) {
+    return `Bot (Level ${levelMatch[1]})`;
+  }
+  return "Bot";
+}
+function normalizeParticipantDisplayName(value, fallback) {
+  const normalized = normalizeWhitespace(value ?? "");
+  if (!normalized) {
+    return fallback;
+  }
+  if (BOT_KEYWORD_PATTERN.test(normalized)) {
+    return normalizeBotName(normalized);
+  }
+  return normalized;
+}
+function parseRawGameParticipantsFromPgn(pgn2) {
+  const normalizedPgn = pgn2.trim();
+  if (!normalizedPgn) {
+    return { whiteName: null, blackName: null };
+  }
+  return {
+    whiteName: parsePgnHeaderValue(normalizedPgn, "White"),
+    blackName: parsePgnHeaderValue(normalizedPgn, "Black")
+  };
+}
+function resolveGameParticipants(input) {
+  return {
+    whiteName: normalizeParticipantDisplayName(input.whiteName, "White"),
+    blackName: normalizeParticipantDisplayName(input.blackName, "Black")
+  };
+}
+function resolveGameParticipantsFromPgn(pgn2) {
+  const parsed = parseRawGameParticipantsFromPgn(pgn2);
+  return resolveGameParticipants(parsed);
+}
+var BOT_KEYWORD_PATTERN, PGN_HEADER_VALUE_PATTERN;
+var init_game_display = __esm({
+  "src/client/game-display.ts"() {
+    "use strict";
+    BOT_KEYWORD_PATTERN = /\b(bot|stockfish|engine|ai)\b/i;
+    PGN_HEADER_VALUE_PATTERN = /((?:[^"\\]|\\.)*)/;
+  }
+});
+
 // src/client/theme.ts
 function setTheme(theme) {
   if (theme === "forest") {
@@ -3774,6 +3849,7 @@ var require_analyze = __commonJS({
     init_badge_icon_colors();
     init_arrow_render();
     init_best_move_arrow();
+    init_game_display();
     init_theme();
     var CATEGORY_LABELS = {
       brilliant: "Brilliant",
@@ -4053,6 +4129,16 @@ var require_analyze = __commonJS({
           <div class="turn-dot" id="turnDot"></div>
           <span id="turnLabel">White</span>
         </div>
+        <div class="turn-player-map">
+          <div class="turn-player-row" id="whitePlayerRow">
+            <span class="turn-player-color">White</span>
+            <span class="turn-player-name" id="whitePlayerName">White</span>
+          </div>
+          <div class="turn-player-row" id="blackPlayerRow">
+            <span class="turn-player-color">Black</span>
+            <span class="turn-player-name" id="blackPlayerName">Black</span>
+          </div>
+        </div>
       </div>
 
       <div class="info-card fen-card">
@@ -4130,6 +4216,10 @@ var require_analyze = __commonJS({
     var engineFeedback = q("#engineFeedback");
     var turnDot = q("#turnDot");
     var turnLabel = q("#turnLabel");
+    var whitePlayerRow = q("#whitePlayerRow");
+    var blackPlayerRow = q("#blackPlayerRow");
+    var whitePlayerName = q("#whitePlayerName");
+    var blackPlayerName = q("#blackPlayerName");
     var promoDialog = q("#promoDialog");
     var toast = q("#toast");
     var analysisLoadingOverlay = q("#analysisLoadingOverlay");
@@ -4758,6 +4848,10 @@ var require_analyze = __commonJS({
       const isWhite = chess.turn() === "w";
       turnDot.className = `turn-dot ${isWhite ? "white" : "black"}`;
       turnLabel.textContent = isWhite ? "White" : "Black";
+      whitePlayerName.textContent = analyzedWhiteName;
+      blackPlayerName.textContent = analyzedBlackName;
+      whitePlayerRow.classList.toggle("active", isWhite);
+      blackPlayerRow.classList.toggle("active", !isWhite);
       fenDisplay.value = chess.fen();
       renderMoveList();
       renderEngineFeedback();
@@ -5778,12 +5872,12 @@ var require_analyze = __commonJS({
       toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 2400);
     }
     function applyAnalyzedPlayerNames(whiteName, blackName) {
-      analyzedWhiteName = whiteName?.trim() || "White";
-      analyzedBlackName = blackName?.trim() || "Black";
-    }
-    function parsePgnHeaderValue(pgn2, key) {
-      const match = pgn2.match(new RegExp(`\\[${key}\\s+"([^"]+)"\\]`, "i"));
-      return match?.[1]?.trim() || null;
+      const participants = resolveGameParticipants({
+        whiteName: whiteName ?? null,
+        blackName: blackName ?? null
+      });
+      analyzedWhiteName = participants.whiteName;
+      analyzedBlackName = participants.blackName;
     }
     function loadMovesIntoBoard(sans) {
       resetBoardStateToStart();
@@ -5805,11 +5899,8 @@ var require_analyze = __commonJS({
       if (!normalizedPgn) {
         return false;
       }
-      const pgnWhite = parsePgnHeaderValue(normalizedPgn, "White");
-      const pgnBlack = parsePgnHeaderValue(normalizedPgn, "Black");
-      if (pgnWhite || pgnBlack) {
-        applyAnalyzedPlayerNames(pgnWhite, pgnBlack);
-      }
+      const participants = resolveGameParticipantsFromPgn(normalizedPgn);
+      applyAnalyzedPlayerNames(participants.whiteName, participants.blackName);
       const replay = new Chess();
       try {
         replay.loadPgn(normalizedPgn, { strict: false });
