@@ -31848,7 +31848,6 @@ function buildMainAppMarkup(params) {
           <button class="ghost" id="undoDeclineButton" type="button" hidden>Decline undo</button>
           <button class="ghost" id="labelsOnlyButton" type="button" hidden>Labels only: Off</button>
           <button class="ghost" id="flipBoardButton" type="button" hidden>Flip board</button>
-          <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
           <button class="ghost" id="resignButton" type="button" hidden>Resign</button>
         </div>
        <div class="pregame-placeholder" id="pregamePlaceholder">
@@ -33298,7 +33297,6 @@ var require_main = __commonJS({
     var undoRequestButton = must("#undoRequestButton");
     var undoDeclineButton = must("#undoDeclineButton");
     var labelsOnlyButton = must("#labelsOnlyButton");
-    var liveAnalysisButton = must("#liveAnalysisButton");
     var arrowLayer = must("#arrowLayer");
     var resignButton = must("#resignButton");
     var liveNavFirst = must("#liveNavFirst");
@@ -33714,18 +33712,6 @@ var require_main = __commonJS({
       state.orientation = state.orientation === "w" ? "b" : "w";
       requestBoardRefresh();
       updateCaption();
-    });
-    liveAnalysisButton.addEventListener("click", () => {
-      if (state.gameMode === "bot" && state.snapshot) {
-        state.snapshot.analysis.enabled = !state.snapshot.analysis.enabled;
-        if (state.snapshot.analysis.enabled) {
-          void maybeRunLiveAnalysis(state.snapshot);
-        }
-        void maybeUpdateBestMoveArrow(state.snapshot);
-        render();
-      } else {
-        socket.emit("analysis:toggle");
-      }
     });
     var toggleConfirmModal = (show, type) => {
       if (show && type) {
@@ -34722,7 +34708,6 @@ var require_main = __commonJS({
       summaryCard.hidden = !isGameActive;
       movesCard.hidden = !isGameActive;
       inGameFriendPanel.hidden = !isGameActive || state.gameMode !== "multiplayer" || !isSeatedPlayer;
-      liveAnalysisButton.hidden = !isGameActive || !canVote || state.gameMode === "bot" || state.gameMode === "multiplayer" && analysisLocked;
       labelsOnlyButton.hidden = !isGameActive || !canVote;
       undoRequestButton.hidden = !isGameActive || !canVote || state.gameMode !== "multiplayer";
       undoDeclineButton.hidden = true;
@@ -34875,8 +34860,6 @@ var require_main = __commonJS({
         labelsOnlyButton.disabled = false;
       } else {
         const seatedPlayers = Number(snapshot.players.whiteConnected) + Number(snapshot.players.blackConnected);
-        liveAnalysisButton.disabled = seatedPlayers < 2 || !canVote;
-        liveAnalysisButton.textContent = snapshot.analysis.enabled ? "Disable analysis" : `Enable analysis (${snapshot.analysis.votes}/2)`;
         if (snapshot.analysis.labelsOnly) {
           labelsOnlyButton.textContent = "Labels only: On";
           labelsOnlyButton.disabled = false;
@@ -34911,8 +34894,6 @@ var require_main = __commonJS({
         liveAnalysisText.textContent = `Labels-only vote pending: ${snapshot.analysis.labelsVotes}/2.`;
       } else if (analysisLocked) {
         liveAnalysisText.textContent = "Live analysis and best-move arrows are disabled during active multiplayer games.";
-      } else if (state.gameMode === "multiplayer" && snapshot.analysis.votes > 0) {
-        liveAnalysisText.textContent = `Waiting for both players: ${snapshot.analysis.votes}/2 ready.`;
       } else {
         liveAnalysisText.textContent = "Live analysis disabled.";
       }

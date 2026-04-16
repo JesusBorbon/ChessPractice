@@ -129,7 +129,6 @@ export function buildMainAppMarkup(params: BuildMainAppMarkupParams): string {
           <button class="ghost" id="undoDeclineButton" type="button" hidden>Decline undo</button>
           <button class="ghost" id="labelsOnlyButton" type="button" hidden>Labels only: Off</button>
           <button class="ghost" id="flipBoardButton" type="button" hidden>Flip board</button>
-          <button class="ghost" id="liveAnalysisButton" type="button" hidden>Live analysis</button>
           <button class="ghost" id="resignButton" type="button" hidden>Resign</button>
         </div>
        <div class="pregame-placeholder" id="pregamePlaceholder">

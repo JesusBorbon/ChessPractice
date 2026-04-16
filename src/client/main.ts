@@ -543,7 +543,6 @@ const roomSettingsButton = must<HTMLButtonElement>("#roomSettingsButton");
 const undoRequestButton = must<HTMLButtonElement>("#undoRequestButton");
 const undoDeclineButton = must<HTMLButtonElement>("#undoDeclineButton");
 const labelsOnlyButton = must<HTMLButtonElement>("#labelsOnlyButton");
-const liveAnalysisButton = must<HTMLButtonElement>("#liveAnalysisButton");
 const arrowLayer = must<SVGSVGElement>("#arrowLayer");
 const resignButton = must<HTMLButtonElement>("#resignButton");
 
@@ -1043,24 +1042,6 @@ flipBoardButton.addEventListener("click", () => {
 
 
 
-
-liveAnalysisButton.addEventListener("click", () => {
-  if (state.gameMode === "bot" && state.snapshot) {
-    // Toggle instantly for Bot mode
-    state.snapshot.analysis.enabled = !state.snapshot.analysis.enabled;
-    
-    if (state.snapshot.analysis.enabled) {
-      // showToast("Live analysis enabled");
-      // Run analysis on the current position immediately
-      void maybeRunLiveAnalysis(state.snapshot);
-    }
-    void maybeUpdateBestMoveArrow(state.snapshot);
-    render();
-  } else {
-    // Standard multiplayer voting logic
-    socket.emit("analysis:toggle");
-  }
-});
 
 const toggleConfirmModal = (show: boolean, type?: "leave" | "resign" | "bot" | "settings") => {
   if (show && type) {
@@ -2367,7 +2348,6 @@ function renderSession(): void {
   movesCard.hidden = !isGameActive;
   inGameFriendPanel.hidden = !isGameActive || state.gameMode !== "multiplayer" || !isSeatedPlayer;
 
-  liveAnalysisButton.hidden = !isGameActive || !canVote || state.gameMode === "bot" || (state.gameMode === "multiplayer" && analysisLocked);
   labelsOnlyButton.hidden = !isGameActive || !canVote;
   undoRequestButton.hidden = !isGameActive || !canVote || state.gameMode !== "multiplayer";
   undoDeclineButton.hidden = true;
@@ -2576,11 +2556,6 @@ function renderSession(): void {
     labelsOnlyButton.disabled = false;
   } else {
     const seatedPlayers = Number(snapshot.players.whiteConnected) + Number(snapshot.players.blackConnected);
-    liveAnalysisButton.disabled = seatedPlayers < 2 || !canVote;
-    liveAnalysisButton.textContent = snapshot.analysis.enabled
-      ? "Disable analysis"
-      : `Enable analysis (${snapshot.analysis.votes}/2)`;
-
     if (snapshot.analysis.labelsOnly) {
       labelsOnlyButton.textContent = "Labels only: On";
       labelsOnlyButton.disabled = false;
@@ -2620,8 +2595,6 @@ function renderSession(): void {
     liveAnalysisText.textContent = `Labels-only vote pending: ${snapshot.analysis.labelsVotes}/2.`;
   } else if (analysisLocked) {
     liveAnalysisText.textContent = "Live analysis and best-move arrows are disabled during active multiplayer games.";
-  } else if (state.gameMode === "multiplayer" && snapshot.analysis.votes > 0) {
-    liveAnalysisText.textContent = `Waiting for both players: ${snapshot.analysis.votes}/2 ready.`;
   } else {
     liveAnalysisText.textContent = "Live analysis disabled.";
   }

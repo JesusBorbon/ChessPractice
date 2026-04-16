@@ -2898,57 +2898,6 @@ io.on("connection", (socket) => {
     emitRoomState(room);
   });
 
-  socket.on("analysis:toggle", () => {
-    const clientState = socket.data as ClientState;
-    const roomId = clientState.roomId;
-    const role = clientState.role;
-
-    if (!roomId || !role || role === "spectator") {
-      socket.emit("room:error", { message: "Only seated players can toggle live analysis." });
-      return;
-    }
-
-    const room = rooms.get(roomId);
-    if (!room) {
-      socket.emit("room:error", { message: "The room is no longer available." });
-      return;
-    }
-
-    if (isLiveCompetitiveMatch(room)) {
-      room.analysisEnabled = false;
-      room.analysisVotes.clear();
-      emitRoomState(room);
-      socket.emit("room:error", { message: "Live analysis is disabled during active multiplayer games." });
-      return;
-    }
-
-    const players = getActivePlayerSockets(room);
-    if (players.length < 2) {
-      socket.emit("room:error", { message: "Live analysis requires both players connected." });
-      return;
-    }
-
-    if (room.analysisEnabled) {
-      room.analysisEnabled = false;
-      room.analysisVotes.clear();
-      emitRoomState(room);
-      return;
-    }
-
-    if (room.analysisVotes.has(socket.id)) {
-      room.analysisVotes.delete(socket.id);
-    } else {
-      room.analysisVotes.add(socket.id);
-    }
-
-    if (players.every((playerId) => room.analysisVotes.has(playerId))) {
-      room.analysisEnabled = true;
-      room.analysisVotes.clear();
-    }
-
-    emitRoomState(room);
-  });
-
   socket.on("analysis:labels:toggle", () => {
     const clientState = socket.data as ClientState;
     const roomId = clientState.roomId;
