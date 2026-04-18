@@ -845,7 +845,7 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
 }
 
 .square.dragging {
-  opacity: 0.55;
+  opacity: 0.2;
 }
 
 .square.dragging .piece {

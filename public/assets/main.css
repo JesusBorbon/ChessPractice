@@ -1606,7 +1606,7 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   font-size: clamp(3.35rem, 7.2vw, 5.35rem);
 }
 .square.dragging {
-  opacity: 0.55;
+  opacity: 0.2;
 }
 .square.dragging .piece {
   opacity: 0;
