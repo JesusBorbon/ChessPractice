@@ -1,5 +1,9 @@
+var __create = Object.create;
 var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
@@ -10,6 +14,22 @@ var __export = (target, all) => {
   for (var name4 in all)
     __defProp(target, name4, { get: all[name4], enumerable: true });
 };
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
 
 // node_modules/chess.js/dist/esm/chess.js
 function rootNode(comment) {
@@ -7196,25 +7216,25 @@ var init_arrow_geometry = __esm({
 
 // src/client/board/arrow-render.ts
 function buildArrowLayerMarkup(params) {
-  const { variant, annotations, preview, bestMove, squareCenter } = params;
+  const { variant, annotations, preview, bestMove, squareCenter: squareCenter2 } = params;
   const baseClass = `${variant}-arrow`;
   const annotationMarkup = [...annotations].map((entry) => {
     const [from, to] = entry.split("-");
-    const pathData = buildArrowPath(squareCenter(from), squareCenter(to));
+    const pathData = buildArrowPath(squareCenter2(from), squareCenter2(to));
     if (!pathData) {
       return "";
     }
     return `<path class="${baseClass}" d="${pathData}"/>`;
   }).join("");
   const previewMarkup = preview ? (() => {
-    const pathData = buildArrowPath(squareCenter(preview.from), preview.pointer);
+    const pathData = buildArrowPath(squareCenter2(preview.from), preview.pointer);
     if (!pathData) {
       return "";
     }
     return `<path class="${baseClass} ${baseClass}-preview" d="${pathData}"/>`;
   })() : "";
   const bestMoveMarkup = bestMove ? (() => {
-    const pathData = buildArrowPath(squareCenter(bestMove.from), squareCenter(bestMove.to));
+    const pathData = buildArrowPath(squareCenter2(bestMove.from), squareCenter2(bestMove.to));
     if (!pathData) {
       return "";
     }
@@ -31876,6 +31896,207 @@ var init_live_chat = __esm({
   }
 });
 
+// src/client/main/board-geometry.ts
+function getSquareFromPoint(clientX, clientY) {
+  const node2 = document.elementFromPoint(clientX, clientY);
+  const squareButton = node2?.closest(".square");
+  return squareButton?.dataset.square ?? null;
+}
+function boardPointFromClient(boardElement, clientX, clientY) {
+  const rect = boardElement.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return { x: 400, y: 400 };
+  }
+  const localX = clientX - rect.left;
+  const localY = clientY - rect.top;
+  const clampedX = Math.max(0, Math.min(rect.width, localX));
+  const clampedY = Math.max(0, Math.min(rect.height, localY));
+  return {
+    x: clampedX / rect.width * 800,
+    y: clampedY / rect.height * 800
+  };
+}
+function squareCenter(square, orientation) {
+  const file2 = square.charCodeAt(0) - 97;
+  const rank2 = Number(square[1]) - 1;
+  const col = orientation === "w" ? file2 : 7 - file2;
+  const row = orientation === "w" ? 7 - rank2 : rank2;
+  return {
+    x: col * 100 + 50,
+    y: row * 100 + 50
+  };
+}
+var init_board_geometry = __esm({
+  "src/client/main/board-geometry.ts"() {
+    "use strict";
+  }
+});
+
+// src/client/main/board-effects.ts
+function createBoardEffectsController(options) {
+  let activeLiveQualityCallout = null;
+  function showLiveQualityMoveCallout(category, square) {
+    const boardWrap = options.getBoardWrap();
+    if (!boardWrap) {
+      return;
+    }
+    activeLiveQualityCallout?.remove();
+    activeLiveQualityCallout = null;
+    const center = options.getSquareCenter(square);
+    const callout = document.createElement("div");
+    callout.className = `move-quality-callout move-quality-callout--${category}`;
+    callout.textContent = category === "great" ? "Great Move" : "Brilliant Move";
+    callout.style.left = `${center.x / 800 * 100}%`;
+    callout.style.top = `${center.y / 800 * 100}%`;
+    boardWrap.append(callout);
+    activeLiveQualityCallout = callout;
+    const clearCallout = () => {
+      if (activeLiveQualityCallout === callout) {
+        activeLiveQualityCallout = null;
+      }
+      callout.remove();
+    };
+    callout.addEventListener("animationend", clearCallout, { once: true });
+    window.setTimeout(clearCallout, 2e3);
+  }
+  function triggerCheckFlash() {
+    const flash = document.createElement("div");
+    flash.className = "check-flash-overlay";
+    document.body.append(flash);
+    flash.addEventListener("animationend", () => flash.remove(), { once: true });
+  }
+  function spawnBloodSplatter(square, capturedPiece) {
+    const boardWrap = options.getBoardWrap();
+    if (!boardWrap) {
+      return;
+    }
+    const intensityByPiece = {
+      p: 0.6,
+      n: 0.8,
+      b: 0.8,
+      r: 1,
+      q: 1.4,
+      k: 1.2
+    };
+    const intensity = intensityByPiece[capturedPiece] ?? 0.8;
+    const center = options.getSquareCenter(square);
+    const splatter = document.createElement("div");
+    splatter.className = "capture-splatter";
+    splatter.style.left = `${center.x / 800 * 100}%`;
+    splatter.style.top = `${center.y / 800 * 100}%`;
+    splatter.style.setProperty("--intensity", String(intensity));
+    const dropCount = Math.floor(4 + Math.random() * 6 * intensity);
+    for (let index = 0; index < dropCount; index += 1) {
+      const drop = document.createElement("span");
+      drop.className = "capture-drop";
+      const angle = Math.random() * Math.PI * 2;
+      const distance = (20 + Math.random() * 40) * intensity;
+      const size = (6 + Math.random() * 10) * intensity;
+      drop.style.setProperty("--dx", `${Math.cos(angle) * distance}px`);
+      drop.style.setProperty("--dy", `${Math.sin(angle) * distance}px`);
+      drop.style.setProperty("--size", `${size}px`);
+      drop.style.setProperty("--delay", `${Math.random() * 50}ms`);
+      splatter.append(drop);
+    }
+    boardWrap.append(splatter);
+    window.setTimeout(() => splatter.remove(), 2500);
+  }
+  return {
+    showLiveQualityMoveCallout,
+    triggerCheckFlash,
+    spawnBloodSplatter
+  };
+}
+var init_board_effects = __esm({
+  "src/client/main/board-effects.ts"() {
+    "use strict";
+  }
+});
+
+// src/client/main/chess-helpers.ts
+function isTheoreticallyPossible(from, to, piece, color) {
+  const fromFile = from.charCodeAt(0) - 97;
+  const fromRank = parseInt(from[1], 10);
+  const toFile = to.charCodeAt(0) - 97;
+  const toRank = parseInt(to[1], 10);
+  const dx = Math.abs(toFile - fromFile);
+  const dy = Math.abs(toRank - fromRank);
+  if (dx === 0 && dy === 0) return false;
+  switch (piece) {
+    case "p": {
+      const forward = color === "w" ? toRank - fromRank : fromRank - toRank;
+      const isStartRank = color === "w" && fromRank === 2 || color === "b" && fromRank === 7;
+      if (dx === 0) return forward === 1 || isStartRank && forward === 2;
+      if (dx === 1) return forward === 1;
+      return false;
+    }
+    case "n":
+      return dx === 1 && dy === 2 || dx === 2 && dy === 1;
+    case "b":
+      return dx === dy;
+    case "r":
+      return dx === 0 || dy === 0;
+    case "q":
+      return dx === dy || dx === 0 || dy === 0;
+    case "k":
+      return dx <= 1 && dy <= 1 || dx === 2 && dy === 0;
+    default:
+      return false;
+  }
+}
+function reachesPromotionRank(square, role) {
+  return role === "w" ? square.endsWith("8") : square.endsWith("1");
+}
+function getVirtualBoard(baseFen, premoves, role) {
+  const virtualBoard = new Chess(baseFen);
+  for (const premove of premoves) {
+    const piece = virtualBoard.get(premove.from);
+    if (!piece) {
+      continue;
+    }
+    virtualBoard.remove(premove.from);
+    if (premove.promotion) {
+      piece.type = premove.promotion;
+    }
+    virtualBoard.put(piece, premove.to);
+  }
+  const fenParts = virtualBoard.fen().split(" ");
+  fenParts[1] = role;
+  fenParts[3] = "-";
+  virtualBoard.load(fenParts.join(" "));
+  return virtualBoard;
+}
+function countFenPieces(fen) {
+  const boardFen = fen.split(" ")[0] ?? "";
+  let count = 0;
+  for (const ch of boardFen) {
+    if (/[prnbqkPRNBQK]/.test(ch)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+function detectCapturedPiece(previousFen, lastMove) {
+  const replay = new Chess(previousFen);
+  const promotionMatch = lastMove.san.match(/=([QRBN])/);
+  const promotion = promotionMatch?.[1]?.toLowerCase();
+  let move = null;
+  try {
+    move = replay.move(
+      promotion ? { from: lastMove.from, to: lastMove.to, promotion } : { from: lastMove.from, to: lastMove.to }
+    );
+  } catch {
+    return null;
+  }
+  return move?.captured ?? null;
+}
+var init_chess_helpers = __esm({
+  "src/client/main/chess-helpers.ts"() {
+    "use strict";
+    init_chess();
+  }
+});
+
 // src/client/main/main-template.ts
 function buildMainAppMarkup(params) {
   const botDifficultyOptionsHtml = params.botDifficultyOptions.map((preset) => `<option value="${preset.level}">${preset.label}</option>`).join("");
@@ -32236,6 +32457,104 @@ function buildMainAppMarkup(params) {
 }
 var init_main_template = __esm({
   "src/client/main/main-template.ts"() {
+    "use strict";
+  }
+});
+
+// src/client/main/seat-context-utils.ts
+function canSendFriendRequest(currentUser, opponent, friendshipStatus) {
+  return currentUser.isRegistered && opponent.isRegistered && friendshipStatus === "not-friends";
+}
+function getCurrentSeatInfo(snapshot, currentRole, normalizeUsername2) {
+  if (currentRole === "w") {
+    return {
+      connected: snapshot.players.whiteConnected,
+      role: "w",
+      name: normalizeUsername2(snapshot.players.whiteName) || "Guest",
+      userId: snapshot.players.whiteUserId,
+      friendId: snapshot.players.whiteFriendId
+    };
+  }
+  if (currentRole === "b") {
+    return {
+      connected: snapshot.players.blackConnected,
+      role: "b",
+      name: normalizeUsername2(snapshot.players.blackName) || "Guest",
+      userId: snapshot.players.blackUserId,
+      friendId: snapshot.players.blackFriendId
+    };
+  }
+  return null;
+}
+function getOpponentSeatInfo(snapshot, currentRole, normalizeUsername2) {
+  if (currentRole === "w") {
+    return {
+      connected: snapshot.players.blackConnected,
+      role: "b",
+      name: normalizeUsername2(snapshot.players.blackName) || "Guest",
+      userId: snapshot.players.blackUserId,
+      friendId: snapshot.players.blackFriendId
+    };
+  }
+  if (currentRole === "b") {
+    return {
+      connected: snapshot.players.whiteConnected,
+      role: "w",
+      name: normalizeUsername2(snapshot.players.whiteName) || "Guest",
+      userId: snapshot.players.whiteUserId,
+      friendId: snapshot.players.whiteFriendId
+    };
+  }
+  return null;
+}
+function seatLabel(seatRole, playerName, friendId, userId, currentRole, currentPlayerName, normalizeUsername2) {
+  const safeName = normalizeUsername2(playerName) || "Guest";
+  const colorLabel = seatRole === "w" ? "White" : "Black";
+  if (currentRole === seatRole) {
+    return `You (${currentPlayerName})`;
+  }
+  if (userId && friendId) {
+    return `${safeName} (${colorLabel} - ID ${friendId})`;
+  }
+  return `${safeName} (${colorLabel} - Guest)`;
+}
+function humanRole(role, currentPlayerName) {
+  if (role === "w") {
+    return `${currentPlayerName} (White)`;
+  }
+  if (role === "b") {
+    return `${currentPlayerName} (Black)`;
+  }
+  if (role === "spectator") {
+    return `${currentPlayerName} (Spectator)`;
+  }
+  return `${currentPlayerName} (Not seated)`;
+}
+var init_seat_context_utils = __esm({
+  "src/client/main/seat-context-utils.ts"() {
+    "use strict";
+  }
+});
+
+// src/client/main/url-utils.ts
+function syncUrl(roomId, inviteToken = null) {
+  const url2 = new URL(window.location.href);
+  url2.searchParams.delete("rejoin");
+  url2.searchParams.delete("rejoinTs");
+  if (roomId) {
+    url2.searchParams.set("room", roomId);
+  } else {
+    url2.searchParams.delete("room");
+  }
+  if (roomId && inviteToken) {
+    url2.searchParams.set("invite", inviteToken);
+  } else {
+    url2.searchParams.delete("invite");
+  }
+  window.history.replaceState({}, "", url2);
+}
+var init_url_utils = __esm({
+  "src/client/main/url-utils.ts"() {
     "use strict";
   }
 });
@@ -33135,9 +33454,10 @@ var init_interaction_utils = __esm({
   }
 });
 
-// src/client/main.ts
-var require_main = __commonJS({
-  "src/client/main.ts"() {
+// src/client/main-runtime.ts
+var require_main_runtime = __commonJS({
+  "src/client/main-runtime.ts"() {
+    "use strict";
     init_chess();
     init_esm5();
     init_engine();
@@ -33159,7 +33479,12 @@ var require_main = __commonJS({
     init_history_audio();
     init_live_analysis_utils();
     init_live_chat();
+    init_board_geometry();
+    init_board_effects();
+    init_chess_helpers();
     init_main_template();
+    init_seat_context_utils();
+    init_url_utils();
     init_notification_state();
     init_notification_ui();
     init_pgn_utils();
@@ -33323,7 +33648,6 @@ var require_main = __commonJS({
     var animatingToSquare = null;
     var lastRoomStateReceivedAtMs = Date.now();
     var lastLiveQualityCalloutKey = null;
-    var activeLiveQualityCallout = null;
     var botPickerHideTimer = null;
     var botPickerLockedScrollY = null;
     var botResponseTimer = null;
@@ -33405,6 +33729,10 @@ var require_main = __commonJS({
     var appShell = must(".app-shell");
     var board = must("#board");
     var boardWrap = board.parentElement;
+    var boardEffects = createBoardEffectsController({
+      getBoardWrap: () => boardWrap,
+      getSquareCenter: (square) => squareCenter(square, state.orientation)
+    });
     var pregamePlaceholder = must("#pregamePlaceholder");
     var inviteJoinCard = must("#inviteJoinCard");
     var analysisBoardLink = must("#analysisBoardLink");
@@ -34301,7 +34629,7 @@ var require_main = __commonJS({
         if (!square2) return;
         arrowDragFrom = square2;
         arrowDragTo = null;
-        arrowDragPointer = squareCenter(square2);
+        arrowDragPointer = squareCenter(square2, state.orientation);
         arrowDragMoved = false;
         ptrStartX = event.clientX;
         ptrStartY = event.clientY;
@@ -34323,7 +34651,7 @@ var require_main = __commonJS({
       if (arrowDragFrom) {
         const hoverSquare2 = getSquareFromPoint(event.clientX, event.clientY);
         arrowDragTo = hoverSquare2 && hoverSquare2 !== arrowDragFrom ? hoverSquare2 : null;
-        arrowDragPointer = boardPointFromClient(event.clientX, event.clientY);
+        arrowDragPointer = boardPointFromClient(board, event.clientX, event.clientY);
         renderArrows();
       }
       if (arrowDragFrom && !arrowDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) >= 5) {
@@ -34334,7 +34662,7 @@ var require_main = __commonJS({
       if (!ptrDragMoved) {
         ptrDragMoved = true;
         state.selectedSquare = ptrDragFrom;
-        const vBoard = getVirtualBoard();
+        const vBoard = getVirtualBoard(chess.fen(), state.premoves, state.role);
         const virtualPiece = vBoard.get(ptrDragFrom);
         state.legalTargets = vBoard.moves({ square: ptrDragFrom, verbose: true }).map((m) => m.to);
         syncBoardInteractionState();
@@ -34788,8 +35116,8 @@ var require_main = __commonJS({
       if (sendFriendRequestBusy || !state.snapshot) {
         return;
       }
-      const currentSeat = getCurrentSeatInfo(state.snapshot);
-      const opponentSeat = getOpponentSeatInfo(state.snapshot);
+      const currentSeat = getCurrentSeatInfo(state.snapshot, state.role, normalizeUsername2);
+      const opponentSeat = getOpponentSeatInfo(state.snapshot, state.role, normalizeUsername2);
       if (!currentSeat || !opponentSeat || !opponentSeat.connected) {
         showToast("Opponent is unavailable for friend requests right now.");
         return;
@@ -35063,12 +35391,12 @@ var require_main = __commonJS({
       _lastPlayedMoveCount = snapshot.moveCount;
       if (isActuallyNewMove) {
         playSoundForSnapshot(snapshot);
-        if (snapshot.check) triggerCheckFlash();
+        if (snapshot.check) boardEffects.triggerCheckFlash();
       }
       const capturedByCount = countFenPieces(snapshot.fen) < countFenPieces(previousFen);
       if (state.bloodFxEnabled && isActuallyNewMove && capturedByCount && snapshot.lastMove) {
         const capturedPiece = detectCapturedPiece(previousFen, snapshot.lastMove);
-        spawnBloodSplatter(snapshot.lastMove.to, capturedPiece ?? "p");
+        boardEffects.spawnBloodSplatter(snapshot.lastMove.to, capturedPiece ?? "p");
       }
       if (snapshot.moveCount > previousMoveCount) {
         boardRefreshForcedByArrowClear = clearArrows();
@@ -35241,7 +35569,7 @@ var require_main = __commonJS({
       }
       gameNavRow.hidden = !isGameActive || maxMoves === 0;
       roomBadge.textContent = state.roomId ? `Room ${state.roomId}` : "No active room";
-      roleBadge.textContent = humanRole(state.role);
+      roleBadge.textContent = humanRole(state.role, getCurrentPlayerName());
       roomInviteButton.hidden = !canSendRoomInvites;
       const heroCopy = document.querySelector(".hero-copy");
       if (heroCopy) heroCopy.hidden = isGameActive;
@@ -35345,8 +35673,24 @@ var require_main = __commonJS({
         pregameReadyBtn.hidden = state.role === "spectator";
       }
       matchStatus.textContent = snapshot.status;
-      whiteSeat.textContent = snapshot.players.whiteConnected ? seatLabel("w", snapshot.players.whiteName, snapshot.players.whiteFriendId, snapshot.players.whiteUserId) : "Waiting for player";
-      blackSeat.textContent = snapshot.players.blackConnected ? seatLabel("b", snapshot.players.blackName, snapshot.players.blackFriendId, snapshot.players.blackUserId) : "Waiting for player";
+      whiteSeat.textContent = snapshot.players.whiteConnected ? seatLabel(
+        "w",
+        snapshot.players.whiteName,
+        snapshot.players.whiteFriendId,
+        snapshot.players.whiteUserId,
+        state.role,
+        getCurrentPlayerName(),
+        normalizeUsername2
+      ) : "Waiting for player";
+      blackSeat.textContent = snapshot.players.blackConnected ? seatLabel(
+        "b",
+        snapshot.players.blackName,
+        snapshot.players.blackFriendId,
+        snapshot.players.blackUserId,
+        state.role,
+        getCurrentPlayerName(),
+        normalizeUsername2
+      ) : "Waiting for player";
       turnMeta.textContent = snapshot.turn === "w" ? "White" : "Black";
       movesMeta.textContent = String(snapshot.moveCount);
       spectatorMeta.textContent = String(snapshot.players.spectatorCount);
@@ -35372,8 +35716,8 @@ var require_main = __commonJS({
       } else if (gameEnded || !isGameActive || !snapshot.clock.running) {
         clearLowTimeWarningEffect();
       }
-      const opponentSeat = getOpponentSeatInfo(snapshot);
-      const currentSeat = getCurrentSeatInfo(snapshot);
+      const opponentSeat = getOpponentSeatInfo(snapshot, state.role, normalizeUsername2);
+      const currentSeat = getCurrentSeatInfo(snapshot, state.role, normalizeUsername2);
       const currentUserIsRegistered = Boolean(currentSeat?.userId && currentSeat.friendId);
       const opponentIsRegistered = Boolean(opponentSeat?.userId && opponentSeat?.friendId);
       const friendshipStatus = opponentSeat ? accountSidebarController.getFriendshipStatusWithUser(opponentSeat.userId) : "unknown";
@@ -35483,7 +35827,10 @@ var require_main = __commonJS({
     }
     function getDisplayBoard() {
       if (state.viewCursor === null || !state.snapshot) {
-        return state.premoves.length > 0 ? getVirtualBoard() : chess;
+        if (state.premoves.length > 0 && (state.role === "w" || state.role === "b")) {
+          return getVirtualBoard(chess.fen(), state.premoves, state.role);
+        }
+        return chess;
       }
       const historyBoard = new Chess();
       for (let i = 0; i < state.viewCursor; i++) {
@@ -35604,7 +35951,7 @@ var require_main = __commonJS({
       board.replaceChildren(fragment);
       if (showQualityCallout && liveQualityCalloutKey && lastLiveQualityCalloutKey !== liveQualityCalloutKey) {
         lastLiveQualityCalloutKey = liveQualityCalloutKey;
-        showLiveQualityMoveCallout(liveGrade.category, liveMarkerSquare);
+        boardEffects.showLiveQualityMoveCallout(liveGrade.category, liveMarkerSquare);
       }
       if (!isHistoryView) {
         const isPremoveExecution = suppressAnimationForMove && lastMove && lastMove.from === suppressAnimationForMove.from && lastMove.to === suppressAnimationForMove.to;
@@ -35670,122 +36017,6 @@ var require_main = __commonJS({
         overlay.append(banner);
         board.append(overlay);
       }
-    }
-    function getSquareFromPoint(clientX, clientY) {
-      const node2 = document.elementFromPoint(clientX, clientY);
-      const squareButton = node2?.closest(".square");
-      return squareButton?.dataset.square ?? null;
-    }
-    function boardPointFromClient(clientX, clientY) {
-      const rect = board.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) {
-        return { x: 400, y: 400 };
-      }
-      const localX = clientX - rect.left;
-      const localY = clientY - rect.top;
-      const clampedX = Math.max(0, Math.min(rect.width, localX));
-      const clampedY = Math.max(0, Math.min(rect.height, localY));
-      return {
-        x: clampedX / rect.width * 800,
-        y: clampedY / rect.height * 800
-      };
-    }
-    function squareCenter(square) {
-      const file2 = square.charCodeAt(0) - 97;
-      const rank2 = Number(square[1]) - 1;
-      const col = state.orientation === "w" ? file2 : 7 - file2;
-      const row = state.orientation === "w" ? 7 - rank2 : rank2;
-      return {
-        x: col * 100 + 50,
-        y: row * 100 + 50
-      };
-    }
-    function showLiveQualityMoveCallout(category, square) {
-      if (!boardWrap) {
-        return;
-      }
-      activeLiveQualityCallout?.remove();
-      activeLiveQualityCallout = null;
-      const center = squareCenter(square);
-      const callout = document.createElement("div");
-      callout.className = `move-quality-callout move-quality-callout--${category}`;
-      callout.textContent = category === "great" ? "Great Move" : "Brilliant Move";
-      callout.style.left = `${center.x / 800 * 100}%`;
-      callout.style.top = `${center.y / 800 * 100}%`;
-      boardWrap.append(callout);
-      activeLiveQualityCallout = callout;
-      const clearCallout = () => {
-        if (activeLiveQualityCallout === callout) {
-          activeLiveQualityCallout = null;
-        }
-        callout.remove();
-      };
-      callout.addEventListener("animationend", clearCallout, { once: true });
-      window.setTimeout(clearCallout, 2e3);
-    }
-    function countFenPieces(fen) {
-      const boardFen = fen.split(" ")[0] ?? "";
-      let count = 0;
-      for (const ch of boardFen) {
-        if (/[prnbqkPRNBQK]/.test(ch)) {
-          count += 1;
-        }
-      }
-      return count;
-    }
-    function detectCapturedPiece(previousFen, lastMove) {
-      const replay = new Chess(previousFen);
-      const promotionMatch = lastMove.san.match(/=([QRBN])/);
-      const promotion = promotionMatch?.[1]?.toLowerCase();
-      let move = null;
-      try {
-        move = replay.move(
-          promotion ? { from: lastMove.from, to: lastMove.to, promotion } : { from: lastMove.from, to: lastMove.to }
-        );
-      } catch {
-        return null;
-      }
-      return move?.captured ?? null;
-    }
-    function triggerCheckFlash() {
-      const flash = document.createElement("div");
-      flash.className = "check-flash-overlay";
-      document.body.append(flash);
-      flash.addEventListener("animationend", () => flash.remove(), { once: true });
-    }
-    function spawnBloodSplatter(square, capturedPiece) {
-      const boardWrap2 = board.parentElement;
-      if (!boardWrap2) return;
-      const intensityByPiece = {
-        p: 0.6,
-        n: 0.8,
-        b: 0.8,
-        r: 1,
-        q: 1.4,
-        k: 1.2
-      };
-      const intensity = intensityByPiece[capturedPiece] ?? 0.8;
-      const center = squareCenter(square);
-      const splatter = document.createElement("div");
-      splatter.className = "capture-splatter";
-      splatter.style.left = `${center.x / 800 * 100}%`;
-      splatter.style.top = `${center.y / 800 * 100}%`;
-      splatter.style.setProperty("--intensity", String(intensity));
-      const dropCount = Math.floor(4 + Math.random() * 6 * intensity);
-      for (let index = 0; index < dropCount; index += 1) {
-        const drop = document.createElement("span");
-        drop.className = "capture-drop";
-        const angle = Math.random() * Math.PI * 2;
-        const distance = (20 + Math.random() * 40) * intensity;
-        const size = (6 + Math.random() * 10) * intensity;
-        drop.style.setProperty("--dx", `${Math.cos(angle) * distance}px`);
-        drop.style.setProperty("--dy", `${Math.sin(angle) * distance}px`);
-        drop.style.setProperty("--size", `${size}px`);
-        drop.style.setProperty("--delay", `${Math.random() * 50}ms`);
-        splatter.append(drop);
-      }
-      boardWrap2.append(splatter);
-      setTimeout(() => splatter.remove(), 2500);
     }
     function toggleArrow(from, to) {
       const key = `${from}-${to}`;
@@ -35871,7 +36102,7 @@ var require_main = __commonJS({
         annotations: arrowAnnotations,
         preview: arrowDragFrom && arrowDragPointer ? { from: arrowDragFrom, pointer: arrowDragPointer } : null,
         bestMove,
-        squareCenter
+        squareCenter: (square) => squareCenter(square, state.orientation)
       });
     }
     function syncBoardInteractionState() {
@@ -36446,7 +36677,7 @@ var require_main = __commonJS({
     function canStartMoveFrom(square) {
       if (state.viewCursor !== null) return false;
       if (!state.snapshot || !state.role || state.role === "spectator") return false;
-      const vBoard = getVirtualBoard();
+      const vBoard = getVirtualBoard(chess.fen(), state.premoves, state.role);
       const piece = vBoard.get(square);
       if (!piece || piece.color !== state.role) return false;
       return true;
@@ -36593,7 +36824,7 @@ var require_main = __commonJS({
       clearArrows();
       const currentPieceCount = countPieces(state.snapshot.fen);
       if (state.bloodFxEnabled && currentPieceCount < previousPieceCount) {
-        spawnBloodSplatter(move.to, move.captured || "p");
+        boardEffects.spawnBloodSplatter(move.to, move.captured || "p");
       }
       state.snapshot.check = chess.inCheck();
       state.snapshot.checkmate = chess.isCheckmate();
@@ -36602,54 +36833,9 @@ var require_main = __commonJS({
         state.snapshot.winner = move.color;
       }
     }
-    function isTheoreticallyPossible(from, to, piece, color) {
-      const fromFile = from.charCodeAt(0) - 97;
-      const fromRank = parseInt(from[1]);
-      const toFile = to.charCodeAt(0) - 97;
-      const toRank = parseInt(to[1]);
-      const dx = Math.abs(toFile - fromFile);
-      const dy = Math.abs(toRank - fromRank);
-      if (dx === 0 && dy === 0) return false;
-      switch (piece) {
-        case "p":
-          const forward = color === "w" ? toRank - fromRank : fromRank - toRank;
-          const isStartRank = color === "w" && fromRank === 2 || color === "b" && fromRank === 7;
-          if (dx === 0) return forward === 1 || isStartRank && forward === 2;
-          if (dx === 1) return forward === 1;
-          return false;
-        case "n":
-          return dx === 1 && dy === 2 || dx === 2 && dy === 1;
-        case "b":
-          return dx === dy;
-        case "r":
-          return dx === 0 || dy === 0;
-        case "q":
-          return dx === dy || dx === 0 || dy === 0;
-        case "k":
-          return dx <= 1 && dy <= 1 || dx === 2 && dy === 0;
-        default:
-          return false;
-      }
-    }
-    function getVirtualBoard() {
-      const vBoard = new Chess(chess.fen());
-      for (const p of state.premoves) {
-        const piece = vBoard.get(p.from);
-        if (piece) {
-          vBoard.remove(p.from);
-          if (p.promotion) piece.type = p.promotion;
-          vBoard.put(piece, p.to);
-        }
-      }
-      const fenParts = vBoard.fen().split(" ");
-      fenParts[1] = state.role;
-      fenParts[3] = "-";
-      vBoard.load(fenParts.join(" "));
-      return vBoard;
-    }
     function queuePremove(from, to) {
       if (!state.role || state.role === "spectator") return;
-      const vBoard = getVirtualBoard();
+      const vBoard = getVirtualBoard(chess.fen(), state.premoves, state.role);
       const piece = vBoard.get(from);
       if (!piece || piece.color !== state.role) return;
       if (!isTheoreticallyPossible(from, to, piece.type, piece.color)) return;
@@ -36668,7 +36854,7 @@ var require_main = __commonJS({
     }
     function onPremoveSquarePressed(square) {
       if (!state.role || state.role === "spectator") return;
-      const vBoard = getVirtualBoard();
+      const vBoard = getVirtualBoard(chess.fen(), state.premoves, state.role);
       const clickedPiece = vBoard.get(square);
       if (!state.selectedSquare) {
         if (clickedPiece && clickedPiece.color === state.role) {
@@ -36703,94 +36889,6 @@ var require_main = __commonJS({
     }
     function isOwnPiece(color) {
       return state.role === color;
-    }
-    function reachesPromotionRank(square, role) {
-      return role === "w" ? square.endsWith("8") : square.endsWith("1");
-    }
-    function getCurrentSeatInfo(snapshot) {
-      if (state.role === "w") {
-        return {
-          connected: snapshot.players.whiteConnected,
-          role: "w",
-          name: normalizeUsername2(snapshot.players.whiteName) || "Guest",
-          userId: snapshot.players.whiteUserId,
-          friendId: snapshot.players.whiteFriendId
-        };
-      }
-      if (state.role === "b") {
-        return {
-          connected: snapshot.players.blackConnected,
-          role: "b",
-          name: normalizeUsername2(snapshot.players.blackName) || "Guest",
-          userId: snapshot.players.blackUserId,
-          friendId: snapshot.players.blackFriendId
-        };
-      }
-      return null;
-    }
-    function canSendFriendRequest(currentUser, opponent, friendshipStatus) {
-      return currentUser.isRegistered && opponent.isRegistered && friendshipStatus === "not-friends";
-    }
-    function getOpponentSeatInfo(snapshot) {
-      if (state.role === "w") {
-        return {
-          connected: snapshot.players.blackConnected,
-          role: "b",
-          name: normalizeUsername2(snapshot.players.blackName) || "Guest",
-          userId: snapshot.players.blackUserId,
-          friendId: snapshot.players.blackFriendId
-        };
-      }
-      if (state.role === "b") {
-        return {
-          connected: snapshot.players.whiteConnected,
-          role: "w",
-          name: normalizeUsername2(snapshot.players.whiteName) || "Guest",
-          userId: snapshot.players.whiteUserId,
-          friendId: snapshot.players.whiteFriendId
-        };
-      }
-      return null;
-    }
-    function seatLabel(role, playerName, friendId, userId) {
-      const safeName = normalizeUsername2(playerName) || "Guest";
-      const colorLabel = role === "w" ? "White" : "Black";
-      if (state.role === role) {
-        return `You (${getCurrentPlayerName()})`;
-      }
-      if (userId && friendId) {
-        return `${safeName} (${colorLabel} - ID ${friendId})`;
-      }
-      return `${safeName} (${colorLabel} - Guest)`;
-    }
-    function humanRole(role) {
-      const name4 = getCurrentPlayerName();
-      if (role === "w") {
-        return `${name4} (White)`;
-      }
-      if (role === "b") {
-        return `${name4} (Black)`;
-      }
-      if (role === "spectator") {
-        return `${name4} (Spectator)`;
-      }
-      return `${name4} (Not seated)`;
-    }
-    function syncUrl(roomId, inviteToken = null) {
-      const url2 = new URL(window.location.href);
-      url2.searchParams.delete("rejoin");
-      url2.searchParams.delete("rejoinTs");
-      if (roomId) {
-        url2.searchParams.set("room", roomId);
-      } else {
-        url2.searchParams.delete("room");
-      }
-      if (roomId && inviteToken) {
-        url2.searchParams.set("invite", inviteToken);
-      } else {
-        url2.searchParams.delete("invite");
-      }
-      window.history.replaceState({}, "", url2);
     }
     function clearLocalRoomState(options = {}) {
       setRoomCreatePending(false);
@@ -37027,6 +37125,13 @@ var require_main = __commonJS({
       liveAnalyzer?.terminate();
       botAnalyzer?.terminate();
     });
+  }
+});
+
+// src/client/main.ts
+var require_main = __commonJS({
+  "src/client/main.ts"() {
+    var import_main_runtime = __toESM(require_main_runtime());
   }
 });
 export default require_main();
