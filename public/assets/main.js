@@ -34293,13 +34293,14 @@ var require_main = __commonJS({
       const fromSquare = ptrDragFrom;
       const wasDrag = ptrDragMoved;
       ptrDragFrom = null;
-      ptrDragMoved = false;
       dragHoverSquare = null;
       if (ptrDragNode) {
         ptrDragNode.remove();
         ptrDragNode = null;
       }
       board.querySelector(".square.dragging")?.classList.remove("dragging");
+      syncBoardInteractionState();
+      ptrDragMoved = false;
       syncBoardInteractionState();
       requestBoardRefresh(true);
       if (!wasDrag) {
@@ -35379,8 +35380,11 @@ var require_main = __commonJS({
         draggedSquareEl?.classList.remove("dragging");
         ptrDragFrom = null;
       }
-      ptrDragMoved = false;
       dragHoverSquare = null;
+      syncBoardInteractionState();
+      ptrDragMoved = false;
+      board.classList.remove("drag-hover-active");
+      syncBoardInteractionState();
       state.selectedSquare = null;
       state.legalTargets = [];
     }
@@ -35778,6 +35782,7 @@ var require_main = __commonJS({
       });
     }
     function syncBoardInteractionState() {
+      board.classList.toggle("drag-hover-active", ptrDragMoved);
       for (const squareButton of board.querySelectorAll(".square")) {
         const square = squareButton.dataset.square;
         if (!square) {

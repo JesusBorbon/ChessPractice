@@ -1664,10 +1664,13 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
 
   // Cleanup visual drag states
   ptrDragFrom = null;
-  ptrDragMoved = false;
   dragHoverSquare = null;
   if (ptrDragNode) { ptrDragNode.remove(); ptrDragNode = null; }
   board.querySelector<HTMLElement>(".square.dragging")?.classList.remove("dragging");
+  // Remove hover ring while drag-hover transitions are still disabled.
+  syncBoardInteractionState();
+  ptrDragMoved = false;
+  // Re-enable normal square transitions only after hover ring is gone.
   syncBoardInteractionState();
 
   // FIX: Force a sync right after dropping a piece. 
@@ -3110,8 +3113,11 @@ function cancelCurrentDrag(): void {
     ptrDragFrom = null;
   }
   
-  ptrDragMoved = false;
   dragHoverSquare = null;
+  syncBoardInteractionState();
+  ptrDragMoved = false;
+  board.classList.remove("drag-hover-active");
+  syncBoardInteractionState();
   
   // Clear the internal selection state to prevent "ghost" highlight rings
   state.selectedSquare = null;
@@ -3625,6 +3631,8 @@ function renderArrows(): void {
 }
 
 function syncBoardInteractionState(): void {
+  board.classList.toggle("drag-hover-active", ptrDragMoved);
+
   for (const squareButton of board.querySelectorAll<HTMLButtonElement>(".square")) {
     const square = squareButton.dataset.square as Square | undefined;
     if (!square) {
