@@ -1621,7 +1621,7 @@ board.addEventListener("pointermove", (event) => {
       Object.assign(ptrDragNode.style, {
         position: "fixed",
         pointerEvents: "none",
-        zIndex: "9999",
+        zIndex: "12000",
         width: `${btn.offsetWidth}px`, 
         height: `${btn.offsetHeight}px`,
         transform: "translate(-50%, -50%)",
@@ -3221,7 +3221,7 @@ function renderBoard(): void {
     if (checkedKingSquare === squareName) button.classList.add("in-check");
 
     if (square === ptrDragFrom) button.classList.add("dragging");
-    if (ptrDragMoved && dragHoverSquare === square && state.legalTargets.includes(square)) {
+    if (ptrDragMoved && dragHoverSquare === square) {
       button.classList.add("drag-hover-legal");
     }
 
@@ -3636,7 +3636,7 @@ function syncBoardInteractionState(): void {
     squareButton.classList.toggle("dragging", square === ptrDragFrom);
     squareButton.classList.toggle(
       "drag-hover-legal",
-      ptrDragMoved && dragHoverSquare === square && state.legalTargets.includes(square),
+      ptrDragMoved && dragHoverSquare === square,
     );
   }
 }
