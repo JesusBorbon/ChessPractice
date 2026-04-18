@@ -10,8 +10,8 @@ import "./account-sidebar.css";
 import "./notifications.css";
 import "./account-sidebar-import.css";
 import "./badge-icon-colors.css";
-import { buildArrowLayerMarkup } from "./arrow-render";
-import { canShowBestMoveArrow, parseBestMoveArrow } from "./best-move-arrow";
+import { buildArrowLayerMarkup } from "./board/arrow-render";
+import { canShowBestMoveArrow, parseBestMoveArrow } from "./board/best-move-arrow";
 import { createAccountSidebarController, type MultiplayerFriendshipStatus } from "./account-sidebar";
 import {
   BOT_DIFFICULTY_PRESETS,
@@ -27,7 +27,26 @@ import {
   normalizeBotTimeControlId,
   randomInt,
 } from "./bot-config";
-import { playSoundForHistoryNavigation, playSoundForMoveTraversal } from "./history-audio";
+import {
+  PIECE_THEME_STORAGE_KEY,
+  SOUND_THEME_STORAGE_KEY,
+  normalizePieceTheme,
+  normalizeSoundEffectName,
+  normalizeSoundTheme,
+  resolvePieceSpritePath,
+  resolveSoundPackSrc,
+} from "./contexts/asset-theme-context";
+import {
+  ANALYZE_LAUNCH_PARAM,
+  buildAnalyzeLaunchSessionKey,
+  type AnalyzeLaunchPayload,
+} from "./contexts/analyze-launch-context";
+import {
+  ROOM_RETURN_CONTEXT_STORAGE_KEY,
+  parseStoredRoomReturnContext,
+  type StoredRoomReturnContext,
+} from "./contexts/room-return-context";
+import { playSoundForHistoryNavigation, playSoundForMoveTraversal } from "./analysis/history-audio";
 import {
   appendLiveCategoryMarkerContent,
   buildBeforeAfterFenFromMoves,
@@ -35,9 +54,9 @@ import {
   materialFromPerspective,
   summarizeLiveMove,
   verifyLiveBrilliantOffer,
-} from "./live-analysis-utils";
+} from "./analysis/live-analysis-utils";
 import { createVoiceChatController } from "./live-chat";
-import { buildMainAppMarkup } from "./main-template";
+import { buildMainAppMarkup } from "./main/main-template";
 import type {
   AppState,
   BotDifficultyPreset,
@@ -52,12 +71,14 @@ import type {
   PromotionPiece,
   RoomRole,
   RoomSnapshot,
-} from "./main-types";
+} from "./main/main-types";
 import { createNotificationsStateController } from "./notifications/notification-state";
 import { createNotificationsUiController } from "./notifications/notification-ui";
 import { buildFinishedGameSignature, buildPgnFromMoves } from "./pgn-utils";
 import { StockfishBridge } from "./stockfish-bridge";
 import { mountThemeSwitcher, type PieceThemeChoice, type SoundThemeChoice } from "./theme";
+import { formatClockMs, getDisplayClockMs } from "./utils/clock-render-utils";
+import { isElementMostlyVisible, isTypingTarget, shouldAutoScrollInviteJoin } from "./utils/interaction-utils";
 
 type IncomingRoomJoinRequest = {
   requestId: string;
@@ -163,131 +184,9 @@ function computeBotResponseTiming(preset: BotDifficultyPreset, playerMove: Move 
   };
 }
 
-const PIECE_THEME_STORAGE_KEY = "chess-piece-theme";
-const SOUND_THEME_STORAGE_KEY = "chess-sound-theme";
-
-type SoundEffectName = "move-self" | "capture" | "castle" | "checkMove" | "gameEndOrCheckmate" | "premove";
-
-const PIECE_SETS: Record<PieceThemeChoice, Record<`${PlayerRole}${PieceSymbol}`, string>> = {
-  original: {
-    wp: "/pieces/wP.svg",
-    wn: "/pieces/wN.svg",
-    wb: "/pieces/wB.svg",
-    wr: "/pieces/wR.svg",
-    wq: "/pieces/wQ.svg",
-    wk: "/pieces/wK.svg",
-    bp: "/pieces/bP.svg",
-    bn: "/pieces/bN.svg",
-    bb: "/pieces/bB.svg",
-    br: "/pieces/bR.svg",
-    bq: "/pieces/bQ.svg",
-    bk: "/pieces/bK.svg",
-  },
-  chesscom: {
-    wp: "/pieces/chessComPieces/wpCom.png",
-    wn: "/pieces/chessComPieces/wnCom.png",
-    wb: "/pieces/chessComPieces/wbCom.png",
-    wr: "/pieces/chessComPieces/wrCom.png",
-    wq: "/pieces/chessComPieces/wqCom.png",
-    wk: "/pieces/chessComPieces/wkCom.png",
-    bp: "/pieces/chessComPieces/bpCom.png",
-    bn: "/pieces/chessComPieces/bnCom.png",
-    bb: "/pieces/chessComPieces/bbCom.png",
-    br: "/pieces/chessComPieces/brCom.png",
-    bq: "/pieces/chessComPieces/bqCom.png",
-    bk: "/pieces/chessComPieces/bkCom.png",
-  },
-};
-
-const SOUND_PACKS: Record<SoundThemeChoice, Record<SoundEffectName, string>> = {
-  original: {
-    "move-self": "/sounds/move-self.mp3",
-    capture: "/sounds/capture.mp3",
-    castle: "/sounds/castle.mp3",
-    checkMove: "/sounds/checkMove.mp3",
-    gameEndOrCheckmate: "/sounds/gameEndOrCheckmate.mp3",
-    premove: "/sounds/move-self.mp3",
-  },
-  chesscom: {
-    "move-self": "/sounds/chessComSounds/moveChesscom.mp3",
-    capture: "/sounds/chessComSounds/captureChesscom.mp3",
-    castle: "/sounds/chessComSounds/castleChesscom.mp3",
-    checkMove: "/sounds/chessComSounds/checkMoveChesscom.mp3",
-    gameEndOrCheckmate: "/sounds/chessComSounds/gameEndOrCheckmate.mp3",
-    premove: "/sounds/chessComSounds/premove.mp3",
-  },
-};
-
-function normalizePieceTheme(value: string | null): PieceThemeChoice {
-  return value === "chesscom" ? "chesscom" : "original";
-}
-
-function normalizeSoundTheme(value: string | null): SoundThemeChoice {
-  return value === "chesscom" ? "chesscom" : "original";
-}
-
-function normalizeSoundEffectName(name: string): SoundEffectName | null {
-  if (name === "move-self") return "move-self";
-  if (name === "capture") return "capture";
-  if (name === "castle") return "castle";
-  if (name === "checkMove") return "checkMove";
-  if (name === "gameEndOrCheckmate") return "gameEndOrCheckmate";
-  if (name === "premove") return "premove";
-  return null;
-}
-
 const chess = new Chess();
 const socket = io();
 const app = document.querySelector<HTMLDivElement>("#app");
-
-const ROOM_RETURN_CONTEXT_STORAGE_KEY = "chess_roomReturnContext";
-const ROOM_RETURN_CONTEXT_TTL_MS = 1000 * 60 * 60 * 24;
-
-type StoredRoomReturnContext = {
-  roomId: string;
-  inviteToken: string | null;
-  createdAt: number;
-};
-
-type AnalyzeLaunchPayload = {
-  postGameMeta?: {
-    whiteName?: string;
-    blackName?: string;
-  };
-  postGameMoves?: string[];
-  postGamePgn?: string;
-};
-
-const ANALYZE_LAUNCH_PARAM = "launch";
-const ANALYZE_LAUNCH_SESSION_PREFIX = "chess_analyzeLaunch_";
-
-function parseStoredRoomReturnContext(raw: string | null): StoredRoomReturnContext | null {
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<StoredRoomReturnContext>;
-    const roomId = typeof parsed.roomId === "string" ? parsed.roomId.trim() : "";
-    if (!/^\d{4}$/.test(roomId)) {
-      return null;
-    }
-
-    const inviteToken = typeof parsed.inviteToken === "string" && parsed.inviteToken.trim()
-      ? parsed.inviteToken.trim()
-      : null;
-    const createdAt = typeof parsed.createdAt === "number" && Number.isFinite(parsed.createdAt)
-      ? Math.floor(parsed.createdAt)
-      : 0;
-    if (!createdAt || Date.now() - createdAt > ROOM_RETURN_CONTEXT_TTL_MS) {
-      return null;
-    }
-
-    return { roomId, inviteToken, createdAt };
-  } catch {
-    return null;
-  }
-}
 
 if (!app) {
   throw new Error("Missing #app root element.");
@@ -430,7 +329,7 @@ function triggerGameOverScreen(title: string, subtitle: string) {
 const _audioCache: Record<string, HTMLAudioElement> = {};
 
 function getPieceSpritePath(color: PlayerRole, piece: PieceSymbol): string {
-  return PIECE_SETS[state.pieceTheme][`${color}${piece}`];
+  return resolvePieceSpritePath(state.pieceTheme, color, piece);
 }
 
 function stopAllCachedAudio(): void {
@@ -446,7 +345,7 @@ function playSound(name: string): void {
     return;
   }
 
-  const src = SOUND_PACKS[state.soundTheme][normalizedName];
+  const src = resolveSoundPackSrc(state.soundTheme, normalizedName);
   let audio = _audioCache[src];
   if (!audio) {
     audio = new Audio(src);
@@ -862,7 +761,7 @@ function openAnalyzeInIsolatedTab(payload: AnalyzeLaunchPayload | null = null): 
   const targetUrl = new URL("/analyze", window.location.origin);
   if (payload) {
     const launchToken = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    const sessionKey = `${ANALYZE_LAUNCH_SESSION_PREFIX}${launchToken}`;
+    const sessionKey = buildAnalyzeLaunchSessionKey(launchToken);
     try {
       tab.sessionStorage.setItem(sessionKey, JSON.stringify(payload));
       targetUrl.searchParams.set(ANALYZE_LAUNCH_PARAM, launchToken);
@@ -2948,8 +2847,14 @@ function renderSession(): void {
   movesMeta.textContent = String(snapshot.moveCount);
   spectatorMeta.textContent = String(snapshot.players.spectatorCount);
 
-  const whiteMs = getDisplayClockMs(snapshot, "w");
-  const blackMs = getDisplayClockMs(snapshot, "b");
+  const whiteMs = getDisplayClockMs(snapshot, "w", {
+    mode: state.gameMode,
+    lastRoomStateReceivedAtMs,
+  });
+  const blackMs = getDisplayClockMs(snapshot, "b", {
+    mode: state.gameMode,
+    lastRoomStateReceivedAtMs,
+  });
   whiteClock.textContent = formatClockMs(whiteMs);
   blackClock.textContent = formatClockMs(blackMs);
   whiteClock.classList.toggle("is-low", snapshot.isStarted && whiteMs <= snapshot.clock.lowTimeThresholdMs);
@@ -4927,29 +4832,6 @@ function clearLocalRoomState(options: { preserveRoomReturnContext?: boolean } = 
   syncUrl(null);
 }
 
-function isTypingTarget(target: EventTarget | null): boolean {
-  const element = target as HTMLElement | null;
-  return Boolean(element?.closest("input, textarea, [contenteditable='true']"));
-}
-
-function shouldAutoScrollInviteJoin(): boolean {
-  const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
-  const isSmallViewport = window.matchMedia("(max-width: 1100px)").matches;
-  return isCoarsePointer || isSmallViewport;
-}
-
-function isElementMostlyVisible(element: HTMLElement, minVisibleRatio = 0.68): boolean {
-  const rect = element.getBoundingClientRect();
-  const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
-  const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-
-  const visibleWidth = Math.max(0, Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0));
-  const visibleHeight = Math.max(0, Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0));
-  const visibleArea = visibleWidth * visibleHeight;
-  const totalArea = Math.max(1, rect.width * rect.height);
-  return visibleArea / totalArea >= minVisibleRatio;
-}
-
 function scrollToInviteJoinCardOnMobile(): void {
   const needsForcedReveal = !isElementMostlyVisible(inviteJoinCard);
   if (!shouldAutoScrollInviteJoin() && !needsForcedReveal) {
@@ -4961,32 +4843,20 @@ function scrollToInviteJoinCardOnMobile(): void {
   });
 }
 
-function formatClockMs(ms: number): string {
-  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-function getDisplayClockMs(snapshot: RoomSnapshot, color: PlayerRole): number {
-  const baseMs = color === "w" ? snapshot.clock.whiteMs : snapshot.clock.blackMs;
-  if (!snapshot.clock.running || snapshot.clock.active !== color) {
-    return baseMs;
-  }
-
-  const referenceNowMs = state.gameMode === "bot" ? snapshot.clock.serverNowMs : lastRoomStateReceivedAtMs;
-  const elapsed = Math.max(0, Date.now() - referenceNowMs);
-  return Math.max(0, baseMs - elapsed);
-}
-
 function getFocusTimerText(): string {
   const snapshot = state.snapshot;
   if (!snapshot) {
     return "W 00:00 | B 00:00";
   }
 
-  const whiteText = formatClockMs(getDisplayClockMs(snapshot, "w"));
-  const blackText = formatClockMs(getDisplayClockMs(snapshot, "b"));
+  const whiteText = formatClockMs(getDisplayClockMs(snapshot, "w", {
+    mode: state.gameMode,
+    lastRoomStateReceivedAtMs,
+  }));
+  const blackText = formatClockMs(getDisplayClockMs(snapshot, "b", {
+    mode: state.gameMode,
+    lastRoomStateReceivedAtMs,
+  }));
 
   if (state.role === "w") {
     return `${whiteText} | Opp ${blackText}`;

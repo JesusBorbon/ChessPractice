@@ -1,6 +1,6 @@
 import { Chess } from "chess.js";
 
-import type { MoveSummary, PgnHeaderOptions, RoomSnapshot } from "./main-types";
+import type { MoveSummary, PgnHeaderOptions, RoomSnapshot } from "./main/main-types";
 
 export function buildPgnFromMoves(moves: MoveSummary[], headers?: PgnHeaderOptions): string | null {
   if (moves.length === 0) {

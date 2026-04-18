@@ -7144,7 +7144,7 @@ var init_badge_icon_colors = __esm({
   }
 });
 
-// src/client/arrow-geometry.ts
+// src/client/board/arrow-geometry.ts
 function buildArrowPath(start, end, options = {}) {
   const shaftWidth = options.shaftWidth ?? 14;
   const headLength = options.headLength ?? 56;
@@ -7189,12 +7189,12 @@ function buildArrowPath(start, end, options = {}) {
   ].join(" ");
 }
 var init_arrow_geometry = __esm({
-  "src/client/arrow-geometry.ts"() {
+  "src/client/board/arrow-geometry.ts"() {
     "use strict";
   }
 });
 
-// src/client/arrow-render.ts
+// src/client/board/arrow-render.ts
 function buildArrowLayerMarkup(params) {
   const { variant, annotations, preview, bestMove, squareCenter } = params;
   const baseClass = `${variant}-arrow`;
@@ -7223,13 +7223,13 @@ function buildArrowLayerMarkup(params) {
   return `${annotationMarkup}${bestMoveMarkup}${previewMarkup}`;
 }
 var init_arrow_render = __esm({
-  "src/client/arrow-render.ts"() {
+  "src/client/board/arrow-render.ts"() {
     "use strict";
     init_arrow_geometry();
   }
 });
 
-// src/client/best-move-arrow.ts
+// src/client/board/best-move-arrow.ts
 function parseBestMoveArrow(uci) {
   const normalized = (uci ?? "").trim().toLowerCase();
   if (!UCI_MOVE_PATTERN.test(normalized)) {
@@ -7245,7 +7245,7 @@ function canShowBestMoveArrow(isAnalysisEnabled, isGameOver) {
 }
 var UCI_MOVE_PATTERN;
 var init_best_move_arrow = __esm({
-  "src/client/best-move-arrow.ts"() {
+  "src/client/board/best-move-arrow.ts"() {
     "use strict";
     UCI_MOVE_PATTERN = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
   }
@@ -30956,7 +30956,130 @@ var init_bot_config = __esm({
   }
 });
 
-// src/client/history-audio.ts
+// src/client/contexts/asset-theme-context.ts
+function normalizePieceTheme(value2) {
+  return value2 === "chesscom" ? "chesscom" : "original";
+}
+function normalizeSoundTheme(value2) {
+  return value2 === "chesscom" ? "chesscom" : "original";
+}
+function normalizeSoundEffectName(name4) {
+  if (name4 === "move-self") return "move-self";
+  if (name4 === "capture") return "capture";
+  if (name4 === "castle") return "castle";
+  if (name4 === "checkMove") return "checkMove";
+  if (name4 === "gameEndOrCheckmate") return "gameEndOrCheckmate";
+  if (name4 === "premove") return "premove";
+  return null;
+}
+function resolvePieceSpritePath(theme, color, piece) {
+  const pieceKey = `${color}${piece}`;
+  return PIECE_SETS[theme][pieceKey];
+}
+function resolveSoundPackSrc(theme, effectName) {
+  return SOUND_PACKS[theme][effectName];
+}
+var PIECE_THEME_STORAGE_KEY, SOUND_THEME_STORAGE_KEY, PIECE_SETS, SOUND_PACKS;
+var init_asset_theme_context = __esm({
+  "src/client/contexts/asset-theme-context.ts"() {
+    "use strict";
+    PIECE_THEME_STORAGE_KEY = "chess-piece-theme";
+    SOUND_THEME_STORAGE_KEY = "chess-sound-theme";
+    PIECE_SETS = {
+      original: {
+        wp: "/pieces/wP.svg",
+        wn: "/pieces/wN.svg",
+        wb: "/pieces/wB.svg",
+        wr: "/pieces/wR.svg",
+        wq: "/pieces/wQ.svg",
+        wk: "/pieces/wK.svg",
+        bp: "/pieces/bP.svg",
+        bn: "/pieces/bN.svg",
+        bb: "/pieces/bB.svg",
+        br: "/pieces/bR.svg",
+        bq: "/pieces/bQ.svg",
+        bk: "/pieces/bK.svg"
+      },
+      chesscom: {
+        wp: "/pieces/chessComPieces/wpCom.png",
+        wn: "/pieces/chessComPieces/wnCom.png",
+        wb: "/pieces/chessComPieces/wbCom.png",
+        wr: "/pieces/chessComPieces/wrCom.png",
+        wq: "/pieces/chessComPieces/wqCom.png",
+        wk: "/pieces/chessComPieces/wkCom.png",
+        bp: "/pieces/chessComPieces/bpCom.png",
+        bn: "/pieces/chessComPieces/bnCom.png",
+        bb: "/pieces/chessComPieces/bbCom.png",
+        br: "/pieces/chessComPieces/brCom.png",
+        bq: "/pieces/chessComPieces/bqCom.png",
+        bk: "/pieces/chessComPieces/bkCom.png"
+      }
+    };
+    SOUND_PACKS = {
+      original: {
+        "move-self": "/sounds/move-self.mp3",
+        capture: "/sounds/capture.mp3",
+        castle: "/sounds/castle.mp3",
+        checkMove: "/sounds/checkMove.mp3",
+        gameEndOrCheckmate: "/sounds/gameEndOrCheckmate.mp3",
+        premove: "/sounds/move-self.mp3"
+      },
+      chesscom: {
+        "move-self": "/sounds/chessComSounds/moveChesscom.mp3",
+        capture: "/sounds/chessComSounds/captureChesscom.mp3",
+        castle: "/sounds/chessComSounds/castleChesscom.mp3",
+        checkMove: "/sounds/chessComSounds/checkMoveChesscom.mp3",
+        gameEndOrCheckmate: "/sounds/chessComSounds/gameEndOrCheckmate.mp3",
+        premove: "/sounds/chessComSounds/premove.mp3"
+      }
+    };
+  }
+});
+
+// src/client/contexts/analyze-launch-context.ts
+function buildAnalyzeLaunchSessionKey(launchToken) {
+  return `${ANALYZE_LAUNCH_SESSION_PREFIX}${launchToken}`;
+}
+var ANALYZE_LAUNCH_PARAM, ANALYZE_LAUNCH_SESSION_PREFIX;
+var init_analyze_launch_context = __esm({
+  "src/client/contexts/analyze-launch-context.ts"() {
+    "use strict";
+    ANALYZE_LAUNCH_PARAM = "launch";
+    ANALYZE_LAUNCH_SESSION_PREFIX = "chess_analyzeLaunch_";
+  }
+});
+
+// src/client/contexts/room-return-context.ts
+function parseStoredRoomReturnContext(raw) {
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    const roomId = typeof parsed.roomId === "string" ? parsed.roomId.trim() : "";
+    if (!/^\d{4}$/.test(roomId)) {
+      return null;
+    }
+    const inviteToken = typeof parsed.inviteToken === "string" && parsed.inviteToken.trim() ? parsed.inviteToken.trim() : null;
+    const createdAt = typeof parsed.createdAt === "number" && Number.isFinite(parsed.createdAt) ? Math.floor(parsed.createdAt) : 0;
+    if (!createdAt || Date.now() - createdAt > ROOM_RETURN_CONTEXT_TTL_MS) {
+      return null;
+    }
+    return { roomId, inviteToken, createdAt };
+  } catch {
+    return null;
+  }
+}
+var ROOM_RETURN_CONTEXT_STORAGE_KEY, ROOM_RETURN_CONTEXT_TTL_MS;
+var init_room_return_context = __esm({
+  "src/client/contexts/room-return-context.ts"() {
+    "use strict";
+    ROOM_RETURN_CONTEXT_STORAGE_KEY = "chess_roomReturnContext";
+    ROOM_RETURN_CONTEXT_TTL_MS = 1e3 * 60 * 60 * 24;
+  }
+});
+
+// src/client/analysis/history-audio.ts
 function playSoundForMoveTraversal(moveSan, isCheck, isGameEnd, playSound) {
   if (isGameEnd) {
     playSound("gameEndOrCheckmate");
@@ -31005,13 +31128,13 @@ function playSoundForHistoryNavigation(snapshot, previousPos, nextPos, playSound
   playSoundForMoveTraversal(traversedMove.san, isCheck, isGameEnd, playSound);
 }
 var init_history_audio = __esm({
-  "src/client/history-audio.ts"() {
+  "src/client/analysis/history-audio.ts"() {
     "use strict";
     init_chess();
   }
 });
 
-// src/client/live-analysis-utils.ts
+// src/client/analysis/live-analysis-utils.ts
 function materialFromPerspective(fen, color) {
   const board = fen.split(" ")[0] ?? "";
   let white = 0;
@@ -31137,7 +31260,7 @@ function buildBeforeAfterFenFromMoves(moves) {
 }
 var PIECE_VALUES2, LIVE_CATEGORY_LABELS, LIVE_CATEGORY_TEXT_SYMBOLS, LIVE_CATEGORY_BADGE_ICON_PATHS, LIVE_BRILLIANT_VERIFICATION_DEPTH;
 var init_live_analysis_utils = __esm({
-  "src/client/live-analysis-utils.ts"() {
+  "src/client/analysis/live-analysis-utils.ts"() {
     "use strict";
     init_chess();
     PIECE_VALUES2 = {
@@ -31753,7 +31876,7 @@ var init_live_chat = __esm({
   }
 });
 
-// src/client/main-template.ts
+// src/client/main/main-template.ts
 function buildMainAppMarkup(params) {
   const botDifficultyOptionsHtml = params.botDifficultyOptions.map((preset) => `<option value="${preset.level}">${preset.label}</option>`).join("");
   const timeControlOptionsHtml = params.timeControlOptions.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join("");
@@ -32112,7 +32235,7 @@ function buildMainAppMarkup(params) {
 `;
 }
 var init_main_template = __esm({
-  "src/client/main-template.ts"() {
+  "src/client/main/main-template.ts"() {
     "use strict";
   }
 });
@@ -32752,10 +32875,10 @@ var init_stockfish_bridge = __esm({
 });
 
 // src/client/theme.ts
-function normalizePieceTheme(value2) {
+function normalizePieceTheme2(value2) {
   return value2 === "chesscom" ? "chesscom" : "original";
 }
-function normalizeSoundTheme(value2) {
+function normalizeSoundTheme2(value2) {
   return value2 === "chesscom" ? "chesscom" : "original";
 }
 function setTheme(theme) {
@@ -32800,7 +32923,7 @@ function setLegalMovesEnabled(enabled) {
   window.dispatchEvent(event);
 }
 function setPieceTheme(theme) {
-  localStorage.setItem(PIECE_THEME_STORAGE_KEY, theme);
+  localStorage.setItem(PIECE_THEME_STORAGE_KEY2, theme);
   document.querySelectorAll(".piece-theme-btn").forEach((btn) => {
     const isActive = btn.dataset.pieceTheme === theme;
     btn.classList.toggle("active", isActive);
@@ -32810,7 +32933,7 @@ function setPieceTheme(theme) {
   window.dispatchEvent(event);
 }
 function setSoundTheme(theme) {
-  localStorage.setItem(SOUND_THEME_STORAGE_KEY, theme);
+  localStorage.setItem(SOUND_THEME_STORAGE_KEY2, theme);
   document.querySelectorAll(".sound-theme-btn").forEach((btn) => {
     const isActive = btn.dataset.soundTheme === theme;
     btn.classList.toggle("active", isActive);
@@ -32828,8 +32951,8 @@ function setPanelCollapsed(widget, toggleBtn, collapsed) {
 function mountThemeSwitcher() {
   const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || "forest";
   const savedAnimationStyle = localStorage.getItem(ANIMATION_STORAGE_KEY) || "smooth";
-  const savedPieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
-  const savedSoundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
+  const savedPieceTheme = normalizePieceTheme2(localStorage.getItem(PIECE_THEME_STORAGE_KEY2));
+  const savedSoundTheme = normalizeSoundTheme2(localStorage.getItem(SOUND_THEME_STORAGE_KEY2));
   const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
   const bloodFxEnabled = bloodFxRaw === "on";
   const legalMovesRaw = localStorage.getItem(LEGAL_MOVES_STORAGE_KEY);
@@ -32906,12 +33029,12 @@ function mountThemeSwitcher() {
     if (btn?.dataset.theme) setTheme(btn.dataset.theme);
     const pieceThemeBtn = e.target.closest(".piece-theme-btn");
     if (pieceThemeBtn?.dataset.pieceTheme) {
-      setPieceTheme(normalizePieceTheme(pieceThemeBtn.dataset.pieceTheme));
+      setPieceTheme(normalizePieceTheme2(pieceThemeBtn.dataset.pieceTheme));
       return;
     }
     const soundThemeBtn = e.target.closest(".sound-theme-btn");
     if (soundThemeBtn?.dataset.soundTheme) {
-      setSoundTheme(normalizeSoundTheme(soundThemeBtn.dataset.soundTheme));
+      setSoundTheme(normalizeSoundTheme2(soundThemeBtn.dataset.soundTheme));
       return;
     }
     const animBtn = e.target.closest(".animation-btn");
@@ -32950,17 +33073,65 @@ function mountThemeSwitcher() {
     btn.setAttribute("aria-checked", String(isActive));
   });
 }
-var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, PIECE_THEME_STORAGE_KEY, SOUND_THEME_STORAGE_KEY, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY, LEGAL_MOVES_STORAGE_KEY;
+var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, PIECE_THEME_STORAGE_KEY2, SOUND_THEME_STORAGE_KEY2, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY, LEGAL_MOVES_STORAGE_KEY;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
     THEME_STORAGE_KEY = "chess-theme";
     THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
-    PIECE_THEME_STORAGE_KEY = "chess-piece-theme";
-    SOUND_THEME_STORAGE_KEY = "chess-sound-theme";
+    PIECE_THEME_STORAGE_KEY2 = "chess-piece-theme";
+    SOUND_THEME_STORAGE_KEY2 = "chess-sound-theme";
     ANIMATION_STORAGE_KEY = "chess-animation-style";
     BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
     LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
+  }
+});
+
+// src/client/utils/clock-render-utils.ts
+function formatClockMs(ms) {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1e3));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+function getDisplayClockMs(snapshot, color, context) {
+  const baseMs = color === "w" ? snapshot.clock.whiteMs : snapshot.clock.blackMs;
+  if (!snapshot.clock.running || snapshot.clock.active !== color) {
+    return baseMs;
+  }
+  const referenceNowMs = context.mode === "bot" ? snapshot.clock.serverNowMs : context.lastRoomStateReceivedAtMs;
+  const elapsed = Math.max(0, (context.nowMs ?? Date.now()) - referenceNowMs);
+  return Math.max(0, baseMs - elapsed);
+}
+var init_clock_render_utils = __esm({
+  "src/client/utils/clock-render-utils.ts"() {
+    "use strict";
+  }
+});
+
+// src/client/utils/interaction-utils.ts
+function isTypingTarget(target) {
+  const element = target;
+  return Boolean(element?.closest("input, textarea, [contenteditable='true']"));
+}
+function shouldAutoScrollInviteJoin() {
+  const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
+  const isSmallViewport = window.matchMedia("(max-width: 1100px)").matches;
+  return isCoarsePointer || isSmallViewport;
+}
+function isElementMostlyVisible(element, minVisibleRatio = 0.68) {
+  const rect = element.getBoundingClientRect();
+  const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+  const visibleWidth = Math.max(0, Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0));
+  const visibleHeight = Math.max(0, Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0));
+  const visibleArea = visibleWidth * visibleHeight;
+  const totalArea = Math.max(1, rect.width * rect.height);
+  return visibleArea / totalArea >= minVisibleRatio;
+}
+var init_interaction_utils = __esm({
+  "src/client/utils/interaction-utils.ts"() {
+    "use strict";
   }
 });
 
@@ -32982,6 +33153,9 @@ var require_main = __commonJS({
     init_best_move_arrow();
     init_account_sidebar2();
     init_bot_config();
+    init_asset_theme_context();
+    init_analyze_launch_context();
+    init_room_return_context();
     init_history_audio();
     init_live_analysis_utils();
     init_live_chat();
@@ -32991,6 +33165,8 @@ var require_main = __commonJS({
     init_pgn_utils();
     init_stockfish_bridge();
     init_theme();
+    init_clock_render_utils();
+    init_interaction_utils();
     function computeBotResponseTiming(preset, playerMove) {
       const legalReplies = chess.moves({ verbose: true }).length;
       const moveCount = state.snapshot?.moveCount ?? 0;
@@ -33074,98 +33250,9 @@ var require_main = __commonJS({
         engineMoveTimeMs: clampBotMoveTimeMs(baseThink * levelMultiplier * (0.76 + Math.random() * 0.62))
       };
     }
-    var PIECE_THEME_STORAGE_KEY2 = "chess-piece-theme";
-    var SOUND_THEME_STORAGE_KEY2 = "chess-sound-theme";
-    var PIECE_SETS = {
-      original: {
-        wp: "/pieces/wP.svg",
-        wn: "/pieces/wN.svg",
-        wb: "/pieces/wB.svg",
-        wr: "/pieces/wR.svg",
-        wq: "/pieces/wQ.svg",
-        wk: "/pieces/wK.svg",
-        bp: "/pieces/bP.svg",
-        bn: "/pieces/bN.svg",
-        bb: "/pieces/bB.svg",
-        br: "/pieces/bR.svg",
-        bq: "/pieces/bQ.svg",
-        bk: "/pieces/bK.svg"
-      },
-      chesscom: {
-        wp: "/pieces/chessComPieces/wpCom.png",
-        wn: "/pieces/chessComPieces/wnCom.png",
-        wb: "/pieces/chessComPieces/wbCom.png",
-        wr: "/pieces/chessComPieces/wrCom.png",
-        wq: "/pieces/chessComPieces/wqCom.png",
-        wk: "/pieces/chessComPieces/wkCom.png",
-        bp: "/pieces/chessComPieces/bpCom.png",
-        bn: "/pieces/chessComPieces/bnCom.png",
-        bb: "/pieces/chessComPieces/bbCom.png",
-        br: "/pieces/chessComPieces/brCom.png",
-        bq: "/pieces/chessComPieces/bqCom.png",
-        bk: "/pieces/chessComPieces/bkCom.png"
-      }
-    };
-    var SOUND_PACKS = {
-      original: {
-        "move-self": "/sounds/move-self.mp3",
-        capture: "/sounds/capture.mp3",
-        castle: "/sounds/castle.mp3",
-        checkMove: "/sounds/checkMove.mp3",
-        gameEndOrCheckmate: "/sounds/gameEndOrCheckmate.mp3",
-        premove: "/sounds/move-self.mp3"
-      },
-      chesscom: {
-        "move-self": "/sounds/chessComSounds/moveChesscom.mp3",
-        capture: "/sounds/chessComSounds/captureChesscom.mp3",
-        castle: "/sounds/chessComSounds/castleChesscom.mp3",
-        checkMove: "/sounds/chessComSounds/checkMoveChesscom.mp3",
-        gameEndOrCheckmate: "/sounds/chessComSounds/gameEndOrCheckmate.mp3",
-        premove: "/sounds/chessComSounds/premove.mp3"
-      }
-    };
-    function normalizePieceTheme2(value2) {
-      return value2 === "chesscom" ? "chesscom" : "original";
-    }
-    function normalizeSoundTheme2(value2) {
-      return value2 === "chesscom" ? "chesscom" : "original";
-    }
-    function normalizeSoundEffectName(name4) {
-      if (name4 === "move-self") return "move-self";
-      if (name4 === "capture") return "capture";
-      if (name4 === "castle") return "castle";
-      if (name4 === "checkMove") return "checkMove";
-      if (name4 === "gameEndOrCheckmate") return "gameEndOrCheckmate";
-      if (name4 === "premove") return "premove";
-      return null;
-    }
     var chess = new Chess();
     var socket = lookup2();
     var app = document.querySelector("#app");
-    var ROOM_RETURN_CONTEXT_STORAGE_KEY = "chess_roomReturnContext";
-    var ROOM_RETURN_CONTEXT_TTL_MS = 1e3 * 60 * 60 * 24;
-    var ANALYZE_LAUNCH_PARAM = "launch";
-    var ANALYZE_LAUNCH_SESSION_PREFIX = "chess_analyzeLaunch_";
-    function parseStoredRoomReturnContext(raw) {
-      if (!raw) {
-        return null;
-      }
-      try {
-        const parsed = JSON.parse(raw);
-        const roomId = typeof parsed.roomId === "string" ? parsed.roomId.trim() : "";
-        if (!/^\d{4}$/.test(roomId)) {
-          return null;
-        }
-        const inviteToken = typeof parsed.inviteToken === "string" && parsed.inviteToken.trim() ? parsed.inviteToken.trim() : null;
-        const createdAt = typeof parsed.createdAt === "number" && Number.isFinite(parsed.createdAt) ? Math.floor(parsed.createdAt) : 0;
-        if (!createdAt || Date.now() - createdAt > ROOM_RETURN_CONTEXT_TTL_MS) {
-          return null;
-        }
-        return { roomId, inviteToken, createdAt };
-      } catch {
-        return null;
-      }
-    }
     if (!app) {
       throw new Error("Missing #app root element.");
     }
@@ -33185,8 +33272,8 @@ var require_main = __commonJS({
     var savedBotLevel = clampBotLevel(Number(localStorage.getItem("chess-bot-level")) || 1);
     var savedBotTimeControlId = normalizeBotTimeControlId(localStorage.getItem("chess-bot-time-control"));
     var savedBotPlayerSide = localStorage.getItem("chess-bot-player-side") === "b" ? "b" : "w";
-    var savedPieceTheme = normalizePieceTheme2(localStorage.getItem(PIECE_THEME_STORAGE_KEY2));
-    var savedSoundTheme = normalizeSoundTheme2(localStorage.getItem(SOUND_THEME_STORAGE_KEY2));
+    var savedPieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
+    var savedSoundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
     var state = {
       connected: false,
       roomId: null,
@@ -33266,7 +33353,7 @@ var require_main = __commonJS({
     }
     var _audioCache = {};
     function getPieceSpritePath(color, piece) {
-      return PIECE_SETS[state.pieceTheme][`${color}${piece}`];
+      return resolvePieceSpritePath(state.pieceTheme, color, piece);
     }
     function stopAllCachedAudio() {
       for (const audio of Object.values(_audioCache)) {
@@ -33279,7 +33366,7 @@ var require_main = __commonJS({
       if (!normalizedName) {
         return;
       }
-      const src = SOUND_PACKS[state.soundTheme][normalizedName];
+      const src = resolveSoundPackSrc(state.soundTheme, normalizedName);
       let audio = _audioCache[src];
       if (!audio) {
         audio = new Audio(src);
@@ -33646,7 +33733,7 @@ var require_main = __commonJS({
       const targetUrl = new URL("/analyze", window.location.origin);
       if (payload) {
         const launchToken = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-        const sessionKey = `${ANALYZE_LAUNCH_SESSION_PREFIX}${launchToken}`;
+        const sessionKey = buildAnalyzeLaunchSessionKey(launchToken);
         try {
           tab.sessionStorage.setItem(sessionKey, JSON.stringify(payload));
           targetUrl.searchParams.set(ANALYZE_LAUNCH_PARAM, launchToken);
@@ -35263,8 +35350,14 @@ var require_main = __commonJS({
       turnMeta.textContent = snapshot.turn === "w" ? "White" : "Black";
       movesMeta.textContent = String(snapshot.moveCount);
       spectatorMeta.textContent = String(snapshot.players.spectatorCount);
-      const whiteMs = getDisplayClockMs(snapshot, "w");
-      const blackMs = getDisplayClockMs(snapshot, "b");
+      const whiteMs = getDisplayClockMs(snapshot, "w", {
+        mode: state.gameMode,
+        lastRoomStateReceivedAtMs
+      });
+      const blackMs = getDisplayClockMs(snapshot, "b", {
+        mode: state.gameMode,
+        lastRoomStateReceivedAtMs
+      });
       whiteClock.textContent = formatClockMs(whiteMs);
       blackClock.textContent = formatClockMs(blackMs);
       whiteClock.classList.toggle("is-low", snapshot.isStarted && whiteMs <= snapshot.clock.lowTimeThresholdMs);
@@ -36771,25 +36864,6 @@ var require_main = __commonJS({
       resetLowTimeWarningState();
       syncUrl(null);
     }
-    function isTypingTarget(target) {
-      const element = target;
-      return Boolean(element?.closest("input, textarea, [contenteditable='true']"));
-    }
-    function shouldAutoScrollInviteJoin() {
-      const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
-      const isSmallViewport = window.matchMedia("(max-width: 1100px)").matches;
-      return isCoarsePointer || isSmallViewport;
-    }
-    function isElementMostlyVisible(element, minVisibleRatio = 0.68) {
-      const rect = element.getBoundingClientRect();
-      const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
-      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-      const visibleWidth = Math.max(0, Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0));
-      const visibleHeight = Math.max(0, Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0));
-      const visibleArea = visibleWidth * visibleHeight;
-      const totalArea = Math.max(1, rect.width * rect.height);
-      return visibleArea / totalArea >= minVisibleRatio;
-    }
     function scrollToInviteJoinCardOnMobile() {
       const needsForcedReveal = !isElementMostlyVisible(inviteJoinCard);
       if (!shouldAutoScrollInviteJoin() && !needsForcedReveal) {
@@ -36799,28 +36873,19 @@ var require_main = __commonJS({
         inviteJoinCard.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
       });
     }
-    function formatClockMs(ms) {
-      const totalSeconds = Math.max(0, Math.ceil(ms / 1e3));
-      const minutes = Math.floor(totalSeconds / 60);
-      const seconds = totalSeconds % 60;
-      return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-    }
-    function getDisplayClockMs(snapshot, color) {
-      const baseMs = color === "w" ? snapshot.clock.whiteMs : snapshot.clock.blackMs;
-      if (!snapshot.clock.running || snapshot.clock.active !== color) {
-        return baseMs;
-      }
-      const referenceNowMs = state.gameMode === "bot" ? snapshot.clock.serverNowMs : lastRoomStateReceivedAtMs;
-      const elapsed = Math.max(0, Date.now() - referenceNowMs);
-      return Math.max(0, baseMs - elapsed);
-    }
     function getFocusTimerText() {
       const snapshot = state.snapshot;
       if (!snapshot) {
         return "W 00:00 | B 00:00";
       }
-      const whiteText = formatClockMs(getDisplayClockMs(snapshot, "w"));
-      const blackText = formatClockMs(getDisplayClockMs(snapshot, "b"));
+      const whiteText = formatClockMs(getDisplayClockMs(snapshot, "w", {
+        mode: state.gameMode,
+        lastRoomStateReceivedAtMs
+      }));
+      const blackText = formatClockMs(getDisplayClockMs(snapshot, "b", {
+        mode: state.gameMode,
+        lastRoomStateReceivedAtMs
+      }));
       if (state.role === "w") {
         return `${whiteText} | Opp ${blackText}`;
       }

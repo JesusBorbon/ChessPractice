@@ -1,7 +1,7 @@
 import { Chess } from "chess.js";
 import type { Color, Move } from "chess.js";
 
-import type { BotDifficultyPreset, TimeControlPreset, TimeControlPresetId } from "./main-types";
+import type { BotDifficultyPreset, TimeControlPreset, TimeControlPresetId } from "./main/main-types";
 
 const PIECE_VALUES: Record<string, number> = {
   p: 100,

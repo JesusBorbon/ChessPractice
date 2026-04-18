@@ -3511,7 +3511,7 @@ var init_badge_icon_colors = __esm({
   }
 });
 
-// src/client/arrow-geometry.ts
+// src/client/board/arrow-geometry.ts
 function buildArrowPath(start, end, options = {}) {
   const shaftWidth = options.shaftWidth ?? 14;
   const headLength = options.headLength ?? 56;
@@ -3556,12 +3556,12 @@ function buildArrowPath(start, end, options = {}) {
   ].join(" ");
 }
 var init_arrow_geometry = __esm({
-  "src/client/arrow-geometry.ts"() {
+  "src/client/board/arrow-geometry.ts"() {
     "use strict";
   }
 });
 
-// src/client/arrow-render.ts
+// src/client/board/arrow-render.ts
 function buildArrowLayerMarkup(params) {
   const { variant, annotations, preview, bestMove, squareCenter } = params;
   const baseClass = `${variant}-arrow`;
@@ -3590,13 +3590,13 @@ function buildArrowLayerMarkup(params) {
   return `${annotationMarkup}${bestMoveMarkup}${previewMarkup}`;
 }
 var init_arrow_render = __esm({
-  "src/client/arrow-render.ts"() {
+  "src/client/board/arrow-render.ts"() {
     "use strict";
     init_arrow_geometry();
   }
 });
 
-// src/client/best-move-arrow.ts
+// src/client/board/best-move-arrow.ts
 function parseBestMoveArrow(uci) {
   const normalized = (uci ?? "").trim().toLowerCase();
   if (!UCI_MOVE_PATTERN.test(normalized)) {
@@ -3609,9 +3609,132 @@ function parseBestMoveArrow(uci) {
 }
 var UCI_MOVE_PATTERN;
 var init_best_move_arrow = __esm({
-  "src/client/best-move-arrow.ts"() {
+  "src/client/board/best-move-arrow.ts"() {
     "use strict";
     UCI_MOVE_PATTERN = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
+  }
+});
+
+// src/client/contexts/asset-theme-context.ts
+function normalizePieceTheme(value) {
+  return value === "chesscom" ? "chesscom" : "original";
+}
+function normalizeSoundTheme(value) {
+  return value === "chesscom" ? "chesscom" : "original";
+}
+function normalizeSoundEffectName(name) {
+  if (name === "move-self") return "move-self";
+  if (name === "capture") return "capture";
+  if (name === "castle") return "castle";
+  if (name === "checkMove") return "checkMove";
+  if (name === "gameEndOrCheckmate") return "gameEndOrCheckmate";
+  if (name === "premove") return "premove";
+  return null;
+}
+function resolvePieceSpritePath(theme, color, piece) {
+  const pieceKey = `${color}${piece}`;
+  return PIECE_SETS[theme][pieceKey];
+}
+function resolveSoundPackSrc(theme, effectName) {
+  return SOUND_PACKS[theme][effectName];
+}
+var PIECE_THEME_STORAGE_KEY, SOUND_THEME_STORAGE_KEY, PIECE_SETS, SOUND_PACKS;
+var init_asset_theme_context = __esm({
+  "src/client/contexts/asset-theme-context.ts"() {
+    "use strict";
+    PIECE_THEME_STORAGE_KEY = "chess-piece-theme";
+    SOUND_THEME_STORAGE_KEY = "chess-sound-theme";
+    PIECE_SETS = {
+      original: {
+        wp: "/pieces/wP.svg",
+        wn: "/pieces/wN.svg",
+        wb: "/pieces/wB.svg",
+        wr: "/pieces/wR.svg",
+        wq: "/pieces/wQ.svg",
+        wk: "/pieces/wK.svg",
+        bp: "/pieces/bP.svg",
+        bn: "/pieces/bN.svg",
+        bb: "/pieces/bB.svg",
+        br: "/pieces/bR.svg",
+        bq: "/pieces/bQ.svg",
+        bk: "/pieces/bK.svg"
+      },
+      chesscom: {
+        wp: "/pieces/chessComPieces/wpCom.png",
+        wn: "/pieces/chessComPieces/wnCom.png",
+        wb: "/pieces/chessComPieces/wbCom.png",
+        wr: "/pieces/chessComPieces/wrCom.png",
+        wq: "/pieces/chessComPieces/wqCom.png",
+        wk: "/pieces/chessComPieces/wkCom.png",
+        bp: "/pieces/chessComPieces/bpCom.png",
+        bn: "/pieces/chessComPieces/bnCom.png",
+        bb: "/pieces/chessComPieces/bbCom.png",
+        br: "/pieces/chessComPieces/brCom.png",
+        bq: "/pieces/chessComPieces/bqCom.png",
+        bk: "/pieces/chessComPieces/bkCom.png"
+      }
+    };
+    SOUND_PACKS = {
+      original: {
+        "move-self": "/sounds/move-self.mp3",
+        capture: "/sounds/capture.mp3",
+        castle: "/sounds/castle.mp3",
+        checkMove: "/sounds/checkMove.mp3",
+        gameEndOrCheckmate: "/sounds/gameEndOrCheckmate.mp3",
+        premove: "/sounds/move-self.mp3"
+      },
+      chesscom: {
+        "move-self": "/sounds/chessComSounds/moveChesscom.mp3",
+        capture: "/sounds/chessComSounds/captureChesscom.mp3",
+        castle: "/sounds/chessComSounds/castleChesscom.mp3",
+        checkMove: "/sounds/chessComSounds/checkMoveChesscom.mp3",
+        gameEndOrCheckmate: "/sounds/chessComSounds/gameEndOrCheckmate.mp3",
+        premove: "/sounds/chessComSounds/premove.mp3"
+      }
+    };
+  }
+});
+
+// src/client/contexts/analyze-launch-context.ts
+function buildAnalyzeLaunchSessionKey(launchToken) {
+  return `${ANALYZE_LAUNCH_SESSION_PREFIX}${launchToken}`;
+}
+var ANALYZE_LAUNCH_PARAM, ANALYZE_LAUNCH_SESSION_PREFIX;
+var init_analyze_launch_context = __esm({
+  "src/client/contexts/analyze-launch-context.ts"() {
+    "use strict";
+    ANALYZE_LAUNCH_PARAM = "launch";
+    ANALYZE_LAUNCH_SESSION_PREFIX = "chess_analyzeLaunch_";
+  }
+});
+
+// src/client/contexts/room-return-context.ts
+function parseStoredRoomReturnContext(raw) {
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    const roomId = typeof parsed.roomId === "string" ? parsed.roomId.trim() : "";
+    if (!/^\d{4}$/.test(roomId)) {
+      return null;
+    }
+    const inviteToken = typeof parsed.inviteToken === "string" && parsed.inviteToken.trim() ? parsed.inviteToken.trim() : null;
+    const createdAt = typeof parsed.createdAt === "number" && Number.isFinite(parsed.createdAt) ? Math.floor(parsed.createdAt) : 0;
+    if (!createdAt || Date.now() - createdAt > ROOM_RETURN_CONTEXT_TTL_MS) {
+      return null;
+    }
+    return { roomId, inviteToken, createdAt };
+  } catch {
+    return null;
+  }
+}
+var ROOM_RETURN_CONTEXT_STORAGE_KEY, ROOM_RETURN_CONTEXT_TTL_MS;
+var init_room_return_context = __esm({
+  "src/client/contexts/room-return-context.ts"() {
+    "use strict";
+    ROOM_RETURN_CONTEXT_STORAGE_KEY = "chess_roomReturnContext";
+    ROOM_RETURN_CONTEXT_TTL_MS = 1e3 * 60 * 60 * 24;
   }
 });
 
@@ -3691,10 +3814,10 @@ var init_game_display = __esm({
 });
 
 // src/client/theme.ts
-function normalizePieceTheme(value) {
+function normalizePieceTheme2(value) {
   return value === "chesscom" ? "chesscom" : "original";
 }
-function normalizeSoundTheme(value) {
+function normalizeSoundTheme2(value) {
   return value === "chesscom" ? "chesscom" : "original";
 }
 function setTheme(theme) {
@@ -3739,7 +3862,7 @@ function setLegalMovesEnabled(enabled) {
   window.dispatchEvent(event);
 }
 function setPieceTheme(theme) {
-  localStorage.setItem(PIECE_THEME_STORAGE_KEY, theme);
+  localStorage.setItem(PIECE_THEME_STORAGE_KEY2, theme);
   document.querySelectorAll(".piece-theme-btn").forEach((btn) => {
     const isActive = btn.dataset.pieceTheme === theme;
     btn.classList.toggle("active", isActive);
@@ -3749,7 +3872,7 @@ function setPieceTheme(theme) {
   window.dispatchEvent(event);
 }
 function setSoundTheme(theme) {
-  localStorage.setItem(SOUND_THEME_STORAGE_KEY, theme);
+  localStorage.setItem(SOUND_THEME_STORAGE_KEY2, theme);
   document.querySelectorAll(".sound-theme-btn").forEach((btn) => {
     const isActive = btn.dataset.soundTheme === theme;
     btn.classList.toggle("active", isActive);
@@ -3767,8 +3890,8 @@ function setPanelCollapsed(widget, toggleBtn, collapsed) {
 function mountThemeSwitcher() {
   const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || "forest";
   const savedAnimationStyle = localStorage.getItem(ANIMATION_STORAGE_KEY) || "smooth";
-  const savedPieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
-  const savedSoundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
+  const savedPieceTheme = normalizePieceTheme2(localStorage.getItem(PIECE_THEME_STORAGE_KEY2));
+  const savedSoundTheme = normalizeSoundTheme2(localStorage.getItem(SOUND_THEME_STORAGE_KEY2));
   const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
   const bloodFxEnabled = bloodFxRaw === "on";
   const legalMovesRaw = localStorage.getItem(LEGAL_MOVES_STORAGE_KEY);
@@ -3845,12 +3968,12 @@ function mountThemeSwitcher() {
     if (btn?.dataset.theme) setTheme(btn.dataset.theme);
     const pieceThemeBtn = e.target.closest(".piece-theme-btn");
     if (pieceThemeBtn?.dataset.pieceTheme) {
-      setPieceTheme(normalizePieceTheme(pieceThemeBtn.dataset.pieceTheme));
+      setPieceTheme(normalizePieceTheme2(pieceThemeBtn.dataset.pieceTheme));
       return;
     }
     const soundThemeBtn = e.target.closest(".sound-theme-btn");
     if (soundThemeBtn?.dataset.soundTheme) {
-      setSoundTheme(normalizeSoundTheme(soundThemeBtn.dataset.soundTheme));
+      setSoundTheme(normalizeSoundTheme2(soundThemeBtn.dataset.soundTheme));
       return;
     }
     const animBtn = e.target.closest(".animation-btn");
@@ -3889,14 +4012,14 @@ function mountThemeSwitcher() {
     btn.setAttribute("aria-checked", String(isActive));
   });
 }
-var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, PIECE_THEME_STORAGE_KEY, SOUND_THEME_STORAGE_KEY, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY, LEGAL_MOVES_STORAGE_KEY;
+var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, PIECE_THEME_STORAGE_KEY2, SOUND_THEME_STORAGE_KEY2, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY, LEGAL_MOVES_STORAGE_KEY;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
     THEME_STORAGE_KEY = "chess-theme";
     THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
-    PIECE_THEME_STORAGE_KEY = "chess-piece-theme";
-    SOUND_THEME_STORAGE_KEY = "chess-sound-theme";
+    PIECE_THEME_STORAGE_KEY2 = "chess-piece-theme";
+    SOUND_THEME_STORAGE_KEY2 = "chess-sound-theme";
     ANIMATION_STORAGE_KEY = "chess-animation-style";
     BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
     LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
@@ -3913,6 +4036,9 @@ var require_analyze = __commonJS({
     init_badge_icon_colors();
     init_arrow_render();
     init_best_move_arrow();
+    init_asset_theme_context();
+    init_analyze_launch_context();
+    init_room_return_context();
     init_game_display();
     init_theme();
     var CATEGORY_LABELS = {
@@ -3954,71 +4080,6 @@ var require_analyze = __commonJS({
     };
     var MATE_CP = 1e5;
     var BRILLIANT_VERIFICATION_DEPTH = 16;
-    var PIECE_THEME_STORAGE_KEY2 = "chess-piece-theme";
-    var SOUND_THEME_STORAGE_KEY2 = "chess-sound-theme";
-    var PIECE_SETS = {
-      original: {
-        wp: "/pieces/wP.svg",
-        wn: "/pieces/wN.svg",
-        wb: "/pieces/wB.svg",
-        wr: "/pieces/wR.svg",
-        wq: "/pieces/wQ.svg",
-        wk: "/pieces/wK.svg",
-        bp: "/pieces/bP.svg",
-        bn: "/pieces/bN.svg",
-        bb: "/pieces/bB.svg",
-        br: "/pieces/bR.svg",
-        bq: "/pieces/bQ.svg",
-        bk: "/pieces/bK.svg"
-      },
-      chesscom: {
-        wp: "/pieces/chessComPieces/wpCom.png",
-        wn: "/pieces/chessComPieces/wnCom.png",
-        wb: "/pieces/chessComPieces/wbCom.png",
-        wr: "/pieces/chessComPieces/wrCom.png",
-        wq: "/pieces/chessComPieces/wqCom.png",
-        wk: "/pieces/chessComPieces/wkCom.png",
-        bp: "/pieces/chessComPieces/bpCom.png",
-        bn: "/pieces/chessComPieces/bnCom.png",
-        bb: "/pieces/chessComPieces/bbCom.png",
-        br: "/pieces/chessComPieces/brCom.png",
-        bq: "/pieces/chessComPieces/bqCom.png",
-        bk: "/pieces/chessComPieces/bkCom.png"
-      }
-    };
-    var SOUND_PACKS = {
-      original: {
-        "move-self": "/sounds/move-self.mp3",
-        capture: "/sounds/capture.mp3",
-        castle: "/sounds/castle.mp3",
-        checkMove: "/sounds/checkMove.mp3",
-        gameEndOrCheckmate: "/sounds/gameEndOrCheckmate.mp3",
-        premove: "/sounds/move-self.mp3"
-      },
-      chesscom: {
-        "move-self": "/sounds/chessComSounds/moveChesscom.mp3",
-        capture: "/sounds/chessComSounds/captureChesscom.mp3",
-        castle: "/sounds/chessComSounds/castleChesscom.mp3",
-        checkMove: "/sounds/chessComSounds/checkMoveChesscom.mp3",
-        gameEndOrCheckmate: "/sounds/chessComSounds/gameEndOrCheckmate.mp3",
-        premove: "/sounds/chessComSounds/premove.mp3"
-      }
-    };
-    function normalizePieceTheme2(value) {
-      return value === "chesscom" ? "chesscom" : "original";
-    }
-    function normalizeSoundTheme2(value) {
-      return value === "chesscom" ? "chesscom" : "original";
-    }
-    function normalizeSoundEffectName(name) {
-      if (name === "move-self") return "move-self";
-      if (name === "capture") return "capture";
-      if (name === "castle") return "castle";
-      if (name === "checkMove") return "checkMove";
-      if (name === "gameEndOrCheckmate") return "gameEndOrCheckmate";
-      if (name === "premove") return "premove";
-      return null;
-    }
     var StockfishBridge = class {
       worker;
       ready = false;
@@ -4135,7 +4196,7 @@ var require_analyze = __commonJS({
       if (!normalizedName) {
         return;
       }
-      const src = SOUND_PACKS[soundTheme][normalizedName];
+      const src = resolveSoundPackSrc(soundTheme, normalizedName);
       let audio = _audioCache[src];
       if (!audio) {
         audio = new Audio(src);
@@ -4146,8 +4207,7 @@ var require_analyze = __commonJS({
       });
     }
     function getPieceSpritePath(color, piece) {
-      const pieceKey = `${color}${piece}`;
-      return PIECE_SETS[pieceTheme][pieceKey];
+      return resolvePieceSpritePath(pieceTheme, color, piece);
     }
     function stopAllCachedAudio() {
       for (const audio of Object.values(_audioCache)) {
@@ -4202,8 +4262,8 @@ var require_analyze = __commonJS({
     var legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
     var animationStyle = localStorage.getItem("chess-animation-style") || "smooth";
     var bloodFxEnabled = localStorage.getItem("chess-blood-fx") === "on";
-    var pieceTheme = normalizePieceTheme2(localStorage.getItem(PIECE_THEME_STORAGE_KEY2));
-    var soundTheme = normalizeSoundTheme2(localStorage.getItem(SOUND_THEME_STORAGE_KEY2));
+    var pieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
+    var soundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
     var lastCheckFlashKey = null;
     var SUMMARY_DRAG_CONTINUE_THRESHOLD_PX = 8;
     var SMOOTH_MOVE_DURATION_MS = 620;
@@ -4215,10 +4275,6 @@ var require_analyze = __commonJS({
     var POST_GAME_MOVES_STORAGE_KEY = "postGameMoves";
     var POST_GAME_PGN_STORAGE_KEY = "postGamePgn";
     var POST_GAME_META_STORAGE_KEY = "postGameMeta";
-    var ANALYZE_LAUNCH_PARAM = "launch";
-    var ANALYZE_LAUNCH_SESSION_PREFIX = "chess_analyzeLaunch_";
-    var ROOM_RETURN_CONTEXT_STORAGE_KEY = "chess_roomReturnContext";
-    var ROOM_RETURN_CONTEXT_TTL_MS = 1e3 * 60 * 60 * 24;
     var analyzedWhiteName = "White";
     var analyzedBlackName = "Black";
     var app = document.querySelector("#app");
@@ -4385,34 +4441,22 @@ var require_analyze = __commonJS({
     var returnGameLineButton = q("#returnGameLineBtn");
     var focusModeButton = q("#focusModeBtn");
     function resolveBackToMultiplayerHref() {
-      const raw = localStorage.getItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
-      if (!raw) {
-        return { href: "/", label: "\u2190 Back to multiplayer" };
-      }
-      try {
-        const parsed = JSON.parse(raw);
-        const roomId = typeof parsed.roomId === "string" ? parsed.roomId.trim() : "";
-        const createdAt = typeof parsed.createdAt === "number" && Number.isFinite(parsed.createdAt) ? Math.floor(parsed.createdAt) : 0;
-        if (!/^\d{4}$/.test(roomId) || !createdAt || Date.now() - createdAt > ROOM_RETURN_CONTEXT_TTL_MS) {
-          localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
-          return { href: "/", label: "\u2190 Back to multiplayer" };
-        }
-        const inviteToken = typeof parsed.inviteToken === "string" && parsed.inviteToken.trim() ? parsed.inviteToken.trim() : "";
-        const query = new URLSearchParams();
-        query.set("room", roomId);
-        query.set("rejoin", "1");
-        query.set("rejoinTs", String(Date.now()));
-        if (inviteToken) {
-          query.set("invite", inviteToken);
-        }
-        return {
-          href: `/?${query.toString()}`,
-          label: "\u2190 Back to room"
-        };
-      } catch {
+      const parsedContext = parseStoredRoomReturnContext(localStorage.getItem(ROOM_RETURN_CONTEXT_STORAGE_KEY));
+      if (!parsedContext) {
         localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
         return { href: "/", label: "\u2190 Back to multiplayer" };
       }
+      const query = new URLSearchParams();
+      query.set("room", parsedContext.roomId);
+      query.set("rejoin", "1");
+      query.set("rejoinTs", String(Date.now()));
+      if (parsedContext.inviteToken) {
+        query.set("invite", parsedContext.inviteToken);
+      }
+      return {
+        href: `/?${query.toString()}`,
+        label: "\u2190 Back to room"
+      };
     }
     var resolvedBackLink = resolveBackToMultiplayerHref();
     backToMultiplayerLink.href = resolvedBackLink.href;
@@ -6120,7 +6164,7 @@ var require_analyze = __commonJS({
       }
       currentUrl.searchParams.delete(ANALYZE_LAUNCH_PARAM);
       window.history.replaceState({}, "", currentUrl.toString());
-      const sessionKey = `${ANALYZE_LAUNCH_SESSION_PREFIX}${launchToken}`;
+      const sessionKey = buildAnalyzeLaunchSessionKey(launchToken);
       const raw = sessionStorage.getItem(sessionKey);
       if (!raw) {
         return null;

@@ -1,5 +1,5 @@
 import { clampBotMoveTimeMs } from "./bot-config";
-import type { BotDifficultyPreset, EngineEval } from "./main-types";
+import type { BotDifficultyPreset, EngineEval } from "./main/main-types";
 
 const LIVE_MATE_CP = 100000;
 

@@ -3,8 +3,26 @@ import { buildSquareList, isLightSquare, SquareName, BoardOrientation } from "..
 import "./analyze.css";
 import "./arrows.css";
 import "./badge-icon-colors.css";
-import { buildArrowLayerMarkup } from "./arrow-render";
-import { BestMoveArrow, parseBestMoveArrow } from "./best-move-arrow";
+import { buildArrowLayerMarkup } from "./board/arrow-render";
+import { BestMoveArrow, parseBestMoveArrow } from "./board/best-move-arrow";
+import {
+  PIECE_THEME_STORAGE_KEY,
+  SOUND_THEME_STORAGE_KEY,
+  normalizePieceTheme,
+  normalizeSoundEffectName,
+  normalizeSoundTheme,
+  resolvePieceSpritePath,
+  resolveSoundPackSrc,
+} from "./contexts/asset-theme-context";
+import {
+  ANALYZE_LAUNCH_PARAM,
+  buildAnalyzeLaunchSessionKey,
+  type AnalyzeLaunchPayload,
+} from "./contexts/analyze-launch-context";
+import {
+  ROOM_RETURN_CONTEXT_STORAGE_KEY,
+  parseStoredRoomReturnContext,
+} from "./contexts/room-return-context";
 import { resolveGameParticipants, resolveGameParticipantsFromPgn } from "./game-display";
 import { mountThemeSwitcher, type PieceThemeChoice, type SoundThemeChoice } from "./theme";
 
@@ -103,79 +121,6 @@ const PIECE_VALUES: Record<string, number> = {
 
 const MATE_CP = 100000;
 const BRILLIANT_VERIFICATION_DEPTH = 16;
-const PIECE_THEME_STORAGE_KEY = "chess-piece-theme";
-const SOUND_THEME_STORAGE_KEY = "chess-sound-theme";
-
-type SoundEffectName = "move-self" | "capture" | "castle" | "checkMove" | "gameEndOrCheckmate" | "premove";
-type PieceKey = `${"w" | "b"}${PieceSymbol}`;
-
-const PIECE_SETS: Record<PieceThemeChoice, Record<PieceKey, string>> = {
-  original: {
-    wp: "/pieces/wP.svg",
-    wn: "/pieces/wN.svg",
-    wb: "/pieces/wB.svg",
-    wr: "/pieces/wR.svg",
-    wq: "/pieces/wQ.svg",
-    wk: "/pieces/wK.svg",
-    bp: "/pieces/bP.svg",
-    bn: "/pieces/bN.svg",
-    bb: "/pieces/bB.svg",
-    br: "/pieces/bR.svg",
-    bq: "/pieces/bQ.svg",
-    bk: "/pieces/bK.svg",
-  },
-  chesscom: {
-    wp: "/pieces/chessComPieces/wpCom.png",
-    wn: "/pieces/chessComPieces/wnCom.png",
-    wb: "/pieces/chessComPieces/wbCom.png",
-    wr: "/pieces/chessComPieces/wrCom.png",
-    wq: "/pieces/chessComPieces/wqCom.png",
-    wk: "/pieces/chessComPieces/wkCom.png",
-    bp: "/pieces/chessComPieces/bpCom.png",
-    bn: "/pieces/chessComPieces/bnCom.png",
-    bb: "/pieces/chessComPieces/bbCom.png",
-    br: "/pieces/chessComPieces/brCom.png",
-    bq: "/pieces/chessComPieces/bqCom.png",
-    bk: "/pieces/chessComPieces/bkCom.png",
-  },
-};
-
-const SOUND_PACKS: Record<SoundThemeChoice, Record<SoundEffectName, string>> = {
-  original: {
-    "move-self": "/sounds/move-self.mp3",
-    capture: "/sounds/capture.mp3",
-    castle: "/sounds/castle.mp3",
-    checkMove: "/sounds/checkMove.mp3",
-    gameEndOrCheckmate: "/sounds/gameEndOrCheckmate.mp3",
-    premove: "/sounds/move-self.mp3",
-  },
-  chesscom: {
-    "move-self": "/sounds/chessComSounds/moveChesscom.mp3",
-    capture: "/sounds/chessComSounds/captureChesscom.mp3",
-    castle: "/sounds/chessComSounds/castleChesscom.mp3",
-    checkMove: "/sounds/chessComSounds/checkMoveChesscom.mp3",
-    gameEndOrCheckmate: "/sounds/chessComSounds/gameEndOrCheckmate.mp3",
-    premove: "/sounds/chessComSounds/premove.mp3",
-  },
-};
-
-function normalizePieceTheme(value: string | null): PieceThemeChoice {
-  return value === "chesscom" ? "chesscom" : "original";
-}
-
-function normalizeSoundTheme(value: string | null): SoundThemeChoice {
-  return value === "chesscom" ? "chesscom" : "original";
-}
-
-function normalizeSoundEffectName(name: string): SoundEffectName | null {
-  if (name === "move-self") return "move-self";
-  if (name === "capture") return "capture";
-  if (name === "castle") return "castle";
-  if (name === "checkMove") return "checkMove";
-  if (name === "gameEndOrCheckmate") return "gameEndOrCheckmate";
-  if (name === "premove") return "premove";
-  return null;
-}
 
 class StockfishBridge {
   private readonly worker: Worker;
@@ -318,7 +263,7 @@ function playSound(name: string): void {
     return;
   }
 
-  const src = SOUND_PACKS[soundTheme][normalizedName];
+  const src = resolveSoundPackSrc(soundTheme, normalizedName);
   let audio = _audioCache[src];
   if (!audio) {
     audio = new Audio(src);
@@ -329,8 +274,7 @@ function playSound(name: string): void {
 }
 
 function getPieceSpritePath(color: "w" | "b", piece: PieceSymbol): string {
-  const pieceKey = `${color}${piece}` as PieceKey;
-  return PIECE_SETS[pieceTheme][pieceKey];
+  return resolvePieceSpritePath(pieceTheme, color, piece);
 }
 
 function stopAllCachedAudio(): void {
@@ -406,26 +350,6 @@ const EPIC_MOVE_DURATION_MS = {
 const POST_GAME_MOVES_STORAGE_KEY = "postGameMoves";
 const POST_GAME_PGN_STORAGE_KEY = "postGamePgn";
 const POST_GAME_META_STORAGE_KEY = "postGameMeta";
-const ANALYZE_LAUNCH_PARAM = "launch";
-const ANALYZE_LAUNCH_SESSION_PREFIX = "chess_analyzeLaunch_";
-const ROOM_RETURN_CONTEXT_STORAGE_KEY = "chess_roomReturnContext";
-const ROOM_RETURN_CONTEXT_TTL_MS = 1000 * 60 * 60 * 24;
-
-type AnalyzeLaunchPayload = {
-  postGameMeta?: {
-    whiteName?: string;
-    blackName?: string;
-  };
-  postGamePgn?: string;
-  postGameMoves?: string[];
-};
-
-type StoredRoomReturnContext = {
-  roomId: string;
-  inviteToken: string | null;
-  createdAt: number;
-};
-
 let analyzedWhiteName = "White";
 let analyzedBlackName = "Black";
 
@@ -606,41 +530,24 @@ const returnGameLineButton = q<HTMLButtonElement>("#returnGameLineBtn");
 const focusModeButton = q<HTMLButtonElement>("#focusModeBtn");
 
 function resolveBackToMultiplayerHref(): { href: string; label: string } {
-  const raw = localStorage.getItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
-  if (!raw) {
-    return { href: "/", label: "← Back to multiplayer" };
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<StoredRoomReturnContext>;
-    const roomId = typeof parsed.roomId === "string" ? parsed.roomId.trim() : "";
-    const createdAt = typeof parsed.createdAt === "number" && Number.isFinite(parsed.createdAt)
-      ? Math.floor(parsed.createdAt)
-      : 0;
-    if (!/^\d{4}$/.test(roomId) || !createdAt || Date.now() - createdAt > ROOM_RETURN_CONTEXT_TTL_MS) {
-      localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
-      return { href: "/", label: "← Back to multiplayer" };
-    }
-
-    const inviteToken = typeof parsed.inviteToken === "string" && parsed.inviteToken.trim()
-      ? parsed.inviteToken.trim()
-      : "";
-    const query = new URLSearchParams();
-    query.set("room", roomId);
-    query.set("rejoin", "1");
-    query.set("rejoinTs", String(Date.now()));
-    if (inviteToken) {
-      query.set("invite", inviteToken);
-    }
-
-    return {
-      href: `/?${query.toString()}`,
-      label: "← Back to room",
-    };
-  } catch {
+  const parsedContext = parseStoredRoomReturnContext(localStorage.getItem(ROOM_RETURN_CONTEXT_STORAGE_KEY));
+  if (!parsedContext) {
     localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
     return { href: "/", label: "← Back to multiplayer" };
   }
+
+  const query = new URLSearchParams();
+  query.set("room", parsedContext.roomId);
+  query.set("rejoin", "1");
+  query.set("rejoinTs", String(Date.now()));
+  if (parsedContext.inviteToken) {
+    query.set("invite", parsedContext.inviteToken);
+  }
+
+  return {
+    href: `/?${query.toString()}`,
+    label: "← Back to room",
+  };
 }
 
 const resolvedBackLink = resolveBackToMultiplayerHref();
@@ -2790,7 +2697,7 @@ function readAnalyzeLaunchPayloadFromSession(): AnalyzeLaunchPayload | null {
   currentUrl.searchParams.delete(ANALYZE_LAUNCH_PARAM);
   window.history.replaceState({}, "", currentUrl.toString());
 
-  const sessionKey = `${ANALYZE_LAUNCH_SESSION_PREFIX}${launchToken}`;
+  const sessionKey = buildAnalyzeLaunchSessionKey(launchToken);
   const raw = sessionStorage.getItem(sessionKey);
   if (!raw) {
     return null;
@@ -2874,3 +2781,4 @@ if (shouldAutoAnalyzeOnInit) {
     void runGameAnalysis();
   }, 100);
 }
+
