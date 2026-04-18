@@ -3691,6 +3691,12 @@ var init_game_display = __esm({
 });
 
 // src/client/theme.ts
+function normalizePieceTheme(value) {
+  return value === "chesscom" ? "chesscom" : "original";
+}
+function normalizeSoundTheme(value) {
+  return value === "chesscom" ? "chesscom" : "original";
+}
 function setTheme(theme) {
   if (theme === "forest") {
     document.documentElement.removeAttribute("data-theme");
@@ -3704,7 +3710,7 @@ function setTheme(theme) {
 }
 function setAnimationStyle(style) {
   localStorage.setItem(ANIMATION_STORAGE_KEY, style);
-  document.querySelectorAll(".animation-btn").forEach((btn) => {
+  document.querySelectorAll(".animation-btn[data-animation]").forEach((btn) => {
     const isActive = btn.dataset.animation === style;
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-checked", String(isActive));
@@ -3732,6 +3738,26 @@ function setLegalMovesEnabled(enabled) {
   const event = new CustomEvent("legalmoveschange", { detail: { enabled } });
   window.dispatchEvent(event);
 }
+function setPieceTheme(theme) {
+  localStorage.setItem(PIECE_THEME_STORAGE_KEY, theme);
+  document.querySelectorAll(".piece-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.pieceTheme === theme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  const event = new CustomEvent("piecethemechange", { detail: { theme } });
+  window.dispatchEvent(event);
+}
+function setSoundTheme(theme) {
+  localStorage.setItem(SOUND_THEME_STORAGE_KEY, theme);
+  document.querySelectorAll(".sound-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.soundTheme === theme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  const event = new CustomEvent("soundthemechange", { detail: { theme } });
+  window.dispatchEvent(event);
+}
 function setPanelCollapsed(widget, toggleBtn, collapsed) {
   widget.classList.toggle("is-collapsed", collapsed);
   toggleBtn.setAttribute("aria-expanded", String(!collapsed));
@@ -3741,6 +3767,8 @@ function setPanelCollapsed(widget, toggleBtn, collapsed) {
 function mountThemeSwitcher() {
   const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || "forest";
   const savedAnimationStyle = localStorage.getItem(ANIMATION_STORAGE_KEY) || "smooth";
+  const savedPieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
+  const savedSoundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
   const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
   const bloodFxEnabled = bloodFxRaw === "on";
   const legalMovesRaw = localStorage.getItem(LEGAL_MOVES_STORAGE_KEY);
@@ -3752,7 +3780,7 @@ function mountThemeSwitcher() {
   const widget = document.createElement("div");
   widget.className = "theme-switcher";
   widget.setAttribute("role", "group");
-  widget.setAttribute("aria-label", "Theme and animation options");
+  widget.setAttribute("aria-label", "Theme, piece, sound and animation options");
   widget.innerHTML = `
     <button class="theme-toggle-btn" type="button" aria-label="Toggle theme selector" aria-expanded="true">\u25B6</button>
     <div class="theme-switcher-content">
@@ -3770,6 +3798,20 @@ function mountThemeSwitcher() {
         <div class="animation-segment" role="radiogroup" aria-label="Animation style">
           <button class="animation-btn" type="button" data-animation="smooth" role="radio" aria-label="Smooth animations">Smooth</button>
           <button class="animation-btn" type="button" data-animation="epic" role="radio" aria-label="Epic animations">Epic</button>
+        </div>
+      </div>
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Piece Set</span>
+        <div class="animation-segment" role="radiogroup" aria-label="Piece style">
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="original" role="radio" aria-label="Use original pieces">Original</button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscom" role="radio" aria-label="Use Chess.com pieces">Chess.com</button>
+        </div>
+      </div>
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Sound Pack</span>
+        <div class="animation-segment" role="radiogroup" aria-label="Sound style">
+          <button class="sound-theme-btn animation-btn" type="button" data-sound-theme="original" role="radio" aria-label="Use original sounds">Original</button>
+          <button class="sound-theme-btn animation-btn" type="button" data-sound-theme="chesscom" role="radio" aria-label="Use Chess.com sounds">Chess.com</button>
         </div>
       </div>
       <div class="theme-switcher-row">
@@ -3801,6 +3843,16 @@ function mountThemeSwitcher() {
     }
     const btn = e.target.closest(".theme-btn");
     if (btn?.dataset.theme) setTheme(btn.dataset.theme);
+    const pieceThemeBtn = e.target.closest(".piece-theme-btn");
+    if (pieceThemeBtn?.dataset.pieceTheme) {
+      setPieceTheme(normalizePieceTheme(pieceThemeBtn.dataset.pieceTheme));
+      return;
+    }
+    const soundThemeBtn = e.target.closest(".sound-theme-btn");
+    if (soundThemeBtn?.dataset.soundTheme) {
+      setSoundTheme(normalizeSoundTheme(soundThemeBtn.dataset.soundTheme));
+      return;
+    }
     const animBtn = e.target.closest(".animation-btn");
     if (animBtn?.dataset.animation) setAnimationStyle(animBtn.dataset.animation);
     const targetEl = e.target;
@@ -3812,9 +3864,19 @@ function mountThemeSwitcher() {
       if (fxBtn?.dataset.bloodfx) setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
     }
   });
-  document.querySelectorAll(".animation-btn").forEach((btn) => {
+  document.querySelectorAll(".animation-btn[data-animation]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
     btn.setAttribute("aria-checked", String(btn.dataset.animation === savedAnimationStyle));
+  });
+  document.querySelectorAll(".piece-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.pieceTheme === savedPieceTheme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  document.querySelectorAll(".sound-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.soundTheme === savedSoundTheme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
   });
   document.querySelectorAll(".fx-btn:not(.legal-btn)").forEach((btn) => {
     const isActive = btn.dataset.bloodfx === "on" === bloodFxEnabled;
@@ -3827,12 +3889,14 @@ function mountThemeSwitcher() {
     btn.setAttribute("aria-checked", String(isActive));
   });
 }
-var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY, LEGAL_MOVES_STORAGE_KEY;
+var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, PIECE_THEME_STORAGE_KEY, SOUND_THEME_STORAGE_KEY, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY, LEGAL_MOVES_STORAGE_KEY;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
     THEME_STORAGE_KEY = "chess-theme";
     THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
+    PIECE_THEME_STORAGE_KEY = "chess-piece-theme";
+    SOUND_THEME_STORAGE_KEY = "chess-sound-theme";
     ANIMATION_STORAGE_KEY = "chess-animation-style";
     BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
     LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
@@ -3890,6 +3954,71 @@ var require_analyze = __commonJS({
     };
     var MATE_CP = 1e5;
     var BRILLIANT_VERIFICATION_DEPTH = 16;
+    var PIECE_THEME_STORAGE_KEY2 = "chess-piece-theme";
+    var SOUND_THEME_STORAGE_KEY2 = "chess-sound-theme";
+    var PIECE_SETS = {
+      original: {
+        wp: "/pieces/wP.svg",
+        wn: "/pieces/wN.svg",
+        wb: "/pieces/wB.svg",
+        wr: "/pieces/wR.svg",
+        wq: "/pieces/wQ.svg",
+        wk: "/pieces/wK.svg",
+        bp: "/pieces/bP.svg",
+        bn: "/pieces/bN.svg",
+        bb: "/pieces/bB.svg",
+        br: "/pieces/bR.svg",
+        bq: "/pieces/bQ.svg",
+        bk: "/pieces/bK.svg"
+      },
+      chesscom: {
+        wp: "/pieces/chessComPieces/wpCom.png",
+        wn: "/pieces/chessComPieces/wnCom.png",
+        wb: "/pieces/chessComPieces/wbCom.png",
+        wr: "/pieces/chessComPieces/wrCom.png",
+        wq: "/pieces/chessComPieces/wqCom.png",
+        wk: "/pieces/chessComPieces/wkCom.png",
+        bp: "/pieces/chessComPieces/bpCom.png",
+        bn: "/pieces/chessComPieces/bnCom.png",
+        bb: "/pieces/chessComPieces/bbCom.png",
+        br: "/pieces/chessComPieces/brCom.png",
+        bq: "/pieces/chessComPieces/bqCom.png",
+        bk: "/pieces/chessComPieces/bkCom.png"
+      }
+    };
+    var SOUND_PACKS = {
+      original: {
+        "move-self": "/sounds/move-self.mp3",
+        capture: "/sounds/capture.mp3",
+        castle: "/sounds/castle.mp3",
+        checkMove: "/sounds/checkMove.mp3",
+        gameEndOrCheckmate: "/sounds/gameEndOrCheckmate.mp3",
+        premove: "/sounds/move-self.mp3"
+      },
+      chesscom: {
+        "move-self": "/sounds/chessComSounds/moveChesscom.mp3",
+        capture: "/sounds/chessComSounds/captureChesscom.mp3",
+        castle: "/sounds/chessComSounds/castleChesscom.mp3",
+        checkMove: "/sounds/chessComSounds/checkMoveChesscom.mp3",
+        gameEndOrCheckmate: "/sounds/chessComSounds/gameEndOrCheckmate.mp3",
+        premove: "/sounds/chessComSounds/premove.mp3"
+      }
+    };
+    function normalizePieceTheme2(value) {
+      return value === "chesscom" ? "chesscom" : "original";
+    }
+    function normalizeSoundTheme2(value) {
+      return value === "chesscom" ? "chesscom" : "original";
+    }
+    function normalizeSoundEffectName(name) {
+      if (name === "move-self") return "move-self";
+      if (name === "capture") return "capture";
+      if (name === "castle") return "castle";
+      if (name === "checkMove") return "checkMove";
+      if (name === "gameEndOrCheckmate") return "gameEndOrCheckmate";
+      if (name === "premove") return "premove";
+      return null;
+    }
     var StockfishBridge = class {
       worker;
       ready = false;
@@ -4002,29 +4131,30 @@ var require_analyze = __commonJS({
     }
     var _audioCache = {};
     function playSound(name) {
-      let audio = _audioCache[name];
+      const normalizedName = normalizeSoundEffectName(name);
+      if (!normalizedName) {
+        return;
+      }
+      const src = SOUND_PACKS[soundTheme][normalizedName];
+      let audio = _audioCache[src];
       if (!audio) {
-        audio = new Audio(`/sounds/${name}.mp3`);
-        _audioCache[name] = audio;
+        audio = new Audio(src);
+        _audioCache[src] = audio;
       }
       audio.currentTime = 0;
       audio.play().catch(() => {
       });
     }
-    var PIECES = {
-      wp: "/pieces/wP.svg",
-      wn: "/pieces/wN.svg",
-      wb: "/pieces/wB.svg",
-      wr: "/pieces/wR.svg",
-      wq: "/pieces/wQ.svg",
-      wk: "/pieces/wK.svg",
-      bp: "/pieces/bP.svg",
-      bn: "/pieces/bN.svg",
-      bb: "/pieces/bB.svg",
-      br: "/pieces/bR.svg",
-      bq: "/pieces/bQ.svg",
-      bk: "/pieces/bK.svg"
-    };
+    function getPieceSpritePath(color, piece) {
+      const pieceKey = `${color}${piece}`;
+      return PIECE_SETS[pieceTheme][pieceKey];
+    }
+    function stopAllCachedAudio() {
+      for (const audio of Object.values(_audioCache)) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
+    }
     var chess = new Chess();
     var orientation = "w";
     var selectedSquare = null;
@@ -4072,6 +4202,8 @@ var require_analyze = __commonJS({
     var legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
     var animationStyle = localStorage.getItem("chess-animation-style") || "smooth";
     var bloodFxEnabled = localStorage.getItem("chess-blood-fx") === "on";
+    var pieceTheme = normalizePieceTheme2(localStorage.getItem(PIECE_THEME_STORAGE_KEY2));
+    var soundTheme = normalizeSoundTheme2(localStorage.getItem(SOUND_THEME_STORAGE_KEY2));
     var lastCheckFlashKey = null;
     var SUMMARY_DRAG_CONTINUE_THRESHOLD_PX = 8;
     var SMOOTH_MOVE_DURATION_MS = 620;
@@ -4210,6 +4342,16 @@ var require_analyze = __commonJS({
       const customEvent = event;
       legalMovesEnabled = customEvent.detail.enabled;
       renderBoard();
+    });
+    window.addEventListener("piecethemechange", (event) => {
+      const customEvent = event;
+      pieceTheme = customEvent.detail.theme;
+      renderBoard();
+    });
+    window.addEventListener("soundthemechange", (event) => {
+      const customEvent = event;
+      soundTheme = customEvent.detail.theme;
+      stopAllCachedAudio();
     });
     var arrowLayer = q("#arrowLayer");
     var backToMultiplayerLink = q("#backToMultiplayerLink");
@@ -4796,7 +4938,7 @@ var require_analyze = __commonJS({
           span.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
           const pieceImage = document.createElement("img");
           pieceImage.className = "piece-image";
-          pieceImage.src = PIECES[`${piece.color}${piece.type}`] ?? "";
+          pieceImage.src = getPieceSpritePath(piece.color, piece.type);
           pieceImage.alt = `${piece.color === "w" ? "White" : "Black"} ${piece.type}`;
           pieceImage.draggable = false;
           span.append(pieceImage);

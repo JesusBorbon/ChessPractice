@@ -32752,6 +32752,12 @@ var init_stockfish_bridge = __esm({
 });
 
 // src/client/theme.ts
+function normalizePieceTheme(value2) {
+  return value2 === "chesscom" ? "chesscom" : "original";
+}
+function normalizeSoundTheme(value2) {
+  return value2 === "chesscom" ? "chesscom" : "original";
+}
 function setTheme(theme) {
   if (theme === "forest") {
     document.documentElement.removeAttribute("data-theme");
@@ -32765,7 +32771,7 @@ function setTheme(theme) {
 }
 function setAnimationStyle(style) {
   localStorage.setItem(ANIMATION_STORAGE_KEY, style);
-  document.querySelectorAll(".animation-btn").forEach((btn) => {
+  document.querySelectorAll(".animation-btn[data-animation]").forEach((btn) => {
     const isActive = btn.dataset.animation === style;
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-checked", String(isActive));
@@ -32793,6 +32799,26 @@ function setLegalMovesEnabled(enabled) {
   const event = new CustomEvent("legalmoveschange", { detail: { enabled } });
   window.dispatchEvent(event);
 }
+function setPieceTheme(theme) {
+  localStorage.setItem(PIECE_THEME_STORAGE_KEY, theme);
+  document.querySelectorAll(".piece-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.pieceTheme === theme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  const event = new CustomEvent("piecethemechange", { detail: { theme } });
+  window.dispatchEvent(event);
+}
+function setSoundTheme(theme) {
+  localStorage.setItem(SOUND_THEME_STORAGE_KEY, theme);
+  document.querySelectorAll(".sound-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.soundTheme === theme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  const event = new CustomEvent("soundthemechange", { detail: { theme } });
+  window.dispatchEvent(event);
+}
 function setPanelCollapsed(widget, toggleBtn, collapsed) {
   widget.classList.toggle("is-collapsed", collapsed);
   toggleBtn.setAttribute("aria-expanded", String(!collapsed));
@@ -32802,6 +32828,8 @@ function setPanelCollapsed(widget, toggleBtn, collapsed) {
 function mountThemeSwitcher() {
   const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || "forest";
   const savedAnimationStyle = localStorage.getItem(ANIMATION_STORAGE_KEY) || "smooth";
+  const savedPieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
+  const savedSoundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
   const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
   const bloodFxEnabled = bloodFxRaw === "on";
   const legalMovesRaw = localStorage.getItem(LEGAL_MOVES_STORAGE_KEY);
@@ -32813,7 +32841,7 @@ function mountThemeSwitcher() {
   const widget = document.createElement("div");
   widget.className = "theme-switcher";
   widget.setAttribute("role", "group");
-  widget.setAttribute("aria-label", "Theme and animation options");
+  widget.setAttribute("aria-label", "Theme, piece, sound and animation options");
   widget.innerHTML = `
     <button class="theme-toggle-btn" type="button" aria-label="Toggle theme selector" aria-expanded="true">\u25B6</button>
     <div class="theme-switcher-content">
@@ -32831,6 +32859,20 @@ function mountThemeSwitcher() {
         <div class="animation-segment" role="radiogroup" aria-label="Animation style">
           <button class="animation-btn" type="button" data-animation="smooth" role="radio" aria-label="Smooth animations">Smooth</button>
           <button class="animation-btn" type="button" data-animation="epic" role="radio" aria-label="Epic animations">Epic</button>
+        </div>
+      </div>
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Piece Set</span>
+        <div class="animation-segment" role="radiogroup" aria-label="Piece style">
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="original" role="radio" aria-label="Use original pieces">Original</button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscom" role="radio" aria-label="Use Chess.com pieces">Chess.com</button>
+        </div>
+      </div>
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Sound Pack</span>
+        <div class="animation-segment" role="radiogroup" aria-label="Sound style">
+          <button class="sound-theme-btn animation-btn" type="button" data-sound-theme="original" role="radio" aria-label="Use original sounds">Original</button>
+          <button class="sound-theme-btn animation-btn" type="button" data-sound-theme="chesscom" role="radio" aria-label="Use Chess.com sounds">Chess.com</button>
         </div>
       </div>
       <div class="theme-switcher-row">
@@ -32862,6 +32904,16 @@ function mountThemeSwitcher() {
     }
     const btn = e.target.closest(".theme-btn");
     if (btn?.dataset.theme) setTheme(btn.dataset.theme);
+    const pieceThemeBtn = e.target.closest(".piece-theme-btn");
+    if (pieceThemeBtn?.dataset.pieceTheme) {
+      setPieceTheme(normalizePieceTheme(pieceThemeBtn.dataset.pieceTheme));
+      return;
+    }
+    const soundThemeBtn = e.target.closest(".sound-theme-btn");
+    if (soundThemeBtn?.dataset.soundTheme) {
+      setSoundTheme(normalizeSoundTheme(soundThemeBtn.dataset.soundTheme));
+      return;
+    }
     const animBtn = e.target.closest(".animation-btn");
     if (animBtn?.dataset.animation) setAnimationStyle(animBtn.dataset.animation);
     const targetEl = e.target;
@@ -32873,9 +32925,19 @@ function mountThemeSwitcher() {
       if (fxBtn?.dataset.bloodfx) setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
     }
   });
-  document.querySelectorAll(".animation-btn").forEach((btn) => {
+  document.querySelectorAll(".animation-btn[data-animation]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
     btn.setAttribute("aria-checked", String(btn.dataset.animation === savedAnimationStyle));
+  });
+  document.querySelectorAll(".piece-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.pieceTheme === savedPieceTheme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  document.querySelectorAll(".sound-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.soundTheme === savedSoundTheme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
   });
   document.querySelectorAll(".fx-btn:not(.legal-btn)").forEach((btn) => {
     const isActive = btn.dataset.bloodfx === "on" === bloodFxEnabled;
@@ -32888,12 +32950,14 @@ function mountThemeSwitcher() {
     btn.setAttribute("aria-checked", String(isActive));
   });
 }
-var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY, LEGAL_MOVES_STORAGE_KEY;
+var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, PIECE_THEME_STORAGE_KEY, SOUND_THEME_STORAGE_KEY, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY, LEGAL_MOVES_STORAGE_KEY;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
     THEME_STORAGE_KEY = "chess-theme";
     THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
+    PIECE_THEME_STORAGE_KEY = "chess-piece-theme";
+    SOUND_THEME_STORAGE_KEY = "chess-sound-theme";
     ANIMATION_STORAGE_KEY = "chess-animation-style";
     BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
     LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
@@ -33010,20 +33074,71 @@ var require_main = __commonJS({
         engineMoveTimeMs: clampBotMoveTimeMs(baseThink * levelMultiplier * (0.76 + Math.random() * 0.62))
       };
     }
-    var PIECES = {
-      wp: "/pieces/wP.svg",
-      wn: "/pieces/wN.svg",
-      wb: "/pieces/wB.svg",
-      wr: "/pieces/wR.svg",
-      wq: "/pieces/wQ.svg",
-      wk: "/pieces/wK.svg",
-      bp: "/pieces/bP.svg",
-      bn: "/pieces/bN.svg",
-      bb: "/pieces/bB.svg",
-      br: "/pieces/bR.svg",
-      bq: "/pieces/bQ.svg",
-      bk: "/pieces/bK.svg"
+    var PIECE_THEME_STORAGE_KEY2 = "chess-piece-theme";
+    var SOUND_THEME_STORAGE_KEY2 = "chess-sound-theme";
+    var PIECE_SETS = {
+      original: {
+        wp: "/pieces/wP.svg",
+        wn: "/pieces/wN.svg",
+        wb: "/pieces/wB.svg",
+        wr: "/pieces/wR.svg",
+        wq: "/pieces/wQ.svg",
+        wk: "/pieces/wK.svg",
+        bp: "/pieces/bP.svg",
+        bn: "/pieces/bN.svg",
+        bb: "/pieces/bB.svg",
+        br: "/pieces/bR.svg",
+        bq: "/pieces/bQ.svg",
+        bk: "/pieces/bK.svg"
+      },
+      chesscom: {
+        wp: "/pieces/chessComPieces/wpCom.png",
+        wn: "/pieces/chessComPieces/wnCom.png",
+        wb: "/pieces/chessComPieces/wbCom.png",
+        wr: "/pieces/chessComPieces/wrCom.png",
+        wq: "/pieces/chessComPieces/wqCom.png",
+        wk: "/pieces/chessComPieces/wkCom.png",
+        bp: "/pieces/chessComPieces/bpCom.png",
+        bn: "/pieces/chessComPieces/bnCom.png",
+        bb: "/pieces/chessComPieces/bbCom.png",
+        br: "/pieces/chessComPieces/brCom.png",
+        bq: "/pieces/chessComPieces/bqCom.png",
+        bk: "/pieces/chessComPieces/bkCom.png"
+      }
     };
+    var SOUND_PACKS = {
+      original: {
+        "move-self": "/sounds/move-self.mp3",
+        capture: "/sounds/capture.mp3",
+        castle: "/sounds/castle.mp3",
+        checkMove: "/sounds/checkMove.mp3",
+        gameEndOrCheckmate: "/sounds/gameEndOrCheckmate.mp3",
+        premove: "/sounds/move-self.mp3"
+      },
+      chesscom: {
+        "move-self": "/sounds/chessComSounds/moveChesscom.mp3",
+        capture: "/sounds/chessComSounds/captureChesscom.mp3",
+        castle: "/sounds/chessComSounds/castleChesscom.mp3",
+        checkMove: "/sounds/chessComSounds/checkMoveChesscom.mp3",
+        gameEndOrCheckmate: "/sounds/chessComSounds/gameEndOrCheckmate.mp3",
+        premove: "/sounds/chessComSounds/premove.mp3"
+      }
+    };
+    function normalizePieceTheme2(value2) {
+      return value2 === "chesscom" ? "chesscom" : "original";
+    }
+    function normalizeSoundTheme2(value2) {
+      return value2 === "chesscom" ? "chesscom" : "original";
+    }
+    function normalizeSoundEffectName(name4) {
+      if (name4 === "move-self") return "move-self";
+      if (name4 === "capture") return "capture";
+      if (name4 === "castle") return "castle";
+      if (name4 === "checkMove") return "checkMove";
+      if (name4 === "gameEndOrCheckmate") return "gameEndOrCheckmate";
+      if (name4 === "premove") return "premove";
+      return null;
+    }
     var chess = new Chess();
     var socket = lookup2();
     var app = document.querySelector("#app");
@@ -33070,6 +33185,8 @@ var require_main = __commonJS({
     var savedBotLevel = clampBotLevel(Number(localStorage.getItem("chess-bot-level")) || 1);
     var savedBotTimeControlId = normalizeBotTimeControlId(localStorage.getItem("chess-bot-time-control"));
     var savedBotPlayerSide = localStorage.getItem("chess-bot-player-side") === "b" ? "b" : "w";
+    var savedPieceTheme = normalizePieceTheme2(localStorage.getItem(PIECE_THEME_STORAGE_KEY2));
+    var savedSoundTheme = normalizeSoundTheme2(localStorage.getItem(SOUND_THEME_STORAGE_KEY2));
     var state = {
       connected: false,
       roomId: null,
@@ -33098,6 +33215,8 @@ var require_main = __commonJS({
       viewCursor: null,
       trailFxEnabled: localStorage.getItem("chess-trail-fx") === "on",
       legalMovesEnabled: localStorage.getItem("chess-legal-moves") !== "off",
+      pieceTheme: savedPieceTheme,
+      soundTheme: savedSoundTheme,
       bestMoveArrow: null,
       bestMoveArrowFen: null
     };
@@ -33146,11 +33265,25 @@ var require_main = __commonJS({
       document.documentElement.style.setProperty("--move-duration", `${cssDuration}ms`);
     }
     var _audioCache = {};
+    function getPieceSpritePath(color, piece) {
+      return PIECE_SETS[state.pieceTheme][`${color}${piece}`];
+    }
+    function stopAllCachedAudio() {
+      for (const audio of Object.values(_audioCache)) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
+    }
     function playSound(name4) {
-      let audio = _audioCache[name4];
+      const normalizedName = normalizeSoundEffectName(name4);
+      if (!normalizedName) {
+        return;
+      }
+      const src = SOUND_PACKS[state.soundTheme][normalizedName];
+      let audio = _audioCache[src];
       if (!audio) {
-        audio = new Audio(`/sounds/${name4}.mp3`);
-        _audioCache[name4] = audio;
+        audio = new Audio(src);
+        _audioCache[src] = audio;
       }
       audio.currentTime = 0;
       audio.play().catch(() => {
@@ -33355,6 +33488,18 @@ var require_main = __commonJS({
       const customEvent = event;
       state.legalMovesEnabled = customEvent.detail.enabled;
       requestBoardRefresh(true);
+    });
+    window.addEventListener("piecethemechange", (event) => {
+      const customEvent = event;
+      state.pieceTheme = customEvent.detail.theme;
+      requestBoardRefresh(true);
+      updateCaption();
+      updateFocusHud();
+    });
+    window.addEventListener("soundthemechange", (event) => {
+      const customEvent = event;
+      state.soundTheme = customEvent.detail.theme;
+      stopAllCachedAudio();
     });
     var spectateRoomButton = must("#spectateRoomButton");
     var joinGrid = must(".join-grid");
@@ -34047,6 +34192,7 @@ var require_main = __commonJS({
     var ptrDragFrom = null;
     var ptrDragNode = null;
     var ptrDragMoved = false;
+    var dragHoverSquare = null;
     var ptrStartX = 0;
     var ptrStartY = 0;
     var lastDragCommitSquare = null;
@@ -34088,8 +34234,8 @@ var require_main = __commonJS({
     });
     board.addEventListener("pointermove", (event) => {
       if (arrowDragFrom) {
-        const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
-        arrowDragTo = hoverSquare && hoverSquare !== arrowDragFrom ? hoverSquare : null;
+        const hoverSquare2 = getSquareFromPoint(event.clientX, event.clientY);
+        arrowDragTo = hoverSquare2 && hoverSquare2 !== arrowDragFrom ? hoverSquare2 : null;
         arrowDragPointer = boardPointFromClient(event.clientX, event.clientY);
         renderArrows();
       }
@@ -34097,7 +34243,7 @@ var require_main = __commonJS({
         arrowDragMoved = true;
       }
       if (!ptrDragFrom) return;
-      if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 5) return;
+      if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 3) return;
       if (!ptrDragMoved) {
         ptrDragMoved = true;
         state.selectedSquare = ptrDragFrom;
@@ -34108,7 +34254,7 @@ var require_main = __commonJS({
         updateCaption();
         const btn = board.querySelector(`[data-square="${ptrDragFrom}"]`);
         if (btn && virtualPiece) {
-          const spritePath = PIECES[`${virtualPiece.color}${virtualPiece.type}`];
+          const spritePath = getPieceSpritePath(virtualPiece.color, virtualPiece.type);
           ptrDragNode = document.createElement("img");
           ptrDragNode.src = spritePath;
           Object.assign(ptrDragNode.style, {
@@ -34124,6 +34270,9 @@ var require_main = __commonJS({
           btn.classList.add("dragging");
         }
       }
+      const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
+      dragHoverSquare = hoverSquare ?? null;
+      syncBoardInteractionState();
       if (ptrDragNode) {
         ptrDragNode.style.left = `${event.clientX}px`;
         ptrDragNode.style.top = `${event.clientY}px`;
@@ -34145,11 +34294,13 @@ var require_main = __commonJS({
       const wasDrag = ptrDragMoved;
       ptrDragFrom = null;
       ptrDragMoved = false;
+      dragHoverSquare = null;
       if (ptrDragNode) {
         ptrDragNode.remove();
         ptrDragNode = null;
       }
       board.querySelector(".square.dragging")?.classList.remove("dragging");
+      syncBoardInteractionState();
       requestBoardRefresh(true);
       if (!wasDrag) {
         if (commit && targetSquare) {
@@ -35229,6 +35380,7 @@ var require_main = __commonJS({
         ptrDragFrom = null;
       }
       ptrDragMoved = false;
+      dragHoverSquare = null;
       state.selectedSquare = null;
       state.legalTargets = [];
     }
@@ -35307,6 +35459,9 @@ var require_main = __commonJS({
         if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
         if (checkedKingSquare === squareName) button.classList.add("in-check");
         if (square === ptrDragFrom) button.classList.add("dragging");
+        if (ptrDragMoved && dragHoverSquare === square && state.legalTargets.includes(square)) {
+          button.classList.add("drag-hover-legal");
+        }
         if (!isHistoryView) {
           state.premoves.forEach((p) => {
             if (p.from === square) button.classList.add("premove-from");
@@ -35317,7 +35472,7 @@ var require_main = __commonJS({
           });
         }
         if (piece) {
-          const spritePath = PIECES[`${piece.color}${piece.type}`];
+          const spritePath = getPieceSpritePath(piece.color, piece.type);
           const pieceElement = document.createElement("span");
           pieceElement.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
           const isMyPremove = suppressAnimationForMove && square === suppressAnimationForMove.to;
@@ -35631,6 +35786,10 @@ var require_main = __commonJS({
         squareButton.classList.toggle("selected", state.selectedSquare === square);
         squareButton.classList.toggle("legal", state.legalMovesEnabled && state.legalTargets.includes(square));
         squareButton.classList.toggle("dragging", square === ptrDragFrom);
+        squareButton.classList.toggle(
+          "drag-hover-legal",
+          ptrDragMoved && dragHoverSquare === square && state.legalTargets.includes(square)
+        );
       }
     }
     function checkAndExecutePremove() {
@@ -35717,11 +35876,11 @@ var require_main = __commonJS({
       opCaptures.sort((a, b2) => sortOrder[a] - sortOrder[b2]);
       let myCapturesHtml = "";
       myCaptures.forEach((piece) => {
-        myCapturesHtml += `<img src="${PIECES[`${opColor}${piece}`]}" class="captured-icon" />`;
+        myCapturesHtml += `<img src="${getPieceSpritePath(opColor, piece)}" class="captured-icon" />`;
       });
       let opCapturesHtml = "";
       opCaptures.forEach((piece) => {
-        opCapturesHtml += `<img src="${PIECES[`${myColor}${piece}`]}" class="captured-icon" />`;
+        opCapturesHtml += `<img src="${getPieceSpritePath(myColor, piece)}" class="captured-icon" />`;
       });
       const currentFen = replayBoard.fen();
       const rawValue = materialFromPerspective(currentFen, myColor);
@@ -36403,6 +36562,7 @@ var require_main = __commonJS({
         if (state.premoves.length >= 10) return;
         const promotion = piece.type === "p" && reachesPromotionRank(to, state.role) ? "q" : void 0;
         state.premoves.push(promotion ? { from, to, promotion } : { from, to });
+        playSound("premove");
       }
       clearSelection();
       requestBoardRefresh();
@@ -36592,10 +36752,7 @@ var require_main = __commonJS({
       animatingToSquare = null;
       _lastPlayedMoveCount = -1;
       roomInput.value = "";
-      for (const audio of Object.values(_audioCache)) {
-        audio.pause();
-        audio.currentTime = 0;
-      }
+      stopAllCachedAudio();
       liveAnalysisToken += 1;
       lastRoomStateReceivedAtMs = Date.now();
       localStorage.removeItem("chess_roomId");
@@ -36717,11 +36874,11 @@ var require_main = __commonJS({
         opCaptures.sort((a, b2) => sortOrder[a] - sortOrder[b2]);
         let myCapturesHtml = "";
         myCaptures.forEach((piece) => {
-          myCapturesHtml += `<img src="${PIECES[`${opColor}${piece}`]}" class="captured-icon" />`;
+          myCapturesHtml += `<img src="${getPieceSpritePath(opColor, piece)}" class="captured-icon" />`;
         });
         let opCapturesHtml = "";
         opCaptures.forEach((piece) => {
-          opCapturesHtml += `<img src="${PIECES[`${myColor}${piece}`]}" class="captured-icon" />`;
+          opCapturesHtml += `<img src="${getPieceSpritePath(myColor, piece)}" class="captured-icon" />`;
         });
         const currentFen = replayBoard.fen();
         const rawValue = materialFromPerspective(currentFen, myColor);

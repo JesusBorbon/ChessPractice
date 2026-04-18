@@ -168,6 +168,8 @@ export type AppState = {
   viewCursor: number | null;
   trailFxEnabled: boolean;
   legalMovesEnabled: boolean;
+  pieceTheme: "original" | "chesscom";
+  soundTheme: "original" | "chesscom";
   bestMoveArrow: BestMoveArrow | null;
   bestMoveArrowFen: string | null;
 };

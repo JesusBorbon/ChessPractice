@@ -6,7 +6,7 @@ import "./badge-icon-colors.css";
 import { buildArrowLayerMarkup } from "./arrow-render";
 import { BestMoveArrow, parseBestMoveArrow } from "./best-move-arrow";
 import { resolveGameParticipants, resolveGameParticipantsFromPgn } from "./game-display";
-import { mountThemeSwitcher } from "./theme";
+import { mountThemeSwitcher, type PieceThemeChoice, type SoundThemeChoice } from "./theme";
 
 type PromotionPiece = "q" | "r" | "b" | "n";
 type MoveCategory = "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder";
@@ -103,6 +103,79 @@ const PIECE_VALUES: Record<string, number> = {
 
 const MATE_CP = 100000;
 const BRILLIANT_VERIFICATION_DEPTH = 16;
+const PIECE_THEME_STORAGE_KEY = "chess-piece-theme";
+const SOUND_THEME_STORAGE_KEY = "chess-sound-theme";
+
+type SoundEffectName = "move-self" | "capture" | "castle" | "checkMove" | "gameEndOrCheckmate" | "premove";
+type PieceKey = `${"w" | "b"}${PieceSymbol}`;
+
+const PIECE_SETS: Record<PieceThemeChoice, Record<PieceKey, string>> = {
+  original: {
+    wp: "/pieces/wP.svg",
+    wn: "/pieces/wN.svg",
+    wb: "/pieces/wB.svg",
+    wr: "/pieces/wR.svg",
+    wq: "/pieces/wQ.svg",
+    wk: "/pieces/wK.svg",
+    bp: "/pieces/bP.svg",
+    bn: "/pieces/bN.svg",
+    bb: "/pieces/bB.svg",
+    br: "/pieces/bR.svg",
+    bq: "/pieces/bQ.svg",
+    bk: "/pieces/bK.svg",
+  },
+  chesscom: {
+    wp: "/pieces/chessComPieces/wpCom.png",
+    wn: "/pieces/chessComPieces/wnCom.png",
+    wb: "/pieces/chessComPieces/wbCom.png",
+    wr: "/pieces/chessComPieces/wrCom.png",
+    wq: "/pieces/chessComPieces/wqCom.png",
+    wk: "/pieces/chessComPieces/wkCom.png",
+    bp: "/pieces/chessComPieces/bpCom.png",
+    bn: "/pieces/chessComPieces/bnCom.png",
+    bb: "/pieces/chessComPieces/bbCom.png",
+    br: "/pieces/chessComPieces/brCom.png",
+    bq: "/pieces/chessComPieces/bqCom.png",
+    bk: "/pieces/chessComPieces/bkCom.png",
+  },
+};
+
+const SOUND_PACKS: Record<SoundThemeChoice, Record<SoundEffectName, string>> = {
+  original: {
+    "move-self": "/sounds/move-self.mp3",
+    capture: "/sounds/capture.mp3",
+    castle: "/sounds/castle.mp3",
+    checkMove: "/sounds/checkMove.mp3",
+    gameEndOrCheckmate: "/sounds/gameEndOrCheckmate.mp3",
+    premove: "/sounds/move-self.mp3",
+  },
+  chesscom: {
+    "move-self": "/sounds/chessComSounds/moveChesscom.mp3",
+    capture: "/sounds/chessComSounds/captureChesscom.mp3",
+    castle: "/sounds/chessComSounds/castleChesscom.mp3",
+    checkMove: "/sounds/chessComSounds/checkMoveChesscom.mp3",
+    gameEndOrCheckmate: "/sounds/chessComSounds/gameEndOrCheckmate.mp3",
+    premove: "/sounds/chessComSounds/premove.mp3",
+  },
+};
+
+function normalizePieceTheme(value: string | null): PieceThemeChoice {
+  return value === "chesscom" ? "chesscom" : "original";
+}
+
+function normalizeSoundTheme(value: string | null): SoundThemeChoice {
+  return value === "chesscom" ? "chesscom" : "original";
+}
+
+function normalizeSoundEffectName(name: string): SoundEffectName | null {
+  if (name === "move-self") return "move-self";
+  if (name === "capture") return "capture";
+  if (name === "castle") return "castle";
+  if (name === "checkMove") return "checkMove";
+  if (name === "gameEndOrCheckmate") return "gameEndOrCheckmate";
+  if (name === "premove") return "premove";
+  return null;
+}
 
 class StockfishBridge {
   private readonly worker: Worker;
@@ -240,19 +313,32 @@ function appendCategoryMarkerContent(marker: HTMLElement, category: MoveCategory
 // ── Sound ────────────────────────────────────────────────────────────────────
 const _audioCache: Record<string, HTMLAudioElement> = {};
 function playSound(name: string): void {
-  let audio = _audioCache[name];
+  const normalizedName = normalizeSoundEffectName(name);
+  if (!normalizedName) {
+    return;
+  }
+
+  const src = SOUND_PACKS[soundTheme][normalizedName];
+  let audio = _audioCache[src];
   if (!audio) {
-    audio = new Audio(`/sounds/${name}.mp3`);
-    _audioCache[name] = audio;
+    audio = new Audio(src);
+    _audioCache[src] = audio;
   }
   audio.currentTime = 0;
   audio.play().catch(() => {});
 }
 
-const PIECES: Record<string, string> = {
-  wp: "/pieces/wP.svg", wn: "/pieces/wN.svg", wb: "/pieces/wB.svg", wr: "/pieces/wR.svg", wq: "/pieces/wQ.svg", wk: "/pieces/wK.svg",
-  bp: "/pieces/bP.svg", bn: "/pieces/bN.svg", bb: "/pieces/bB.svg", br: "/pieces/bR.svg", bq: "/pieces/bQ.svg", bk: "/pieces/bK.svg",
-};
+function getPieceSpritePath(color: "w" | "b", piece: PieceSymbol): string {
+  const pieceKey = `${color}${piece}` as PieceKey;
+  return PIECE_SETS[pieceTheme][pieceKey];
+}
+
+function stopAllCachedAudio(): void {
+  for (const audio of Object.values(_audioCache)) {
+    audio.pause();
+    audio.currentTime = 0;
+  }
+}
 
 // ── State ──────────────────────────────────────────────────────────────────────
 // We store the full history as a list of FENs so we can navigate
@@ -304,6 +390,8 @@ let focusMode = false;
 let legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
 let animationStyle: "smooth" | "epic" = (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth";
 let bloodFxEnabled = localStorage.getItem("chess-blood-fx") === "on";
+let pieceTheme: PieceThemeChoice = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
+let soundTheme: SoundThemeChoice = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
 let lastCheckFlashKey: string | null = null;
 
 const SUMMARY_DRAG_CONTINUE_THRESHOLD_PX = 8;
@@ -470,6 +558,18 @@ window.addEventListener("legalmoveschange", (event: Event) => {
   const customEvent = event as CustomEvent<{ enabled: boolean }>;
   legalMovesEnabled = customEvent.detail.enabled;
   renderBoard();
+});
+
+window.addEventListener("piecethemechange", (event: Event) => {
+  const customEvent = event as CustomEvent<{ theme: PieceThemeChoice }>;
+  pieceTheme = customEvent.detail.theme;
+  renderBoard();
+});
+
+window.addEventListener("soundthemechange", (event: Event) => {
+  const customEvent = event as CustomEvent<{ theme: SoundThemeChoice }>;
+  soundTheme = customEvent.detail.theme;
+  stopAllCachedAudio();
 });
 
 // ── Element refs ───────────────────────────────────────────────────────────────
@@ -1200,7 +1300,7 @@ function renderBoard(): void {
       span.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
       const pieceImage = document.createElement("img");
       pieceImage.className = "piece-image";
-      pieceImage.src = PIECES[`${piece.color}${piece.type}`] ?? "";
+      pieceImage.src = getPieceSpritePath(piece.color, piece.type);
       pieceImage.alt = `${piece.color === "w" ? "White" : "Black"} ${piece.type}`;
       pieceImage.draggable = false;
       span.append(pieceImage);

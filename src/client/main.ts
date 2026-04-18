@@ -57,7 +57,7 @@ import { createNotificationsStateController } from "./notifications/notification
 import { createNotificationsUiController } from "./notifications/notification-ui";
 import { buildFinishedGameSignature, buildPgnFromMoves } from "./pgn-utils";
 import { StockfishBridge } from "./stockfish-bridge";
-import { mountThemeSwitcher } from "./theme";
+import { mountThemeSwitcher, type PieceThemeChoice, type SoundThemeChoice } from "./theme";
 
 type IncomingRoomJoinRequest = {
   requestId: string;
@@ -163,20 +163,78 @@ function computeBotResponseTiming(preset: BotDifficultyPreset, playerMove: Move 
   };
 }
 
-const PIECES: Record<`${PlayerRole}${PieceSymbol}`, string> = {
-  wp: "/pieces/wP.svg",
-  wn: "/pieces/wN.svg",
-  wb: "/pieces/wB.svg",
-  wr: "/pieces/wR.svg",
-  wq: "/pieces/wQ.svg",
-  wk: "/pieces/wK.svg",
-  bp: "/pieces/bP.svg",
-  bn: "/pieces/bN.svg",
-  bb: "/pieces/bB.svg",
-  br: "/pieces/bR.svg",
-  bq: "/pieces/bQ.svg",
-  bk: "/pieces/bK.svg",
+const PIECE_THEME_STORAGE_KEY = "chess-piece-theme";
+const SOUND_THEME_STORAGE_KEY = "chess-sound-theme";
+
+type SoundEffectName = "move-self" | "capture" | "castle" | "checkMove" | "gameEndOrCheckmate" | "premove";
+
+const PIECE_SETS: Record<PieceThemeChoice, Record<`${PlayerRole}${PieceSymbol}`, string>> = {
+  original: {
+    wp: "/pieces/wP.svg",
+    wn: "/pieces/wN.svg",
+    wb: "/pieces/wB.svg",
+    wr: "/pieces/wR.svg",
+    wq: "/pieces/wQ.svg",
+    wk: "/pieces/wK.svg",
+    bp: "/pieces/bP.svg",
+    bn: "/pieces/bN.svg",
+    bb: "/pieces/bB.svg",
+    br: "/pieces/bR.svg",
+    bq: "/pieces/bQ.svg",
+    bk: "/pieces/bK.svg",
+  },
+  chesscom: {
+    wp: "/pieces/chessComPieces/wpCom.png",
+    wn: "/pieces/chessComPieces/wnCom.png",
+    wb: "/pieces/chessComPieces/wbCom.png",
+    wr: "/pieces/chessComPieces/wrCom.png",
+    wq: "/pieces/chessComPieces/wqCom.png",
+    wk: "/pieces/chessComPieces/wkCom.png",
+    bp: "/pieces/chessComPieces/bpCom.png",
+    bn: "/pieces/chessComPieces/bnCom.png",
+    bb: "/pieces/chessComPieces/bbCom.png",
+    br: "/pieces/chessComPieces/brCom.png",
+    bq: "/pieces/chessComPieces/bqCom.png",
+    bk: "/pieces/chessComPieces/bkCom.png",
+  },
 };
+
+const SOUND_PACKS: Record<SoundThemeChoice, Record<SoundEffectName, string>> = {
+  original: {
+    "move-self": "/sounds/move-self.mp3",
+    capture: "/sounds/capture.mp3",
+    castle: "/sounds/castle.mp3",
+    checkMove: "/sounds/checkMove.mp3",
+    gameEndOrCheckmate: "/sounds/gameEndOrCheckmate.mp3",
+    premove: "/sounds/move-self.mp3",
+  },
+  chesscom: {
+    "move-self": "/sounds/chessComSounds/moveChesscom.mp3",
+    capture: "/sounds/chessComSounds/captureChesscom.mp3",
+    castle: "/sounds/chessComSounds/castleChesscom.mp3",
+    checkMove: "/sounds/chessComSounds/checkMoveChesscom.mp3",
+    gameEndOrCheckmate: "/sounds/chessComSounds/gameEndOrCheckmate.mp3",
+    premove: "/sounds/chessComSounds/premove.mp3",
+  },
+};
+
+function normalizePieceTheme(value: string | null): PieceThemeChoice {
+  return value === "chesscom" ? "chesscom" : "original";
+}
+
+function normalizeSoundTheme(value: string | null): SoundThemeChoice {
+  return value === "chesscom" ? "chesscom" : "original";
+}
+
+function normalizeSoundEffectName(name: string): SoundEffectName | null {
+  if (name === "move-self") return "move-self";
+  if (name === "capture") return "capture";
+  if (name === "castle") return "castle";
+  if (name === "checkMove") return "checkMove";
+  if (name === "gameEndOrCheckmate") return "gameEndOrCheckmate";
+  if (name === "premove") return "premove";
+  return null;
+}
 
 const chess = new Chess();
 const socket = io();
@@ -253,6 +311,8 @@ const autoJoinFromPersistedRoom = initialRejoinRequested || (!initialRoomCode &&
 const savedBotLevel = clampBotLevel(Number(localStorage.getItem("chess-bot-level")) || 1);
 const savedBotTimeControlId = normalizeBotTimeControlId(localStorage.getItem("chess-bot-time-control"));
 const savedBotPlayerSide: PlayerRole = localStorage.getItem("chess-bot-player-side") === "b" ? "b" : "w";
+const savedPieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
+const savedSoundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
 
 const state: AppState = {
   connected: false,
@@ -282,6 +342,8 @@ const state: AppState = {
   viewCursor: null,
   trailFxEnabled: localStorage.getItem("chess-trail-fx") === "on",
   legalMovesEnabled: localStorage.getItem("chess-legal-moves") !== "off",
+  pieceTheme: savedPieceTheme,
+  soundTheme: savedSoundTheme,
   bestMoveArrow: null,
   bestMoveArrowFen: null,
 };
@@ -366,11 +428,29 @@ function triggerGameOverScreen(title: string, subtitle: string) {
 
 // ── Sound ────────────────────────────────────────────────────────────────────
 const _audioCache: Record<string, HTMLAudioElement> = {};
+
+function getPieceSpritePath(color: PlayerRole, piece: PieceSymbol): string {
+  return PIECE_SETS[state.pieceTheme][`${color}${piece}`];
+}
+
+function stopAllCachedAudio(): void {
+  for (const audio of Object.values(_audioCache)) {
+    audio.pause();
+    audio.currentTime = 0;
+  }
+}
+
 function playSound(name: string): void {
-  let audio = _audioCache[name];
+  const normalizedName = normalizeSoundEffectName(name);
+  if (!normalizedName) {
+    return;
+  }
+
+  const src = SOUND_PACKS[state.soundTheme][normalizedName];
+  let audio = _audioCache[src];
   if (!audio) {
-    audio = new Audio(`/sounds/${name}.mp3`);
-    _audioCache[name] = audio;
+    audio = new Audio(src);
+    _audioCache[src] = audio;
   }
   audio.currentTime = 0;
   audio.play().catch(() => {});
@@ -600,6 +680,20 @@ window.addEventListener("legalmoveschange" , (event: Event) => {
   const customEvent = event as CustomEvent<{ enabled: boolean }>;
   state.legalMovesEnabled = customEvent.detail.enabled;
   requestBoardRefresh(true);
+});
+
+window.addEventListener("piecethemechange", (event: Event) => {
+  const customEvent = event as CustomEvent<{ theme: PieceThemeChoice }>;
+  state.pieceTheme = customEvent.detail.theme;
+  requestBoardRefresh(true);
+  updateCaption();
+  updateFocusHud();
+});
+
+window.addEventListener("soundthemechange", (event: Event) => {
+  const customEvent = event as CustomEvent<{ theme: SoundThemeChoice }>;
+  state.soundTheme = customEvent.detail.theme;
+  stopAllCachedAudio();
 });
 
 
@@ -1445,6 +1539,7 @@ board.addEventListener("contextmenu", (event) => {
 let ptrDragFrom: Square | null = null;
 let ptrDragNode: HTMLImageElement | null = null;
 let ptrDragMoved = false;
+let dragHoverSquare: Square | null = null;
 let ptrStartX = 0;
 let ptrStartY = 0;
 let lastDragCommitSquare: Square | null = null;
@@ -1504,7 +1599,7 @@ board.addEventListener("pointermove", (event) => {
   }
 
   if (!ptrDragFrom) return;
-  if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 5) return;
+  if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 3) return;
 
   if (!ptrDragMoved) {
     ptrDragMoved = true;
@@ -1519,7 +1614,7 @@ board.addEventListener("pointermove", (event) => {
 
     const btn = board.querySelector<HTMLButtonElement>(`[data-square="${ptrDragFrom}"]`);
     if (btn && virtualPiece) {
-      const spritePath = PIECES[`${virtualPiece.color}${virtualPiece.type}`];
+      const spritePath = getPieceSpritePath(virtualPiece.color as PlayerRole, virtualPiece.type);
       
       ptrDragNode = document.createElement("img");
       ptrDragNode.src = spritePath;
@@ -1537,6 +1632,10 @@ board.addEventListener("pointermove", (event) => {
       btn.classList.add("dragging");
     }
   }
+
+  const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
+  dragHoverSquare = hoverSquare ?? null;
+  syncBoardInteractionState();
 
   if (ptrDragNode) {
     ptrDragNode.style.left = `${event.clientX}px`;
@@ -1566,8 +1665,10 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
   // Cleanup visual drag states
   ptrDragFrom = null;
   ptrDragMoved = false;
+  dragHoverSquare = null;
   if (ptrDragNode) { ptrDragNode.remove(); ptrDragNode = null; }
   board.querySelector<HTMLElement>(".square.dragging")?.classList.remove("dragging");
+  syncBoardInteractionState();
 
   // FIX: Force a sync right after dropping a piece. 
   // This clears the inline 'opacity: 0' applied during dragging to prevent flickering.
@@ -3010,6 +3111,7 @@ function cancelCurrentDrag(): void {
   }
   
   ptrDragMoved = false;
+  dragHoverSquare = null;
   
   // Clear the internal selection state to prevent "ghost" highlight rings
   state.selectedSquare = null;
@@ -3119,6 +3221,9 @@ function renderBoard(): void {
     if (checkedKingSquare === squareName) button.classList.add("in-check");
 
     if (square === ptrDragFrom) button.classList.add("dragging");
+    if (ptrDragMoved && dragHoverSquare === square && state.legalTargets.includes(square)) {
+      button.classList.add("drag-hover-legal");
+    }
 
     // --- 1. PREMOVE & RED CAPTURE LOGIC ---
     if (!isHistoryView) {
@@ -3133,7 +3238,7 @@ function renderBoard(): void {
 
     // --- 2. RENDER REAL PIECE (OPTIMIZED VISIBILITY) ---
     if (piece) {
-      const spritePath = PIECES[`${piece.color}${piece.type}`];
+      const spritePath = getPieceSpritePath(piece.color as PlayerRole, piece.type);
       const pieceElement = document.createElement("span");
       pieceElement.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
       
@@ -3529,6 +3634,10 @@ function syncBoardInteractionState(): void {
     squareButton.classList.toggle("selected", state.selectedSquare === square);
     squareButton.classList.toggle("legal", state.legalMovesEnabled && state.legalTargets.includes(square));    
     squareButton.classList.toggle("dragging", square === ptrDragFrom);
+    squareButton.classList.toggle(
+      "drag-hover-legal",
+      ptrDragMoved && dragHoverSquare === square && state.legalTargets.includes(square),
+    );
   }
 }
 
@@ -3652,12 +3761,12 @@ function updateCaption(): void {
 
   let myCapturesHtml = "";
   myCaptures.forEach(piece => {
-    myCapturesHtml += `<img src="${PIECES[`${opColor}${piece}` as keyof typeof PIECES]}" class="captured-icon" />`;
+    myCapturesHtml += `<img src="${getPieceSpritePath(opColor, piece)}" class="captured-icon" />`;
   });
 
   let opCapturesHtml = "";
   opCaptures.forEach(piece => {
-    opCapturesHtml += `<img src="${PIECES[`${myColor}${piece}` as keyof typeof PIECES]}" class="captured-icon" />`;
+    opCapturesHtml += `<img src="${getPieceSpritePath(myColor, piece)}" class="captured-icon" />`;
   });
 
   const currentFen = replayBoard.fen();
@@ -4542,6 +4651,7 @@ function queuePremove(from: Square, to: Square): void {
     if (state.premoves.length >= 10) return;
     const promotion = (piece.type === "p" && reachesPromotionRank(to, state.role)) ? "q" : undefined;
     state.premoves.push(promotion ? { from, to, promotion } : { from, to });
+    playSound("premove");
   }
 
   clearSelection();
@@ -4789,10 +4899,7 @@ function clearLocalRoomState(options: { preserveRoomReturnContext?: boolean } = 
   _lastPlayedMoveCount = -1;
   roomInput.value = "";
 
-  for (const audio of Object.values(_audioCache)) {
-    audio.pause();
-    audio.currentTime = 0;
-  }
+  stopAllCachedAudio();
 
   liveAnalysisToken += 1;
   lastRoomStateReceivedAtMs = Date.now();
@@ -4948,12 +5055,12 @@ function updateFocusHud(): void {
 
     let myCapturesHtml = "";
     myCaptures.forEach(piece => {
-      myCapturesHtml += `<img src="${PIECES[`${opColor}${piece}` as keyof typeof PIECES]}" class="captured-icon" />`;
+      myCapturesHtml += `<img src="${getPieceSpritePath(opColor, piece)}" class="captured-icon" />`;
     });
 
     let opCapturesHtml = "";
     opCaptures.forEach(piece => {
-      opCapturesHtml += `<img src="${PIECES[`${myColor}${piece}` as keyof typeof PIECES]}" class="captured-icon" />`;
+      opCapturesHtml += `<img src="${getPieceSpritePath(myColor, piece)}" class="captured-icon" />`;
     });
 
     const currentFen = replayBoard.fen();

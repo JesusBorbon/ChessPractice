@@ -939,6 +939,18 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   border-radius: 50%;
 }
 
+.square.drag-hover-legal {
+  background-color: transparent !important;
+  outline: 3px solid rgba(255, 255, 255, 0.78);
+  outline-offset: -3px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+  transition: none !important;
+}
+
+.square.dark.drag-hover-legal {
+  outline-color: rgba(255, 255, 255, 0.66);
+}
+
 
 .piece {
   position: relative;
@@ -2186,6 +2198,7 @@ square.legal:has(.piece-quality-marker)::after {
     font-size: 0.72rem;
     font-weight: 700;
     letter-spacing: 0.03em;
+    white-space: nowrap;
     cursor: pointer;
     transition: transform 120ms ease, background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
     outline: none;
@@ -2200,6 +2213,7 @@ square.legal:has(.piece-quality-marker)::after {
     font-size: 0.72rem;
     font-weight: 700;
     letter-spacing: 0.03em;
+    white-space: nowrap;
     cursor: pointer;
     transition: transform 120ms ease, background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
     outline: none;

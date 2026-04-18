@@ -1,13 +1,25 @@
 export type Theme = "forest" | "purple" | "walnut" | "refined";
+export type PieceThemeChoice = "original" | "chesscom";
+export type SoundThemeChoice = "original" | "chesscom";
 
 const THEME_STORAGE_KEY = "chess-theme";
 const THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
+const PIECE_THEME_STORAGE_KEY = "chess-piece-theme";
+const SOUND_THEME_STORAGE_KEY = "chess-sound-theme";
 
 export type AnimationStyle = "smooth" | "epic";
 
 const ANIMATION_STORAGE_KEY = "chess-animation-style";
 const BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
 const LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves"; // NEW
+
+function normalizePieceTheme(value: string | null): PieceThemeChoice {
+  return value === "chesscom" ? "chesscom" : "original";
+}
+
+function normalizeSoundTheme(value: string | null): SoundThemeChoice {
+  return value === "chesscom" ? "chesscom" : "original";
+}
 
 function setTheme(theme: Theme): void {
   if (theme === "forest") {
@@ -23,7 +35,7 @@ function setTheme(theme: Theme): void {
 
 function setAnimationStyle(style: AnimationStyle): void {
   localStorage.setItem(ANIMATION_STORAGE_KEY, style);
-  document.querySelectorAll<HTMLElement>(".animation-btn").forEach((btn) => {
+  document.querySelectorAll<HTMLElement>(".animation-btn[data-animation]").forEach((btn) => {
     const isActive = btn.dataset.animation === style;
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-checked", String(isActive));
@@ -55,6 +67,28 @@ function setLegalMovesEnabled(enabled: boolean): void {
   window.dispatchEvent(event);
 }
 
+function setPieceTheme(theme: PieceThemeChoice): void {
+  localStorage.setItem(PIECE_THEME_STORAGE_KEY, theme);
+  document.querySelectorAll<HTMLElement>(".piece-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.pieceTheme === theme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  const event = new CustomEvent("piecethemechange", { detail: { theme } });
+  window.dispatchEvent(event);
+}
+
+function setSoundTheme(theme: SoundThemeChoice): void {
+  localStorage.setItem(SOUND_THEME_STORAGE_KEY, theme);
+  document.querySelectorAll<HTMLElement>(".sound-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.soundTheme === theme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  const event = new CustomEvent("soundthemechange", { detail: { theme } });
+  window.dispatchEvent(event);
+}
+
 function setPanelCollapsed(widget: HTMLElement, toggleBtn: HTMLButtonElement, collapsed: boolean): void {
   widget.classList.toggle("is-collapsed", collapsed);
   toggleBtn.setAttribute("aria-expanded", String(!collapsed));
@@ -65,6 +99,8 @@ function setPanelCollapsed(widget: HTMLElement, toggleBtn: HTMLButtonElement, co
 export function mountThemeSwitcher(): void {
   const savedTheme = (localStorage.getItem(THEME_STORAGE_KEY) as Theme | null) || "forest";
   const savedAnimationStyle = (localStorage.getItem(ANIMATION_STORAGE_KEY) as AnimationStyle | null) || "smooth";
+  const savedPieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
+  const savedSoundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
   
   const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
   const bloodFxEnabled = bloodFxRaw === "on";
@@ -82,7 +118,7 @@ export function mountThemeSwitcher(): void {
   const widget = document.createElement("div");
   widget.className = "theme-switcher";
   widget.setAttribute("role", "group");
-  widget.setAttribute("aria-label", "Theme and animation options");
+  widget.setAttribute("aria-label", "Theme, piece, sound and animation options");
   
   // NEW: Added the "Watch Legal Moves" row
   widget.innerHTML = `
@@ -102,6 +138,20 @@ export function mountThemeSwitcher(): void {
         <div class="animation-segment" role="radiogroup" aria-label="Animation style">
           <button class="animation-btn" type="button" data-animation="smooth" role="radio" aria-label="Smooth animations">Smooth</button>
           <button class="animation-btn" type="button" data-animation="epic" role="radio" aria-label="Epic animations">Epic</button>
+        </div>
+      </div>
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Piece Set</span>
+        <div class="animation-segment" role="radiogroup" aria-label="Piece style">
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="original" role="radio" aria-label="Use original pieces">Original</button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscom" role="radio" aria-label="Use Chess.com pieces">Chess.com</button>
+        </div>
+      </div>
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Sound Pack</span>
+        <div class="animation-segment" role="radiogroup" aria-label="Sound style">
+          <button class="sound-theme-btn animation-btn" type="button" data-sound-theme="original" role="radio" aria-label="Use original sounds">Original</button>
+          <button class="sound-theme-btn animation-btn" type="button" data-sound-theme="chesscom" role="radio" aria-label="Use Chess.com sounds">Chess.com</button>
         </div>
       </div>
       <div class="theme-switcher-row">
@@ -139,6 +189,18 @@ export function mountThemeSwitcher(): void {
     const btn = (e.target as Element).closest<HTMLButtonElement>(".theme-btn");
     if (btn?.dataset.theme) setTheme(btn.dataset.theme as Theme);
 
+    const pieceThemeBtn = (e.target as Element).closest<HTMLButtonElement>(".piece-theme-btn");
+    if (pieceThemeBtn?.dataset.pieceTheme) {
+      setPieceTheme(normalizePieceTheme(pieceThemeBtn.dataset.pieceTheme));
+      return;
+    }
+
+    const soundThemeBtn = (e.target as Element).closest<HTMLButtonElement>(".sound-theme-btn");
+    if (soundThemeBtn?.dataset.soundTheme) {
+      setSoundTheme(normalizeSoundTheme(soundThemeBtn.dataset.soundTheme));
+      return;
+    }
+
     const animBtn = (e.target as Element).closest<HTMLButtonElement>(".animation-btn");
     if (animBtn?.dataset.animation) setAnimationStyle(animBtn.dataset.animation as AnimationStyle);
 
@@ -153,9 +215,21 @@ export function mountThemeSwitcher(): void {
     }
   });
 
-  document.querySelectorAll<HTMLElement>(".animation-btn").forEach((btn) => {
+  document.querySelectorAll<HTMLElement>(".animation-btn[data-animation]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
     btn.setAttribute("aria-checked", String(btn.dataset.animation === savedAnimationStyle));
+  });
+
+  document.querySelectorAll<HTMLElement>(".piece-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.pieceTheme === savedPieceTheme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+
+  document.querySelectorAll<HTMLElement>(".sound-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.soundTheme === savedSoundTheme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
   });
 
   document.querySelectorAll<HTMLElement>(".fx-btn:not(.legal-btn)").forEach((btn) => {
