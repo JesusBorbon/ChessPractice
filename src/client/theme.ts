@@ -7,11 +7,17 @@ const THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
 const PIECE_THEME_STORAGE_KEY = "chess-piece-theme";
 const SOUND_THEME_STORAGE_KEY = "chess-sound-theme";
 
-export type AnimationStyle = "smooth" | "epic";
+export type AnimationStyle = "smooth" | "fast" | "epic";
 
 const ANIMATION_STORAGE_KEY = "chess-animation-style";
 const BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
 const LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves"; // NEW
+
+export function normalizeAnimationStyle(value: string | null): AnimationStyle {
+  if (value === "epic") return "epic";
+  if (value === "fast") return "fast";
+  return "smooth";
+}
 
 function normalizePieceTheme(value: string | null): PieceThemeChoice {
   if (value === "chesscom") return "chesscom";
@@ -100,7 +106,7 @@ function setPanelCollapsed(widget: HTMLElement, toggleBtn: HTMLButtonElement, co
 
 export function mountThemeSwitcher(): void {
   const savedTheme = (localStorage.getItem(THEME_STORAGE_KEY) as Theme | null) || "forest";
-  const savedAnimationStyle = (localStorage.getItem(ANIMATION_STORAGE_KEY) as AnimationStyle | null) || "smooth";
+  const savedAnimationStyle = normalizeAnimationStyle(localStorage.getItem(ANIMATION_STORAGE_KEY));
   const savedPieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
   const savedSoundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
   
@@ -137,8 +143,9 @@ export function mountThemeSwitcher(): void {
       </div>
       <div class="theme-switcher-row">
         <span class="theme-switcher-label">Animations</span>
-        <div class="animation-segment" role="radiogroup" aria-label="Animation style">
+        <div class="animation-segment animation-style-segment" role="radiogroup" aria-label="Animation style">
           <button class="animation-btn" type="button" data-animation="smooth" role="radio" aria-label="Smooth animations">Smooth</button>
+          <button class="animation-btn" type="button" data-animation="fast" role="radio" aria-label="Fast animations">Fast</button>
           <button class="animation-btn" type="button" data-animation="epic" role="radio" aria-label="Epic animations">Epic</button>
         </div>
       </div>

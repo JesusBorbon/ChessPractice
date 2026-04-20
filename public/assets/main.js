@@ -33207,6 +33207,11 @@ var init_stockfish_bridge = __esm({
 });
 
 // src/client/theme.ts
+function normalizeAnimationStyle(value2) {
+  if (value2 === "epic") return "epic";
+  if (value2 === "fast") return "fast";
+  return "smooth";
+}
 function normalizePieceTheme2(value2) {
   if (value2 === "chesscom") return "chesscom";
   if (value2 === "chesscomocean" || value2 === "chessComOcean" || value2 === "chesscom-ocean") return "chesscomocean";
@@ -33284,7 +33289,7 @@ function setPanelCollapsed(widget, toggleBtn, collapsed) {
 }
 function mountThemeSwitcher() {
   const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || "forest";
-  const savedAnimationStyle = localStorage.getItem(ANIMATION_STORAGE_KEY) || "smooth";
+  const savedAnimationStyle = normalizeAnimationStyle(localStorage.getItem(ANIMATION_STORAGE_KEY));
   const savedPieceTheme = normalizePieceTheme2(localStorage.getItem(PIECE_THEME_STORAGE_KEY2));
   const savedSoundTheme = normalizeSoundTheme2(localStorage.getItem(SOUND_THEME_STORAGE_KEY2));
   const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
@@ -33313,8 +33318,9 @@ function mountThemeSwitcher() {
       </div>
       <div class="theme-switcher-row">
         <span class="theme-switcher-label">Animations</span>
-        <div class="animation-segment" role="radiogroup" aria-label="Animation style">
+        <div class="animation-segment animation-style-segment" role="radiogroup" aria-label="Animation style">
           <button class="animation-btn" type="button" data-animation="smooth" role="radio" aria-label="Smooth animations">Smooth</button>
+          <button class="animation-btn" type="button" data-animation="fast" role="radio" aria-label="Fast animations">Fast</button>
           <button class="animation-btn" type="button" data-animation="epic" role="radio" aria-label="Epic animations">Epic</button>
         </div>
       </div>
@@ -33642,7 +33648,7 @@ var require_main_runtime = __commonJS({
       liveAnalysisSummary: "Live analysis disabled.",
       lastAnalyzedMoveKey: null,
       liveMoveGrades: {},
-      animationStyle: localStorage.getItem("chess-animation-style") || "smooth",
+      animationStyle: normalizeAnimationStyle(localStorage.getItem("chess-animation-style")),
       bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on",
       gameMode: "multiplayer",
       botLevel: savedBotLevel,
@@ -33686,6 +33692,7 @@ var require_main_runtime = __commonJS({
     var shouldCleanUiBeforeAutoJoin = initialRejoinRequested || Boolean(storedRoomReturnContext);
     var lowTimeWarningShownByColor = { w: false, b: false };
     var SMOOTH_MOVE_DURATION_MS = 580;
+    var FAST_MOVE_DURATION_MS = 244;
     var EPIC_MOVE_DURATION_MS = {
       smash: 820,
       spin: 720,
@@ -33696,8 +33703,11 @@ var require_main_runtime = __commonJS({
     var LOW_TIME_WARNING_EFFECT_MS = 1e4;
     var ROOM_CODE_LENGTH = 4;
     var ROOM_ID_PATTERN3 = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
+    function resolveSmoothMoveDurationMs(style) {
+      return style === "fast" ? FAST_MOVE_DURATION_MS : SMOOTH_MOVE_DURATION_MS;
+    }
     function applyAnimationTiming(style) {
-      const cssDuration = style === "epic" ? 720 : SMOOTH_MOVE_DURATION_MS;
+      const cssDuration = style === "epic" ? 720 : resolveSmoothMoveDurationMs(style);
       document.documentElement.style.setProperty("--move-duration", `${cssDuration}ms`);
     }
     function revealDestinationMarker(marker) {
@@ -34747,6 +34757,7 @@ var require_main_runtime = __commonJS({
         ptrDragNode = null;
       }
       board.querySelector(".square.dragging")?.classList.remove("dragging");
+      board.querySelector(".square.drag-origin")?.classList.remove("drag-origin");
       syncBoardInteractionState();
       ptrDragMoved = false;
       syncBoardInteractionState();
@@ -35848,6 +35859,7 @@ var require_main_runtime = __commonJS({
       if (ptrDragFrom) {
         const draggedSquareEl = board.querySelector(`[data-square="${ptrDragFrom}"]`);
         draggedSquareEl?.classList.remove("dragging");
+        draggedSquareEl?.classList.remove("drag-origin");
         ptrDragFrom = null;
       }
       dragHoverSquare = null;
@@ -35936,6 +35948,7 @@ var require_main_runtime = __commonJS({
         if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
         if (checkedKingSquare === squareName) button.classList.add("in-check");
         if (square === ptrDragFrom) button.classList.add("dragging");
+        if (ptrDragMoved && square === ptrDragFrom) button.classList.add("drag-origin");
         if (ptrDragMoved && dragHoverSquare === square) {
           button.classList.add("drag-hover-legal");
         }
@@ -36148,6 +36161,7 @@ var require_main_runtime = __commonJS({
         squareButton.classList.toggle("selected", state.selectedSquare === square);
         squareButton.classList.toggle("legal", state.legalMovesEnabled && state.legalTargets.includes(square));
         squareButton.classList.toggle("dragging", square === ptrDragFrom);
+        squareButton.classList.toggle("drag-origin", ptrDragMoved && square === ptrDragFrom);
         squareButton.classList.toggle(
           "drag-hover-legal",
           ptrDragMoved && dragHoverSquare === square
@@ -36477,7 +36491,7 @@ var require_main_runtime = __commonJS({
           { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0)` },
           { transform: "translate3d(-50%, -50%, 0)" }
         ],
-        { duration: SMOOTH_MOVE_DURATION_MS, easing: "cubic-bezier(0.22, 0.61, 0.36, 1)" }
+        { duration: resolveSmoothMoveDurationMs(state.animationStyle), easing: "cubic-bezier(0.22, 0.61, 0.36, 1)" }
       );
       activeGhostAnimation = animation;
       let finalized = false;

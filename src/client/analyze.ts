@@ -24,7 +24,7 @@ import {
   parseStoredRoomReturnContext,
 } from "./contexts/room-return-context";
 import { resolveGameParticipants, resolveGameParticipantsFromPgn } from "./game-display";
-import { mountThemeSwitcher, type PieceThemeChoice, type SoundThemeChoice } from "./theme";
+import { mountThemeSwitcher, normalizeAnimationStyle, type AnimationStyle, type PieceThemeChoice, type SoundThemeChoice } from "./theme";
 
 type PromotionPiece = "q" | "r" | "b" | "n";
 type MoveCategory = "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder";
@@ -329,7 +329,7 @@ let summaryDragPointer: { id: number; x: number; y: number } | null = null;
 let analysisSummaryLockedScrollY: number | null = null;
 let focusMode = false;
 let legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
-let animationStyle: "smooth" | "epic" = (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth";
+let animationStyle: AnimationStyle = normalizeAnimationStyle(localStorage.getItem("chess-animation-style"));
 let bloodFxEnabled = localStorage.getItem("chess-blood-fx") === "on";
 let pieceTheme: PieceThemeChoice = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
 let soundTheme: SoundThemeChoice = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
@@ -345,6 +345,10 @@ const EPIC_MOVE_DURATION_MS = {
 } as const;
 const ANALYZED_REPLAY_DURATION_SCALE = 0.42;
 const MIN_ANALYZED_REPLAY_DURATION_MS = 220;
+const FAST_MOVE_DURATION_MS = Math.max(
+  MIN_ANALYZED_REPLAY_DURATION_MS,
+  Math.round(SMOOTH_MOVE_DURATION_MS * ANALYZED_REPLAY_DURATION_SCALE),
+);
 
 function revealDestinationMarker(marker: HTMLElement | null): void {
   if (!marker) return;
@@ -365,6 +369,14 @@ function resolveMoveAnimationDuration(baseDurationMs: number): number {
     MIN_ANALYZED_REPLAY_DURATION_MS,
     Math.round(baseDurationMs * ANALYZED_REPLAY_DURATION_SCALE),
   );
+}
+
+function resolveSmoothAnimationDuration(): number {
+  if (animationStyle === "fast") {
+    return FAST_MOVE_DURATION_MS;
+  }
+
+  return resolveMoveAnimationDuration(SMOOTH_MOVE_DURATION_MS);
 }
 
 const POST_GAME_MOVES_STORAGE_KEY = "postGameMoves";
@@ -489,7 +501,7 @@ app.innerHTML = `
 mountThemeSwitcher();
 
 window.addEventListener("animationchange", (event: Event) => {
-  const customEvent = event as CustomEvent<{ style: "smooth" | "epic" }>;
+  const customEvent = event as CustomEvent<{ style: AnimationStyle }>;
   animationStyle = customEvent.detail.style;
 });
 
@@ -919,6 +931,7 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
   ptrDragNode?.remove();
   ptrDragNode = null;
   boardEl.querySelector<HTMLElement>(".square.dragging")?.classList.remove("dragging");
+  boardEl.querySelector<HTMLElement>(".square.drag-origin")?.classList.remove("drag-origin");
 
   if (!commit) return;
 
@@ -1218,6 +1231,8 @@ function renderBoard(): void {
     if (legalMovesEnabled && legalTargets.includes(sq))   btn.classList.add("legal");
     if (lastMoveSquares.has(sq))     btn.classList.add("last-move");
     if (checkedKingSquare === sq)    btn.classList.add("in-check");
+    if (ptrDragFrom === sq)          btn.classList.add("dragging");
+    if (ptrDragMoved && ptrDragFrom === sq) btn.classList.add("drag-origin");
     if (squareAnnotations.has(sq))   btn.classList.add("highlight-red");
     if (selectedMoveEval?.category === "great" && selectedMoveTo === sq) btn.classList.add("great-move-highlight");
     if (selectedMoveEval?.category === "brilliant" && selectedMoveTo === sq) btn.classList.add("brilliant-move-highlight");
@@ -1302,6 +1317,8 @@ function syncBoardInteractionState(): void {
 
     squareButton.classList.toggle("selected", selectedSquare === square);
     squareButton.classList.toggle("legal", legalTargets.includes(square));
+    squareButton.classList.toggle("dragging", square === ptrDragFrom);
+    squareButton.classList.toggle("drag-origin", ptrDragMoved && square === ptrDragFrom);
   }
 }
 
@@ -1613,7 +1630,7 @@ function animateLastMove(lastMove: Move | undefined): void {
       { transform: "translate3d(-50%, -50%, 0)" },
     ],
     {
-      duration: resolveMoveAnimationDuration(SMOOTH_MOVE_DURATION_MS),
+      duration: resolveSmoothAnimationDuration(),
       easing: "cubic-bezier(0.22, 0.61, 0.36, 1)",
     },
   );

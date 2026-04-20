@@ -3830,6 +3830,11 @@ var init_game_display = __esm({
 });
 
 // src/client/theme.ts
+function normalizeAnimationStyle(value) {
+  if (value === "epic") return "epic";
+  if (value === "fast") return "fast";
+  return "smooth";
+}
 function normalizePieceTheme2(value) {
   if (value === "chesscom") return "chesscom";
   if (value === "chesscomocean" || value === "chessComOcean" || value === "chesscom-ocean") return "chesscomocean";
@@ -3907,7 +3912,7 @@ function setPanelCollapsed(widget, toggleBtn, collapsed) {
 }
 function mountThemeSwitcher() {
   const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || "forest";
-  const savedAnimationStyle = localStorage.getItem(ANIMATION_STORAGE_KEY) || "smooth";
+  const savedAnimationStyle = normalizeAnimationStyle(localStorage.getItem(ANIMATION_STORAGE_KEY));
   const savedPieceTheme = normalizePieceTheme2(localStorage.getItem(PIECE_THEME_STORAGE_KEY2));
   const savedSoundTheme = normalizeSoundTheme2(localStorage.getItem(SOUND_THEME_STORAGE_KEY2));
   const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
@@ -3936,8 +3941,9 @@ function mountThemeSwitcher() {
       </div>
       <div class="theme-switcher-row">
         <span class="theme-switcher-label">Animations</span>
-        <div class="animation-segment" role="radiogroup" aria-label="Animation style">
+        <div class="animation-segment animation-style-segment" role="radiogroup" aria-label="Animation style">
           <button class="animation-btn" type="button" data-animation="smooth" role="radio" aria-label="Smooth animations">Smooth</button>
+          <button class="animation-btn" type="button" data-animation="fast" role="radio" aria-label="Fast animations">Fast</button>
           <button class="animation-btn" type="button" data-animation="epic" role="radio" aria-label="Epic animations">Epic</button>
         </div>
       </div>
@@ -4285,7 +4291,7 @@ var require_analyze = __commonJS({
     var analysisSummaryLockedScrollY = null;
     var focusMode = false;
     var legalMovesEnabled = localStorage.getItem("chess-legal-moves") !== "off";
-    var animationStyle = localStorage.getItem("chess-animation-style") || "smooth";
+    var animationStyle = normalizeAnimationStyle(localStorage.getItem("chess-animation-style"));
     var bloodFxEnabled = localStorage.getItem("chess-blood-fx") === "on";
     var pieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
     var soundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
@@ -4299,6 +4305,10 @@ var require_analyze = __commonJS({
     };
     var ANALYZED_REPLAY_DURATION_SCALE = 0.42;
     var MIN_ANALYZED_REPLAY_DURATION_MS = 220;
+    var FAST_MOVE_DURATION_MS = Math.max(
+      MIN_ANALYZED_REPLAY_DURATION_MS,
+      Math.round(SMOOTH_MOVE_DURATION_MS * ANALYZED_REPLAY_DURATION_SCALE)
+    );
     function revealDestinationMarker(marker) {
       if (!marker) return;
       marker.style.visibility = "";
@@ -4316,6 +4326,12 @@ var require_analyze = __commonJS({
         MIN_ANALYZED_REPLAY_DURATION_MS,
         Math.round(baseDurationMs * ANALYZED_REPLAY_DURATION_SCALE)
       );
+    }
+    function resolveSmoothAnimationDuration() {
+      if (animationStyle === "fast") {
+        return FAST_MOVE_DURATION_MS;
+      }
+      return resolveMoveAnimationDuration(SMOOTH_MOVE_DURATION_MS);
     }
     var POST_GAME_MOVES_STORAGE_KEY = "postGameMoves";
     var POST_GAME_PGN_STORAGE_KEY = "postGamePgn";
@@ -4787,6 +4803,7 @@ var require_analyze = __commonJS({
       ptrDragNode?.remove();
       ptrDragNode = null;
       boardEl.querySelector(".square.dragging")?.classList.remove("dragging");
+      boardEl.querySelector(".square.drag-origin")?.classList.remove("drag-origin");
       if (!commit) return;
       const el = document.elementFromPoint(event.clientX, event.clientY);
       const squareButton = el?.closest(".square");
@@ -5019,6 +5036,8 @@ var require_analyze = __commonJS({
         if (legalMovesEnabled && legalTargets.includes(sq)) btn.classList.add("legal");
         if (lastMoveSquares.has(sq)) btn.classList.add("last-move");
         if (checkedKingSquare === sq) btn.classList.add("in-check");
+        if (ptrDragFrom === sq) btn.classList.add("dragging");
+        if (ptrDragMoved && ptrDragFrom === sq) btn.classList.add("drag-origin");
         if (squareAnnotations.has(sq)) btn.classList.add("highlight-red");
         if (selectedMoveEval?.category === "great" && selectedMoveTo === sq) btn.classList.add("great-move-highlight");
         if (selectedMoveEval?.category === "brilliant" && selectedMoveTo === sq) btn.classList.add("brilliant-move-highlight");
@@ -5083,6 +5102,8 @@ var require_analyze = __commonJS({
         }
         squareButton.classList.toggle("selected", selectedSquare === square);
         squareButton.classList.toggle("legal", legalTargets.includes(square));
+        squareButton.classList.toggle("dragging", square === ptrDragFrom);
+        squareButton.classList.toggle("drag-origin", ptrDragMoved && square === ptrDragFrom);
       }
     }
     function renderStatus() {
@@ -5344,7 +5365,7 @@ var require_analyze = __commonJS({
           { transform: "translate3d(-50%, -50%, 0)" }
         ],
         {
-          duration: resolveMoveAnimationDuration(SMOOTH_MOVE_DURATION_MS),
+          duration: resolveSmoothAnimationDuration(),
           easing: "cubic-bezier(0.22, 0.61, 0.36, 1)"
         }
       );

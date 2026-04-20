@@ -87,7 +87,7 @@ import { createNotificationsStateController } from "./notifications/notification
 import { createNotificationsUiController } from "./notifications/notification-ui";
 import { buildFinishedGameSignature, buildPgnFromMoves } from "./pgn-utils";
 import { StockfishBridge } from "./stockfish-bridge";
-import { mountThemeSwitcher, type PieceThemeChoice, type SoundThemeChoice } from "./theme";
+import { mountThemeSwitcher, normalizeAnimationStyle, type AnimationStyle, type PieceThemeChoice, type SoundThemeChoice } from "./theme";
 import { formatClockMs, getDisplayClockMs } from "./utils/clock-render-utils";
 import { isElementMostlyVisible, isTypingTarget, shouldAutoScrollInviteJoin } from "./utils/interaction-utils";
 
@@ -242,7 +242,7 @@ const state: AppState = {
   liveAnalysisSummary: "Live analysis disabled.",
   lastAnalyzedMoveKey: null,
   liveMoveGrades: {},
-    animationStyle: (localStorage.getItem("chess-animation-style") as "smooth" | "epic") || "smooth",
+  animationStyle: normalizeAnimationStyle(localStorage.getItem("chess-animation-style")),
   bloodFxEnabled: localStorage.getItem("chess-blood-fx") === "on",
   gameMode: "multiplayer",
   botLevel: savedBotLevel,
@@ -289,6 +289,7 @@ let shouldCleanUiBeforeAutoJoin = initialRejoinRequested || Boolean(storedRoomRe
 const lowTimeWarningShownByColor: Record<PlayerRole, boolean> = { w: false, b: false };
 
 const SMOOTH_MOVE_DURATION_MS = 580;
+const FAST_MOVE_DURATION_MS = 244;
 const EPIC_MOVE_DURATION_MS = {
   smash: 820,
   spin: 720,
@@ -308,8 +309,12 @@ const PIECE_SYMBOLS_MAP: Record<string, string> = {
 const ROOM_CODE_LENGTH = 4;
 const ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
 
-function applyAnimationTiming(style: "smooth" | "epic"): void {
-  const cssDuration = style === "epic" ? 720 : SMOOTH_MOVE_DURATION_MS;
+function resolveSmoothMoveDurationMs(style: AnimationStyle): number {
+  return style === "fast" ? FAST_MOVE_DURATION_MS : SMOOTH_MOVE_DURATION_MS;
+}
+
+function applyAnimationTiming(style: AnimationStyle): void {
+  const cssDuration = style === "epic" ? 720 : resolveSmoothMoveDurationMs(style);
   document.documentElement.style.setProperty("--move-duration", `${cssDuration}ms`);
 }
 
@@ -586,7 +591,7 @@ mountThemeSwitcher();
 applyAnimationTiming(state.animationStyle);
 
 window.addEventListener("animationchange", (event: Event) => {
-  const customEvent = event as CustomEvent<{ style: "smooth" | "epic" }>;
+  const customEvent = event as CustomEvent<{ style: AnimationStyle }>;
   state.animationStyle = customEvent.detail.style;
   applyAnimationTiming(state.animationStyle);
 });
@@ -1589,6 +1594,7 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
   dragHoverSquare = null;
   if (ptrDragNode) { ptrDragNode.remove(); ptrDragNode = null; }
   board.querySelector<HTMLElement>(".square.dragging")?.classList.remove("dragging");
+  board.querySelector<HTMLElement>(".square.drag-origin")?.classList.remove("drag-origin");
   // Remove hover ring while drag-hover transitions are still disabled.
   syncBoardInteractionState();
   ptrDragMoved = false;
@@ -3054,6 +3060,7 @@ function cancelCurrentDrag(): void {
   if (ptrDragFrom) {
     const draggedSquareEl = board.querySelector<HTMLElement>(`[data-square="${ptrDragFrom}"]`);
     draggedSquareEl?.classList.remove("dragging");
+    draggedSquareEl?.classList.remove("drag-origin");
     ptrDragFrom = null;
   }
   
@@ -3174,6 +3181,7 @@ function renderBoard(): void {
     if (checkedKingSquare === squareName) button.classList.add("in-check");
 
     if (square === ptrDragFrom) button.classList.add("dragging");
+    if (ptrDragMoved && square === ptrDragFrom) button.classList.add("drag-origin");
     if (ptrDragMoved && dragHoverSquare === square) {
       button.classList.add("drag-hover-legal");
     }
@@ -3450,6 +3458,7 @@ function syncBoardInteractionState(): void {
     squareButton.classList.toggle("selected", state.selectedSquare === square);
     squareButton.classList.toggle("legal", state.legalMovesEnabled && state.legalTargets.includes(square));    
     squareButton.classList.toggle("dragging", square === ptrDragFrom);
+    squareButton.classList.toggle("drag-origin", ptrDragMoved && square === ptrDragFrom);
     squareButton.classList.toggle(
       "drag-hover-legal",
       ptrDragMoved && dragHoverSquare === square,
@@ -3883,7 +3892,7 @@ function animateLastMove(lastMove: MoveSummary | null): void {
       { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0)` },
       { transform: "translate3d(-50%, -50%, 0)" },
     ],
-    { duration: SMOOTH_MOVE_DURATION_MS, easing: "cubic-bezier(0.22, 0.61, 0.36, 1)" }
+    { duration: resolveSmoothMoveDurationMs(state.animationStyle), easing: "cubic-bezier(0.22, 0.61, 0.36, 1)" }
   );
 
   activeGhostAnimation = animation;

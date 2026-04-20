@@ -158,7 +158,7 @@ export type AppState = {
   liveAnalysisSummary: string;
   lastAnalyzedMoveKey: string | null;
   liveMoveGrades: Record<number, { label: string; cpl: number; category: MoveCategory }>;
-  animationStyle: "smooth" | "epic";
+  animationStyle: "smooth" | "fast" | "epic";
   bloodFxEnabled: boolean;
   gameMode: "multiplayer" | "bot";
   botLevel: number;
