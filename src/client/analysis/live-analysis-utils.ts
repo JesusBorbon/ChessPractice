@@ -22,20 +22,17 @@ const LIVE_CATEGORY_LABELS: Record<MoveCategory, string> = {
   blunder: "Blunder",
 };
 
-const LIVE_CATEGORY_TEXT_SYMBOLS: Record<MoveCategory, string> = {
+const LIVE_CATEGORY_TEXT_SYMBOLS: Partial<Record<MoveCategory, string>> = {
   brilliant: "!!",
-  great: "!",
-  excellent: "★",
-  good: "✓",
-  inaccuracy: "?!",
-  mistake: "x",
-  blunder: "??",
 };
 
 const LIVE_CATEGORY_BADGE_ICON_PATHS: Partial<Record<MoveCategory, string>> = {
-  excellent: "/assets/labelBadges/excellent.svg",
-  good: "/assets/labelBadges/good.svg",
-  mistake: "/assets/labelBadges/mistake.svg",
+  great: "/assets/labelBadges/great.png",
+  excellent: "/assets/labelBadges/excellent.png",
+  good: "/assets/labelBadges/good.png",
+  inaccuracy: "/assets/labelBadges/unaccuracy.png",
+  mistake: "/assets/labelBadges/mistake.png",
+  blunder: "/assets/labelBadges/blunder.png",
 };
 
 const LIVE_BRILLIANT_VERIFICATION_DEPTH = 16;
@@ -174,7 +171,7 @@ export async function verifyLiveBrilliantOffer(input: {
 }
 
 function symbolForLiveCategory(category: MoveCategory): string {
-  return LIVE_CATEGORY_TEXT_SYMBOLS[category];
+  return LIVE_CATEGORY_TEXT_SYMBOLS[category] ?? LIVE_CATEGORY_LABELS[category];
 }
 
 export function appendLiveCategoryMarkerContent(marker: HTMLElement, category: MoveCategory): void {

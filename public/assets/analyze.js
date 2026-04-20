@@ -4076,18 +4076,15 @@ var require_analyze = __commonJS({
       blunder: "??"
     };
     var CATEGORY_TEXT_SYMBOLS = {
-      brilliant: "!!",
-      great: "!",
-      excellent: "\u{1F44D}",
-      good: "\u2713",
-      inaccuracy: "?!",
-      mistake: "x",
-      blunder: "??"
+      brilliant: "!!"
     };
     var CATEGORY_BADGE_ICON_PATHS = {
-      excellent: "/assets/labelBadges/excellent.svg",
-      good: "/assets/labelBadges/good.svg",
-      mistake: "/assets/labelBadges/mistake.svg"
+      great: "/assets/labelBadges/great.png",
+      excellent: "/assets/labelBadges/excellent.png",
+      good: "/assets/labelBadges/good.png",
+      inaccuracy: "/assets/labelBadges/unaccuracy.png",
+      mistake: "/assets/labelBadges/mistake.png",
+      blunder: "/assets/labelBadges/blunder.png"
     };
     var PIECE_VALUES = {
       p: 100,
@@ -4207,7 +4204,7 @@ var require_analyze = __commonJS({
         marker.append(icon);
         return;
       }
-      marker.textContent = CATEGORY_TEXT_SYMBOLS[category];
+      marker.textContent = CATEGORY_TEXT_SYMBOLS[category] ?? CATEGORY_LABELS[category];
     }
     var _audioCache = {};
     function playSound(name) {

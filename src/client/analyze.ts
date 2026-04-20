@@ -94,20 +94,17 @@ const SUMMARY_CATEGORY_SYMBOLS = {
   blunder: "??",
 } as const;
 
-const CATEGORY_TEXT_SYMBOLS: Record<MoveCategory, string> = {
+const CATEGORY_TEXT_SYMBOLS: Partial<Record<MoveCategory, string>> = {
   brilliant: "!!",
-  great: "!",
-  excellent: "👍",
-  good: "✓",
-  inaccuracy: "?!",
-  mistake: "x",
-  blunder: "??",
 };
 
 const CATEGORY_BADGE_ICON_PATHS: Partial<Record<MoveCategory, string>> = {
-  excellent: "/assets/labelBadges/excellent.svg",
-  good: "/assets/labelBadges/good.svg",
-  mistake: "/assets/labelBadges/mistake.svg",
+  great: "/assets/labelBadges/great.png",
+  excellent: "/assets/labelBadges/excellent.png",
+  good: "/assets/labelBadges/good.png",
+  inaccuracy: "/assets/labelBadges/unaccuracy.png",
+  mistake: "/assets/labelBadges/mistake.png",
+  blunder: "/assets/labelBadges/blunder.png",
 };
 
 const PIECE_VALUES: Record<string, number> = {
@@ -252,7 +249,7 @@ function appendCategoryMarkerContent(marker: HTMLElement, category: MoveCategory
     return;
   }
 
-  marker.textContent = CATEGORY_TEXT_SYMBOLS[category];
+  marker.textContent = CATEGORY_TEXT_SYMBOLS[category] ?? CATEGORY_LABELS[category];
 }
 
 // ── Sound ────────────────────────────────────────────────────────────────────

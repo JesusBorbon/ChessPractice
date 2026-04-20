@@ -1,7 +1,7 @@
-/* Shared SVG badge color modulation for quality markers */
+/* Shared badge marker border tuning.
+   Icon filters are intentionally disabled for PNG assets. */
 
 .piece-quality-marker {
-  --marker-icon-filter: none;
   --marker-border: var(--marker-border, #2f6d50);
 }
 
@@ -11,130 +11,78 @@
   border-color: color-mix(in srgb, var(--quality-brilliant-fg) 70%, var(--quality-brilliant-bg) 30%) !important;
 }
 
-.piece-quality-marker.great {
-  --marker-border: color-mix(in srgb, var(--quality-great-fg) 80%, transparent);
-  border-color: color-mix(in srgb, var(--quality-great-fg) 70%, var(--quality-great-bg) 30%) !important;
-}
-
-.piece-quality-marker.excellent {
-  --marker-border: color-mix(in srgb, var(--quality-excellent-fg) 80%, transparent);
-  border-color: color-mix(in srgb, var(--quality-excellent-fg) 70%, var(--quality-excellent-bg) 30%) !important;
-}
-  
-.piece-quality-marker.good {
-  --marker-border: color-mix(in srgb, var(--quality-good-fg) 80%, transparent);
-  border-color: color-mix(in srgb, var(--quality-good-fg) 70%, var(--quality-good-bg) 30%) !important;
-}
-
-.piece-quality-marker.inaccuracy {
-  --marker-border: color-mix(in srgb, var(--quality-inaccuracy-fg) 80%, transparent);
-  border-color: color-mix(in srgb, var(--quality-inaccuracy-fg) 70%, var(--quality-inaccuracy-bg) 30%) !important;
-}
-
-.piece-quality-marker.mistake {
-  --marker-border: color-mix(in srgb, var(--quality-mistake-fg) 80%, transparent);
-  border-color: color-mix(in srgb, var(--quality-mistake-fg) 70%, var(--quality-mistake-bg) 30%) !important;
-}
-
-.piece-quality-marker.blunder {
-  --marker-border: color-mix(in srgb, var(--quality-blunder-fg) 86%, transparent);
-  border-color: color-mix(in srgb, var(--quality-blunder-fg) 65%, var(--quality-blunder-bg) 35%) !important;
-}
-
 .piece-quality-marker-icon {
-  filter: var(--marker-icon-filter, none);
-  transition: filter 180ms ease;
+  width: 90% !important;
+  height: 90% !important;
+  max-width: 90% !important;
+  max-height: 90% !important;
+  object-fit: contain;
+  image-rendering: auto;
+  display: block;
+  filter: none !important;
+  transition: none;
 }
 
+/* PNG badge categories: all categories except brilliant */
+.piece-quality-marker.great,
+.piece-quality-marker.excellent,
+.piece-quality-marker.good,
+.piece-quality-marker.inaccuracy,
+.piece-quality-marker.mistake,
+.piece-quality-marker.blunder {
+  min-width: clamp(18px, 30%, 26px);
+  height: clamp(18px, 30%, 26px);
+  padding: 0 !important;
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.piece-quality-marker.great .piece-quality-marker-icon,
 .piece-quality-marker.excellent .piece-quality-marker-icon,
 .piece-quality-marker.good .piece-quality-marker-icon,
-.piece-quality-marker.mistake .piece-quality-marker-icon {
-  filter: var(--marker-icon-filter, none);
+.piece-quality-marker.inaccuracy .piece-quality-marker-icon,
+.piece-quality-marker.mistake .piece-quality-marker-icon,
+.piece-quality-marker.blunder .piece-quality-marker-icon {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  border-radius: clamp(5px, 0.8vmin, 8px);
+  background: transparent;
+  box-shadow: none;
 }
 
-/* Default palette (forest/classic) */
-.piece-quality-marker.excellent {
-  --marker-icon-filter:
-    brightness(0) saturate(100%)
-    invert(34%) sepia(64%) saturate(615%) hue-rotate(62deg) brightness(96%) contrast(94%)
-    drop-shadow(0 0 4px rgba(110, 172, 58, 0.5));
+/* Focus mode readability: keep icon badges legible on large boards */
+body.focus-mode .piece-quality-marker.great,
+body.focus-mode .piece-quality-marker.excellent,
+body.focus-mode .piece-quality-marker.good,
+body.focus-mode .piece-quality-marker.inaccuracy,
+body.focus-mode .piece-quality-marker.mistake,
+body.focus-mode .piece-quality-marker.blunder {
+  min-width: clamp(20px, 34%, 32px);
+  height: clamp(20px, 34%, 32px);
 }
 
-.piece-quality-marker.good {
-  --marker-icon-filter:
-    brightness(0) saturate(100%)
-    invert(56%) sepia(76%) saturate(748%) hue-rotate(108deg) brightness(100%) contrast(102%)
-    drop-shadow(0 0 4px rgba(92, 225, 166, 0.58));
-}
+@media (min-width: 901px) {
+  .piece-quality-marker.great,
+  .piece-quality-marker.excellent,
+  .piece-quality-marker.good,
+  .piece-quality-marker.inaccuracy,
+  .piece-quality-marker.mistake,
+  .piece-quality-marker.blunder {
+    min-width: clamp(22px, 34%, 32px);
+    height: clamp(22px, 34%, 32px);
+  }
 
-.piece-quality-marker.mistake {
-  --marker-icon-filter:
-    brightness(0) saturate(100%)
-    invert(63%) sepia(92%) saturate(889%) hue-rotate(322deg) brightness(103%) contrast(101%)
-    drop-shadow(0 0 4px rgba(255, 124, 148, 0.6));
-}
-
-/* Purple theme */
-[data-theme="purple"] .piece-quality-marker.excellent {
-  --marker-icon-filter:
-    brightness(0) saturate(100%)
-    invert(48%) sepia(96%) saturate(1963%) hue-rotate(283deg) brightness(104%) contrast(103%)
-    drop-shadow(0 0 4px rgba(255, 84, 214, 0.68));
-}
-
-[data-theme="purple"] .piece-quality-marker.good {
-  --marker-icon-filter:
-    brightness(0) saturate(100%)
-    invert(73%) sepia(64%) saturate(486%) hue-rotate(110deg) brightness(103%) contrast(102%)
-    drop-shadow(0 0 4px rgba(120, 255, 206, 0.62));
-}
-
-[data-theme="purple"] .piece-quality-marker.mistake {
-  --marker-icon-filter:
-    brightness(0) saturate(100%)
-    invert(66%) sepia(95%) saturate(878%) hue-rotate(321deg) brightness(105%) contrast(102%)
-    drop-shadow(0 0 4px rgba(255, 132, 168, 0.64));
-}
-
-/* Walnut theme */
-[data-theme="walnut"] .piece-quality-marker.excellent {
-  --marker-icon-filter:
-    brightness(0) saturate(100%)
-    invert(63%) sepia(86%) saturate(724%) hue-rotate(350deg) brightness(102%) contrast(98%)
-    drop-shadow(0 0 4px rgba(236, 165, 78, 0.6));
-}
-
-[data-theme="walnut"] .piece-quality-marker.good {
-  --marker-icon-filter:
-    brightness(0) saturate(100%)
-    invert(70%) sepia(81%) saturate(560%) hue-rotate(98deg) brightness(101%) contrast(101%)
-    drop-shadow(0 0 4px rgba(126, 236, 176, 0.58));
-}
-
-[data-theme="walnut"] .piece-quality-marker.mistake {
-  --marker-icon-filter:
-    brightness(0) saturate(100%)
-    invert(62%) sepia(80%) saturate(1025%) hue-rotate(340deg) brightness(102%) contrast(103%)
-    drop-shadow(0 0 4px rgba(238, 128, 98, 0.62));
-}
-
-[data-theme="refined"] .piece-quality-marker.excellent {
-  --marker-icon-filter:
-    brightness(0) saturate(100%)
-    invert(56%) sepia(89%) saturate(985%) hue-rotate(176deg) brightness(100%) contrast(103%)
-    drop-shadow(0 0 4px rgba(96, 190, 255, 0.62));
-}
-
-[data-theme="refined"] .piece-quality-marker.good {
-  --marker-icon-filter:
-    brightness(0) saturate(100%)
-    invert(60%) sepia(61%) saturate(715%) hue-rotate(108deg) brightness(102%) contrast(101%)
-    drop-shadow(0 0 4px rgba(118, 232, 176, 0.6));
-}
-
-[data-theme="refined"] .piece-quality-marker.mistake {
-  --marker-icon-filter:
-    brightness(0) saturate(100%)
-    invert(61%) sepia(76%) saturate(1112%) hue-rotate(324deg) brightness(104%) contrast(103%)
-    drop-shadow(0 0 4px rgba(255, 118, 148, 0.62));
+  body.focus-mode .piece-quality-marker.great,
+  body.focus-mode .piece-quality-marker.excellent,
+  body.focus-mode .piece-quality-marker.good,
+  body.focus-mode .piece-quality-marker.inaccuracy,
+  body.focus-mode .piece-quality-marker.mistake,
+  body.focus-mode .piece-quality-marker.blunder {
+    min-width: clamp(24px, 40%, 40px);
+    height: clamp(24px, 40%, 40px);
+  }
 }
