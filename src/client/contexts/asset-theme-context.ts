@@ -39,6 +39,20 @@ export const PIECE_SETS: Record<PieceThemeChoice, Record<PieceKey, string>> = {
     bq: "/pieces/chessComPieces/bqCom.png",
     bk: "/pieces/chessComPieces/bkCom.png",
   },
+  chesscomocean: {
+    wp: "/pieces/chessComOcean/wp.png",
+    wn: "/pieces/chessComOcean/wn.png",
+    wb: "/pieces/chessComOcean/wb.png",
+    wr: "/pieces/chessComOcean/wr.png",
+    wq: "/pieces/chessComOcean/wq.png",
+    wk: "/pieces/chessComOcean/wk.png",
+    bp: "/pieces/chessComOcean/bp.png",
+    bn: "/pieces/chessComOcean/bn.png",
+    bb: "/pieces/chessComOcean/bb.png",
+    br: "/pieces/chessComOcean/br.png",
+    bq: "/pieces/chessComOcean/bq.png",
+    bk: "/pieces/chessComOcean/bk.png",
+  },
 };
 
 export const SOUND_PACKS: Record<SoundThemeChoice, Record<SoundEffectName, string>> = {
@@ -61,7 +75,9 @@ export const SOUND_PACKS: Record<SoundThemeChoice, Record<SoundEffectName, strin
 };
 
 export function normalizePieceTheme(value: string | null): PieceThemeChoice {
-  return value === "chesscom" ? "chesscom" : "original";
+  if (value === "chesscom") return "chesscom";
+  if (value === "chesscomocean" || value === "chessComOcean" || value === "chesscom-ocean") return "chesscomocean";
+  return "original";
 }
 
 export function normalizeSoundTheme(value: string | null): SoundThemeChoice {

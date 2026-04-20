@@ -1,5 +1,5 @@
 export type Theme = "forest" | "purple" | "walnut" | "refined";
-export type PieceThemeChoice = "original" | "chesscom";
+export type PieceThemeChoice = "original" | "chesscom" | "chesscomocean";
 export type SoundThemeChoice = "original" | "chesscom";
 
 const THEME_STORAGE_KEY = "chess-theme";
@@ -14,7 +14,9 @@ const BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
 const LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves"; // NEW
 
 function normalizePieceTheme(value: string | null): PieceThemeChoice {
-  return value === "chesscom" ? "chesscom" : "original";
+  if (value === "chesscom") return "chesscom";
+  if (value === "chesscomocean" || value === "chessComOcean" || value === "chesscom-ocean") return "chesscomocean";
+  return "original";
 }
 
 function normalizeSoundTheme(value: string | null): SoundThemeChoice {
@@ -142,9 +144,10 @@ export function mountThemeSwitcher(): void {
       </div>
       <div class="theme-switcher-row">
         <span class="theme-switcher-label">Piece Set</span>
-        <div class="animation-segment" role="radiogroup" aria-label="Piece style">
-          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="original" role="radio" aria-label="Use original pieces">Original</button>
-          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscom" role="radio" aria-label="Use Chess.com pieces">Chess.com</button>
+        <div class="animation-segment piece-theme-segment" role="radiogroup" aria-label="Piece style">
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="original" role="radio" aria-label="Use default pieces">Default</button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscom" role="radio" aria-label="Use Neo pieces">Neo</button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscomocean" role="radio" aria-label="Use Ocean pieces">Ocean</button>
         </div>
       </div>
       <div class="theme-switcher-row">

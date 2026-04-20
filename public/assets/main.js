@@ -30978,7 +30978,9 @@ var init_bot_config = __esm({
 
 // src/client/contexts/asset-theme-context.ts
 function normalizePieceTheme(value2) {
-  return value2 === "chesscom" ? "chesscom" : "original";
+  if (value2 === "chesscom") return "chesscom";
+  if (value2 === "chesscomocean" || value2 === "chessComOcean" || value2 === "chesscom-ocean") return "chesscomocean";
+  return "original";
 }
 function normalizeSoundTheme(value2) {
   return value2 === "chesscom" ? "chesscom" : "original";
@@ -31033,6 +31035,20 @@ var init_asset_theme_context = __esm({
         br: "/pieces/chessComPieces/brCom.png",
         bq: "/pieces/chessComPieces/bqCom.png",
         bk: "/pieces/chessComPieces/bkCom.png"
+      },
+      chesscomocean: {
+        wp: "/pieces/chessComOcean/wp.png",
+        wn: "/pieces/chessComOcean/wn.png",
+        wb: "/pieces/chessComOcean/wb.png",
+        wr: "/pieces/chessComOcean/wr.png",
+        wq: "/pieces/chessComOcean/wq.png",
+        wk: "/pieces/chessComOcean/wk.png",
+        bp: "/pieces/chessComOcean/bp.png",
+        bn: "/pieces/chessComOcean/bn.png",
+        bb: "/pieces/chessComOcean/bb.png",
+        br: "/pieces/chessComOcean/br.png",
+        bq: "/pieces/chessComOcean/bq.png",
+        bk: "/pieces/chessComOcean/bk.png"
       }
     };
     SOUND_PACKS = {
@@ -33195,7 +33211,9 @@ var init_stockfish_bridge = __esm({
 
 // src/client/theme.ts
 function normalizePieceTheme2(value2) {
-  return value2 === "chesscom" ? "chesscom" : "original";
+  if (value2 === "chesscom") return "chesscom";
+  if (value2 === "chesscomocean" || value2 === "chessComOcean" || value2 === "chesscom-ocean") return "chesscomocean";
+  return "original";
 }
 function normalizeSoundTheme2(value2) {
   return value2 === "chesscom" ? "chesscom" : "original";
@@ -33305,9 +33323,10 @@ function mountThemeSwitcher() {
       </div>
       <div class="theme-switcher-row">
         <span class="theme-switcher-label">Piece Set</span>
-        <div class="animation-segment" role="radiogroup" aria-label="Piece style">
-          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="original" role="radio" aria-label="Use original pieces">Original</button>
-          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscom" role="radio" aria-label="Use Chess.com pieces">Chess.com</button>
+        <div class="animation-segment piece-theme-segment" role="radiogroup" aria-label="Piece style">
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="original" role="radio" aria-label="Use default pieces">Default</button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscom" role="radio" aria-label="Use Neo pieces">Neo</button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscomocean" role="radio" aria-label="Use Ocean pieces">Ocean</button>
         </div>
       </div>
       <div class="theme-switcher-row">

@@ -2762,6 +2762,10 @@ square.legal:has(.piece-quality-marker)::after {
   border-radius: 999px;
   min-width: 182px;
 }
+.piece-theme-segment {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-width: 260px;
+}
 .fx-segment {
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
