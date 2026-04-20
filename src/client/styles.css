@@ -2706,7 +2706,7 @@ body.focus-mode .analyze-layout {
   padding: 0 !important;
   display: block !important;
   width: 100% !important;
-  max-width: 85vh !important; /* Prevents the board from overflowing vertically */
+  max-width: min(calc(100vw - 24px), calc(100dvh - 88px)) !important;
 }
 
 /* 4. Remove card backgrounds from the board panel */
