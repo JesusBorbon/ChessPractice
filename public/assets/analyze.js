@@ -3944,9 +3944,18 @@ function mountThemeSwitcher() {
       <div class="theme-switcher-row">
         <span class="theme-switcher-label">Piece Set</span>
         <div class="animation-segment piece-theme-segment" role="radiogroup" aria-label="Piece style">
-          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="original" role="radio" aria-label="Use default pieces">Default</button>
-          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscom" role="radio" aria-label="Use Neo pieces">Neo</button>
-          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscomocean" role="radio" aria-label="Use Ocean pieces">Ocean</button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="original" role="radio" aria-label="Use default pieces">
+            <img class="piece-theme-preview" src="/pieces/wN.svg" alt="" aria-hidden="true" draggable="false">
+            <span class="piece-theme-label">Default</span>
+          </button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscom" role="radio" aria-label="Use Neo pieces">
+            <img class="piece-theme-preview" src="/pieces/chessComPieces/wnCom.png" alt="" aria-hidden="true" draggable="false">
+            <span class="piece-theme-label">Neo</span>
+          </button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscomocean" role="radio" aria-label="Use Ocean pieces">
+            <img class="piece-theme-preview" src="/pieces/chessComOcean/wn.png" alt="" aria-hidden="true" draggable="false">
+            <span class="piece-theme-label">Ocean</span>
+          </button>
         </div>
       </div>
       <div class="theme-switcher-row">
@@ -4282,12 +4291,32 @@ var require_analyze = __commonJS({
     var soundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
     var lastCheckFlashKey = null;
     var SUMMARY_DRAG_CONTINUE_THRESHOLD_PX = 8;
-    var SMOOTH_MOVE_DURATION_MS = 620;
+    var SMOOTH_MOVE_DURATION_MS = 580;
     var EPIC_MOVE_DURATION_MS = {
-      smash: 860,
-      spin: 760,
-      slide: 620
+      smash: 820,
+      spin: 720,
+      slide: 580
     };
+    var ANALYZED_REPLAY_DURATION_SCALE = 0.42;
+    var MIN_ANALYZED_REPLAY_DURATION_MS = 220;
+    function revealDestinationMarker(marker) {
+      if (!marker) return;
+      marker.style.visibility = "";
+      marker.style.zIndex = "260";
+      marker.classList.remove("marker-reveal");
+      void marker.offsetWidth;
+      marker.classList.add("marker-reveal");
+    }
+    function resolveMoveAnimationDuration(baseDurationMs) {
+      const isAnalyzedReplay = cursor > 0 && Boolean(analysisByPly[cursor]) && !fullAnalysisInProgress;
+      if (!isAnalyzedReplay) {
+        return baseDurationMs;
+      }
+      return Math.max(
+        MIN_ANALYZED_REPLAY_DURATION_MS,
+        Math.round(baseDurationMs * ANALYZED_REPLAY_DURATION_SCALE)
+      );
+    }
     var POST_GAME_MOVES_STORAGE_KEY = "postGameMoves";
     var POST_GAME_PGN_STORAGE_KEY = "postGamePgn";
     var POST_GAME_META_STORAGE_KEY = "postGameMeta";
@@ -5280,6 +5309,11 @@ var require_analyze = __commonJS({
       const computed = window.getComputedStyle(destinationPiece);
       const pieceRect = destinationPiece.getBoundingClientRect();
       const ghostPiece = destinationPiece.cloneNode(true);
+      const destinationMarker = toSquareButton.querySelector(".piece-quality-marker");
+      if (destinationMarker) {
+        destinationMarker.classList.remove("marker-reveal");
+        destinationMarker.style.visibility = "hidden";
+      }
       Object.assign(ghostPiece.style, {
         position: "absolute",
         left: `${endX}px`,
@@ -5309,7 +5343,10 @@ var require_analyze = __commonJS({
           { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0)` },
           { transform: "translate3d(-50%, -50%, 0)" }
         ],
-        { duration: SMOOTH_MOVE_DURATION_MS, easing: "cubic-bezier(0.22, 0.61, 0.36, 1)" }
+        {
+          duration: resolveMoveAnimationDuration(SMOOTH_MOVE_DURATION_MS),
+          easing: "cubic-bezier(0.22, 0.61, 0.36, 1)"
+        }
       );
       activeGhostAnimation = animation;
       let finalized = false;
@@ -5318,6 +5355,7 @@ var require_analyze = __commonJS({
         finalized = true;
         ghostPiece.remove();
         destinationPiece.style.visibility = "";
+        revealDestinationMarker(destinationMarker);
         if (activeGhostAnimation === animation) {
           activeGhostAnimation = null;
           activeGhostNode = null;
@@ -5366,6 +5404,11 @@ var require_analyze = __commonJS({
       const computed = window.getComputedStyle(destinationPiece);
       const pieceRect = destinationPiece.getBoundingClientRect();
       const ghostPiece = destinationPiece.cloneNode(true);
+      const destinationMarker = toSquareButton.querySelector(".piece-quality-marker");
+      if (destinationMarker) {
+        destinationMarker.classList.remove("marker-reveal");
+        destinationMarker.style.visibility = "hidden";
+      }
       Object.assign(ghostPiece.style, {
         position: "absolute",
         left: `${endX}px`,
@@ -5396,10 +5439,15 @@ var require_analyze = __commonJS({
       let profile = "slide";
       if (roll < 0.3) profile = "smash";
       else if (roll < 0.6) profile = "spin";
+      const epicDurations = {
+        smash: resolveMoveAnimationDuration(EPIC_MOVE_DURATION_MS.smash),
+        spin: resolveMoveAnimationDuration(EPIC_MOVE_DURATION_MS.spin),
+        slide: resolveMoveAnimationDuration(EPIC_MOVE_DURATION_MS.slide)
+      };
       let keyframes = [];
-      let duration = EPIC_MOVE_DURATION_MS.spin;
+      let duration = epicDurations.spin;
       if (profile === "smash") {
-        duration = EPIC_MOVE_DURATION_MS.smash;
+        duration = epicDurations.smash;
         const jump = 90 + Math.random() * 40;
         const scale = 1.25 + Math.random() * 0.15;
         const spin = (Math.random() * 15 + 10) * (Math.random() > 0.5 ? 1 : -1);
@@ -5410,7 +5458,7 @@ var require_analyze = __commonJS({
           { transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) scale(1)", filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 1 }
         ];
       } else if (profile === "spin") {
-        duration = EPIC_MOVE_DURATION_MS.spin;
+        duration = epicDurations.spin;
         const jump = 40 + Math.random() * 20;
         const spinDir = Math.random() > 0.5 ? 360 : -360;
         keyframes = [
@@ -5419,7 +5467,7 @@ var require_analyze = __commonJS({
           { transform: `translate3d(-50%, -50%, 0) rotateZ(${spinDir}deg)`, filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 1 }
         ];
       } else {
-        duration = EPIC_MOVE_DURATION_MS.slide;
+        duration = epicDurations.slide;
         const tilt = deltaX < 0 ? 18 : deltaX > 0 ? -18 : 0;
         keyframes = [
           { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) scale(1)`, filter: `brightness(1) ${aura}`, offset: 0 },
@@ -5439,6 +5487,7 @@ var require_analyze = __commonJS({
         finalized = true;
         ghostPiece.remove();
         destinationPiece.style.visibility = "";
+        revealDestinationMarker(destinationMarker);
         if (activeGhostAnimation === animation) {
           activeGhostAnimation = null;
           activeGhostNode = null;

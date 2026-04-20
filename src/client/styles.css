@@ -2220,6 +2220,27 @@ square.legal:has(.piece-quality-marker)::after {
     outline: none;
   }
 
+  .piece-theme-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding-inline: 10px;
+  }
+
+  .piece-theme-preview {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+    object-fit: contain;
+    image-rendering: auto;
+    pointer-events: none;
+  }
+
+  .piece-theme-label {
+    line-height: 1;
+  }
+
   .fx-btn {
     border: 0;
     padding: 7px 12px;

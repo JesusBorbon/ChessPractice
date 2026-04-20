@@ -145,9 +145,18 @@ export function mountThemeSwitcher(): void {
       <div class="theme-switcher-row">
         <span class="theme-switcher-label">Piece Set</span>
         <div class="animation-segment piece-theme-segment" role="radiogroup" aria-label="Piece style">
-          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="original" role="radio" aria-label="Use default pieces">Default</button>
-          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscom" role="radio" aria-label="Use Neo pieces">Neo</button>
-          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscomocean" role="radio" aria-label="Use Ocean pieces">Ocean</button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="original" role="radio" aria-label="Use default pieces">
+            <img class="piece-theme-preview" src="/pieces/wN.svg" alt="" aria-hidden="true" draggable="false">
+            <span class="piece-theme-label">Default</span>
+          </button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscom" role="radio" aria-label="Use Neo pieces">
+            <img class="piece-theme-preview" src="/pieces/chessComPieces/wnCom.png" alt="" aria-hidden="true" draggable="false">
+            <span class="piece-theme-label">Neo</span>
+          </button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscomocean" role="radio" aria-label="Use Ocean pieces">
+            <img class="piece-theme-preview" src="/pieces/chessComOcean/wn.png" alt="" aria-hidden="true" draggable="false">
+            <span class="piece-theme-label">Ocean</span>
+          </button>
         </div>
       </div>
       <div class="theme-switcher-row">

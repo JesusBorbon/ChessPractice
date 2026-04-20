@@ -337,12 +337,35 @@ let lastCheckFlashKey: string | null = null;
 
 const SUMMARY_DRAG_CONTINUE_THRESHOLD_PX = 8;
 
-const SMOOTH_MOVE_DURATION_MS = 620;
+const SMOOTH_MOVE_DURATION_MS = 580;
 const EPIC_MOVE_DURATION_MS = {
-  smash: 860,
-  spin: 760,
-  slide: 620,
+  smash: 820,
+  spin: 720,
+  slide: 580,
 } as const;
+const ANALYZED_REPLAY_DURATION_SCALE = 0.42;
+const MIN_ANALYZED_REPLAY_DURATION_MS = 220;
+
+function revealDestinationMarker(marker: HTMLElement | null): void {
+  if (!marker) return;
+  marker.style.visibility = "";
+  marker.style.zIndex = "260";
+  marker.classList.remove("marker-reveal");
+  void marker.offsetWidth;
+  marker.classList.add("marker-reveal");
+}
+
+function resolveMoveAnimationDuration(baseDurationMs: number): number {
+  const isAnalyzedReplay = cursor > 0 && Boolean(analysisByPly[cursor]) && !fullAnalysisInProgress;
+  if (!isAnalyzedReplay) {
+    return baseDurationMs;
+  }
+
+  return Math.max(
+    MIN_ANALYZED_REPLAY_DURATION_MS,
+    Math.round(baseDurationMs * ANALYZED_REPLAY_DURATION_SCALE),
+  );
+}
 
 const POST_GAME_MOVES_STORAGE_KEY = "postGameMoves";
 const POST_GAME_PGN_STORAGE_KEY = "postGamePgn";
@@ -1553,6 +1576,11 @@ function animateLastMove(lastMove: Move | undefined): void {
   const computed = window.getComputedStyle(destinationPiece);
   const pieceRect = destinationPiece.getBoundingClientRect();
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
+  const destinationMarker = toSquareButton.querySelector<HTMLElement>(".piece-quality-marker");
+  if (destinationMarker) {
+    destinationMarker.classList.remove("marker-reveal");
+    destinationMarker.style.visibility = "hidden";
+  }
   Object.assign(ghostPiece.style, {
     position: "absolute",
     left: `${endX}px`,
@@ -1584,7 +1612,10 @@ function animateLastMove(lastMove: Move | undefined): void {
       { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0)` },
       { transform: "translate3d(-50%, -50%, 0)" },
     ],
-    { duration: SMOOTH_MOVE_DURATION_MS, easing: "cubic-bezier(0.22, 0.61, 0.36, 1)" },
+    {
+      duration: resolveMoveAnimationDuration(SMOOTH_MOVE_DURATION_MS),
+      easing: "cubic-bezier(0.22, 0.61, 0.36, 1)",
+    },
   );
 
   activeGhostAnimation = animation;
@@ -1595,6 +1626,7 @@ function animateLastMove(lastMove: Move | undefined): void {
     finalized = true;
     ghostPiece.remove();
     destinationPiece.style.visibility = "";
+    revealDestinationMarker(destinationMarker);
     if (activeGhostAnimation === animation) {
       activeGhostAnimation = null;
       activeGhostNode = null;
@@ -1654,6 +1686,11 @@ function animateLastMoveEpic(lastMove: Move | undefined): void {
   const computed = window.getComputedStyle(destinationPiece);
   const pieceRect = destinationPiece.getBoundingClientRect();
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
+  const destinationMarker = toSquareButton.querySelector<HTMLElement>(".piece-quality-marker");
+  if (destinationMarker) {
+    destinationMarker.classList.remove("marker-reveal");
+    destinationMarker.style.visibility = "hidden";
+  }
 
   Object.assign(ghostPiece.style, {
     position: "absolute",
@@ -1689,11 +1726,17 @@ function animateLastMoveEpic(lastMove: Move | undefined): void {
   if (roll < 0.3) profile = "smash";
   else if (roll < 0.6) profile = "spin";
 
+  const epicDurations = {
+    smash: resolveMoveAnimationDuration(EPIC_MOVE_DURATION_MS.smash),
+    spin: resolveMoveAnimationDuration(EPIC_MOVE_DURATION_MS.spin),
+    slide: resolveMoveAnimationDuration(EPIC_MOVE_DURATION_MS.slide),
+  } as const;
+
   let keyframes: Keyframe[] = [];
-  let duration: number = EPIC_MOVE_DURATION_MS.spin;
+  let duration: number = epicDurations.spin;
 
   if (profile === "smash") {
-    duration = EPIC_MOVE_DURATION_MS.smash;
+    duration = epicDurations.smash;
     const jump = 90 + Math.random() * 40;
     const scale = 1.25 + Math.random() * 0.15;
     const spin = (Math.random() * 15 + 10) * (Math.random() > 0.5 ? 1 : -1);
@@ -1706,7 +1749,7 @@ function animateLastMoveEpic(lastMove: Move | undefined): void {
     ];
   }
   else if (profile === "spin") {
-    duration = EPIC_MOVE_DURATION_MS.spin;
+    duration = epicDurations.spin;
     const jump = 40 + Math.random() * 20;
     const spinDir = Math.random() > 0.5 ? 360 : -360;
 
@@ -1717,7 +1760,7 @@ function animateLastMoveEpic(lastMove: Move | undefined): void {
     ];
   }
   else {
-    duration = EPIC_MOVE_DURATION_MS.slide;
+    duration = epicDurations.slide;
     const tilt = deltaX < 0 ? 18 : (deltaX > 0 ? -18 : 0);
 
     keyframes = [
@@ -1741,6 +1784,7 @@ function animateLastMoveEpic(lastMove: Move | undefined): void {
     finalized = true;
     ghostPiece.remove();
     destinationPiece.style.visibility = "";
+    revealDestinationMarker(destinationMarker);
     if (activeGhostAnimation === animation) {
       activeGhostAnimation = null;
       activeGhostNode = null;

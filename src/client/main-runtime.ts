@@ -288,11 +288,11 @@ let profileIdentitySyncedForAutoJoin = false;
 let shouldCleanUiBeforeAutoJoin = initialRejoinRequested || Boolean(storedRoomReturnContext);
 const lowTimeWarningShownByColor: Record<PlayerRole, boolean> = { w: false, b: false };
 
-const SMOOTH_MOVE_DURATION_MS = 620;
+const SMOOTH_MOVE_DURATION_MS = 580;
 const EPIC_MOVE_DURATION_MS = {
-  smash: 860,
-  spin: 760,
-  slide: 620,
+  smash: 820,
+  spin: 720,
+  slide: 580,
 } as const;
 const LOW_TIME_WARNING_TRIGGER_MS = 30_000;
 const LOW_TIME_WARNING_CLEAR_MS = 20_000;
@@ -309,8 +309,17 @@ const ROOM_CODE_LENGTH = 4;
 const ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
 
 function applyAnimationTiming(style: "smooth" | "epic"): void {
-  const cssDuration = style === "epic" ? 760 : SMOOTH_MOVE_DURATION_MS;
+  const cssDuration = style === "epic" ? 720 : SMOOTH_MOVE_DURATION_MS;
   document.documentElement.style.setProperty("--move-duration", `${cssDuration}ms`);
+}
+
+function revealDestinationMarker(marker: HTMLElement | null): void {
+  if (!marker) return;
+  marker.style.visibility = "";
+  marker.style.zIndex = "260";
+  marker.classList.remove("marker-reveal");
+  void marker.offsetWidth;
+  marker.classList.add("marker-reveal");
 }
 
 
@@ -3843,6 +3852,11 @@ function animateLastMove(lastMove: MoveSummary | null): void {
 
   // 4. Create the ghostPiece (the one that actually moves)
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
+  const destinationMarker = toSquareButton.querySelector<HTMLElement>(".piece-quality-marker");
+  if (destinationMarker) {
+    destinationMarker.classList.remove("marker-reveal");
+    destinationMarker.style.visibility = "hidden";
+  }
   const pieceRect = destinationPiece.getBoundingClientRect();
   
   Object.assign(ghostPiece.style, {
@@ -3881,6 +3895,7 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   ghostPiece.remove();
   destinationPiece.style.visibility = "";
   destinationPiece.style.opacity = "1";
+  revealDestinationMarker(destinationMarker);
 
   animationFinished = true;
   animatingToSquare = null;
@@ -3995,6 +4010,11 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
 
   const pieceRect = destinationPiece.getBoundingClientRect();
   const ghostPiece = destinationPiece.cloneNode(true) as HTMLElement;
+  const destinationMarker = toSquareButton.querySelector<HTMLElement>(".piece-quality-marker");
+  if (destinationMarker) {
+    destinationMarker.classList.remove("marker-reveal");
+    destinationMarker.style.visibility = "hidden";
+  }
   
   Object.assign(ghostPiece.style, {
     position: "absolute",
@@ -4079,6 +4099,7 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   ghostPiece.remove();
   destinationPiece.style.visibility = "";
   destinationPiece.style.opacity = "1";
+  revealDestinationMarker(destinationMarker);
 
   animationFinished = true;
   animatingToSquare = null;

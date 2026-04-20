@@ -3,12 +3,35 @@
 
 .piece-quality-marker {
   --marker-border: var(--marker-border, #2f6d50);
+  z-index: 260 !important;
+}
+
+.piece-quality-marker.marker-reveal {
+  animation: marker-fade-in 140ms ease-out;
+}
+
+@keyframes marker-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* Keep marker borders tied to classification palette tokens across themes */
 .piece-quality-marker.brilliant {
   --marker-border: color-mix(in srgb, var(--quality-brilliant-fg) 80%, transparent);
   border-color: color-mix(in srgb, var(--quality-brilliant-fg) 70%, var(--quality-brilliant-bg) 30%) !important;
+  min-width: clamp(24px, 38%, 36px) !important;
+  height: clamp(24px, 38%, 36px) !important;
+  font-size: clamp(0.72rem, 1.6vmin, 1.16rem) !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+  letter-spacing: -0.015em;
+  text-shadow: 0 0 1px color-mix(in srgb, var(--quality-brilliant-fg) 84%, #ffffff 16%);
 }
 
 .piece-quality-marker-icon {
@@ -84,5 +107,11 @@ body.focus-mode .piece-quality-marker.blunder {
   body.focus-mode .piece-quality-marker.blunder {
     min-width: clamp(24px, 40%, 40px);
     height: clamp(24px, 40%, 40px);
+  }
+
+  body.focus-mode .piece-quality-marker.brilliant {
+    min-width: clamp(26px, 42%, 42px) !important;
+    height: clamp(26px, 42%, 42px) !important;
+    font-size: clamp(0.82rem, 1.9vmin, 1.3rem) !important;
   }
 }

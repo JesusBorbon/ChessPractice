@@ -33321,9 +33321,18 @@ function mountThemeSwitcher() {
       <div class="theme-switcher-row">
         <span class="theme-switcher-label">Piece Set</span>
         <div class="animation-segment piece-theme-segment" role="radiogroup" aria-label="Piece style">
-          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="original" role="radio" aria-label="Use default pieces">Default</button>
-          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscom" role="radio" aria-label="Use Neo pieces">Neo</button>
-          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscomocean" role="radio" aria-label="Use Ocean pieces">Ocean</button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="original" role="radio" aria-label="Use default pieces">
+            <img class="piece-theme-preview" src="/pieces/wN.svg" alt="" aria-hidden="true" draggable="false">
+            <span class="piece-theme-label">Default</span>
+          </button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscom" role="radio" aria-label="Use Neo pieces">
+            <img class="piece-theme-preview" src="/pieces/chessComPieces/wnCom.png" alt="" aria-hidden="true" draggable="false">
+            <span class="piece-theme-label">Neo</span>
+          </button>
+          <button class="piece-theme-btn animation-btn" type="button" data-piece-theme="chesscomocean" role="radio" aria-label="Use Ocean pieces">
+            <img class="piece-theme-preview" src="/pieces/chessComOcean/wn.png" alt="" aria-hidden="true" draggable="false">
+            <span class="piece-theme-label">Ocean</span>
+          </button>
         </div>
       </div>
       <div class="theme-switcher-row">
@@ -33676,11 +33685,11 @@ var require_main_runtime = __commonJS({
     var profileIdentitySyncedForAutoJoin = false;
     var shouldCleanUiBeforeAutoJoin = initialRejoinRequested || Boolean(storedRoomReturnContext);
     var lowTimeWarningShownByColor = { w: false, b: false };
-    var SMOOTH_MOVE_DURATION_MS = 620;
+    var SMOOTH_MOVE_DURATION_MS = 580;
     var EPIC_MOVE_DURATION_MS = {
-      smash: 860,
-      spin: 760,
-      slide: 620
+      smash: 820,
+      spin: 720,
+      slide: 580
     };
     var LOW_TIME_WARNING_TRIGGER_MS = 3e4;
     var LOW_TIME_WARNING_CLEAR_MS = 2e4;
@@ -33688,8 +33697,16 @@ var require_main_runtime = __commonJS({
     var ROOM_CODE_LENGTH = 4;
     var ROOM_ID_PATTERN3 = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
     function applyAnimationTiming(style) {
-      const cssDuration = style === "epic" ? 760 : SMOOTH_MOVE_DURATION_MS;
+      const cssDuration = style === "epic" ? 720 : SMOOTH_MOVE_DURATION_MS;
       document.documentElement.style.setProperty("--move-duration", `${cssDuration}ms`);
+    }
+    function revealDestinationMarker(marker) {
+      if (!marker) return;
+      marker.style.visibility = "";
+      marker.style.zIndex = "260";
+      marker.classList.remove("marker-reveal");
+      void marker.offsetWidth;
+      marker.classList.add("marker-reveal");
     }
     var _audioCache = {};
     function getPieceSpritePath(color, piece) {
@@ -36434,6 +36451,11 @@ var require_main_runtime = __commonJS({
       const deltaX = fromRect.left + fromRect.width / 2 - (toRect.left + toRect.width / 2);
       const deltaY = fromRect.top + fromRect.height / 2 - (toRect.top + toRect.height / 2);
       const ghostPiece = destinationPiece.cloneNode(true);
+      const destinationMarker = toSquareButton.querySelector(".piece-quality-marker");
+      if (destinationMarker) {
+        destinationMarker.classList.remove("marker-reveal");
+        destinationMarker.style.visibility = "hidden";
+      }
       const pieceRect = destinationPiece.getBoundingClientRect();
       Object.assign(ghostPiece.style, {
         position: "absolute",
@@ -36465,6 +36487,7 @@ var require_main_runtime = __commonJS({
         ghostPiece.remove();
         destinationPiece.style.visibility = "";
         destinationPiece.style.opacity = "1";
+        revealDestinationMarker(destinationMarker);
         animationFinished = true;
         animatingToSquare = null;
         if (activeGhostAnimation === animation) {
@@ -36550,6 +36573,11 @@ var require_main_runtime = __commonJS({
       const deltaY = startY - endY;
       const pieceRect = destinationPiece.getBoundingClientRect();
       const ghostPiece = destinationPiece.cloneNode(true);
+      const destinationMarker = toSquareButton.querySelector(".piece-quality-marker");
+      if (destinationMarker) {
+        destinationMarker.classList.remove("marker-reveal");
+        destinationMarker.style.visibility = "hidden";
+      }
       Object.assign(ghostPiece.style, {
         position: "absolute",
         left: `${endX}px`,
@@ -36615,6 +36643,7 @@ var require_main_runtime = __commonJS({
         ghostPiece.remove();
         destinationPiece.style.visibility = "";
         destinationPiece.style.opacity = "1";
+        revealDestinationMarker(destinationMarker);
         animationFinished = true;
         animatingToSquare = null;
         if (activeGhostAnimation === animation) {
