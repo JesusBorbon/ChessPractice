@@ -32067,11 +32067,26 @@ function getVirtualBoard(baseFen, premoves, role) {
     if (!piece) {
       continue;
     }
+    const nextPiece = { ...piece };
+    const isCastle = piece.type === "k" && premove.from[1] === premove.to[1] && Math.abs(premove.to.charCodeAt(0) - premove.from.charCodeAt(0)) === 2;
     virtualBoard.remove(premove.from);
+    virtualBoard.remove(premove.to);
     if (premove.promotion) {
-      piece.type = premove.promotion;
+      nextPiece.type = premove.promotion;
     }
-    virtualBoard.put(piece, premove.to);
+    virtualBoard.put(nextPiece, premove.to);
+    if (isCastle) {
+      const rank2 = premove.from[1];
+      const isKingSide = premove.to.charCodeAt(0) > premove.from.charCodeAt(0);
+      const rookFrom = `${isKingSide ? "h" : "a"}${rank2}`;
+      const rookTo = `${isKingSide ? "f" : "d"}${rank2}`;
+      const rook = virtualBoard.get(rookFrom);
+      if (rook?.type === "r" && rook.color === piece.color) {
+        virtualBoard.remove(rookFrom);
+        virtualBoard.remove(rookTo);
+        virtualBoard.put({ ...rook }, rookTo);
+      }
+    }
   }
   const fenParts = virtualBoard.fen().split(" ");
   fenParts[1] = role;
@@ -34660,6 +34675,31 @@ var require_main_runtime = __commonJS({
     var arrowDragTo = null;
     var arrowDragPointer = null;
     var arrowDragMoved = false;
+    function cancelArrowDragPreview() {
+      if (!arrowDragFrom && !arrowDragTo && !arrowDragPointer && !arrowDragMoved) {
+        return;
+      }
+      arrowDragFrom = null;
+      arrowDragTo = null;
+      arrowDragPointer = null;
+      arrowDragMoved = false;
+      renderArrows();
+    }
+    function cancelActivePointerInteractions() {
+      const hadArrowDrag = Boolean(arrowDragFrom || arrowDragTo || arrowDragPointer || arrowDragMoved);
+      const hadPieceDrag = Boolean(ptrDragFrom || ptrDragNode || ptrDragMoved || dragHoverSquare);
+      if (!hadArrowDrag && !hadPieceDrag) {
+        return;
+      }
+      if (hadArrowDrag) {
+        cancelArrowDragPreview();
+      }
+      if (hadPieceDrag) {
+        cancelCurrentDrag();
+      }
+      requestBoardRefresh(true);
+      updateCaption();
+    }
     board.addEventListener("pointerdown", (event) => {
       if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
         clearArrows();
@@ -34667,6 +34707,9 @@ var require_main_runtime = __commonJS({
       const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
       if (gameEnded) return;
       if (event.button === 2) {
+        if (ptrDragFrom || ptrDragNode || ptrDragMoved) {
+          cancelCurrentDrag();
+        }
         const square2 = getSquareFromPoint(event.clientX, event.clientY);
         if (!square2) return;
         arrowDragFrom = square2;
@@ -34680,6 +34723,9 @@ var require_main_runtime = __commonJS({
         return;
       }
       if (event.button !== 0) return;
+      if (arrowDragFrom || arrowDragTo || arrowDragPointer || arrowDragMoved) {
+        cancelArrowDragPreview();
+      }
       const squareButton = event.target.closest(".square");
       const square = squareButton?.dataset.square;
       if (!square || !canStartMoveFrom(square)) return;
@@ -34807,15 +34853,34 @@ var require_main_runtime = __commonJS({
       renderArrows();
     }
     board.addEventListener("pointerup", (event) => {
-      if (event.button === 2 || arrowDragFrom) {
+      if (arrowDragFrom) {
+        endArrowDrag(event, event.button === 2);
+      } else if (event.button === 2) {
         endArrowDrag(event, true);
-        return;
       }
-      endPointerDrag(event, true);
+      if (event.button === 0) {
+        endPointerDrag(event, true);
+      }
     });
     board.addEventListener("pointercancel", (event) => {
       endArrowDrag(event, false);
       endPointerDrag(event, false);
+    });
+    board.addEventListener("lostpointercapture", () => {
+      cancelActivePointerInteractions();
+    });
+    window.addEventListener("blur", () => {
+      cancelActivePointerInteractions();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") {
+        cancelActivePointerInteractions();
+      }
+    });
+    document.addEventListener("fullscreenchange", () => {
+      if (!document.fullscreenElement) {
+        cancelActivePointerInteractions();
+      }
     });
     function clearScheduledBotResponse() {
       if (botResponseTimer !== null) {

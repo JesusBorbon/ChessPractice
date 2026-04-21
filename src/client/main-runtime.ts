@@ -1477,6 +1477,38 @@ let arrowDragTo: Square | null = null;
 let arrowDragPointer: { x: number; y: number } | null = null;
 let arrowDragMoved = false;
 
+function cancelArrowDragPreview(): void {
+  if (!arrowDragFrom && !arrowDragTo && !arrowDragPointer && !arrowDragMoved) {
+    return;
+  }
+
+  arrowDragFrom = null;
+  arrowDragTo = null;
+  arrowDragPointer = null;
+  arrowDragMoved = false;
+  renderArrows();
+}
+
+function cancelActivePointerInteractions(): void {
+  const hadArrowDrag = Boolean(arrowDragFrom || arrowDragTo || arrowDragPointer || arrowDragMoved);
+  const hadPieceDrag = Boolean(ptrDragFrom || ptrDragNode || ptrDragMoved || dragHoverSquare);
+
+  if (!hadArrowDrag && !hadPieceDrag) {
+    return;
+  }
+
+  if (hadArrowDrag) {
+    cancelArrowDragPreview();
+  }
+
+  if (hadPieceDrag) {
+    cancelCurrentDrag();
+  }
+
+  requestBoardRefresh(true);
+  updateCaption();
+}
+
 board.addEventListener("pointerdown", (event) => {
 
 if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
@@ -1486,6 +1518,10 @@ if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size >
   if (gameEnded) return;
 
   if (event.button === 2) {
+    if (ptrDragFrom || ptrDragNode || ptrDragMoved) {
+      cancelCurrentDrag();
+    }
+
     const square = getSquareFromPoint(event.clientX, event.clientY);
     if (!square) return;
 
@@ -1501,6 +1537,9 @@ if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size >
   }
 
   if (event.button !== 0) return;
+  if (arrowDragFrom || arrowDragTo || arrowDragPointer || arrowDragMoved) {
+    cancelArrowDragPreview();
+  }
   const squareButton = (event.target as HTMLElement).closest<HTMLButtonElement>(".square");
   const square = squareButton?.dataset.square as Square | undefined;
   if (!square || !canStartMoveFrom(square)) return;
@@ -1661,17 +1700,40 @@ function endArrowDrag(event: PointerEvent, commit: boolean): void {
 }
 
 board.addEventListener("pointerup", (event) => {
-  if (event.button === 2 || arrowDragFrom) {
+  if (arrowDragFrom) {
+    endArrowDrag(event, event.button === 2);
+  } else if (event.button === 2) {
     endArrowDrag(event, true);
-    return;
   }
 
-  endPointerDrag(event, true);
+  if (event.button === 0) {
+    endPointerDrag(event, true);
+  }
 });
 
 board.addEventListener("pointercancel", (event) => {
   endArrowDrag(event, false);
   endPointerDrag(event, false);
+});
+
+board.addEventListener("lostpointercapture", () => {
+  cancelActivePointerInteractions();
+});
+
+window.addEventListener("blur", () => {
+  cancelActivePointerInteractions();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") {
+    cancelActivePointerInteractions();
+  }
+});
+
+document.addEventListener("fullscreenchange", () => {
+  if (!document.fullscreenElement) {
+    cancelActivePointerInteractions();
+  }
 });
 
 function clearScheduledBotResponse(): void {

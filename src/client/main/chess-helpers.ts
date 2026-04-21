@@ -49,11 +49,31 @@ export function getVirtualBoard(baseFen: string, premoves: Premove[], role: Play
       continue;
     }
 
+    const nextPiece = { ...piece };
+    const isCastle =
+      piece.type === "k"
+      && premove.from[1] === premove.to[1]
+      && Math.abs(premove.to.charCodeAt(0) - premove.from.charCodeAt(0)) === 2;
+
     virtualBoard.remove(premove.from);
+    virtualBoard.remove(premove.to);
     if (premove.promotion) {
-      piece.type = premove.promotion as PieceSymbol;
+      nextPiece.type = premove.promotion as PieceSymbol;
     }
-    virtualBoard.put(piece, premove.to);
+    virtualBoard.put(nextPiece, premove.to);
+
+    if (isCastle) {
+      const rank = premove.from[1];
+      const isKingSide = premove.to.charCodeAt(0) > premove.from.charCodeAt(0);
+      const rookFrom = `${isKingSide ? "h" : "a"}${rank}` as Square;
+      const rookTo = `${isKingSide ? "f" : "d"}${rank}` as Square;
+      const rook = virtualBoard.get(rookFrom);
+      if (rook?.type === "r" && rook.color === piece.color) {
+        virtualBoard.remove(rookFrom);
+        virtualBoard.remove(rookTo);
+        virtualBoard.put({ ...rook }, rookTo);
+      }
+    }
   }
 
   const fenParts = virtualBoard.fen().split(" ");
