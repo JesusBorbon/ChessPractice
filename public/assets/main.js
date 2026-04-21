@@ -28427,6 +28427,23 @@ async function deleteStoredGameForUser(userId, gameId) {
   );
   return updatedGames.length;
 }
+async function clearStoredGamesForUser(userId) {
+  const normalizedUserId = userId.trim();
+  if (!normalizedUserId) {
+    return 0;
+  }
+  const database = requireDb();
+  const documentRef = doc(database, "userGameHistory", normalizedUserId);
+  await setDoc(
+    documentRef,
+    {
+      games: [],
+      updatedAt: serverTimestamp()
+    },
+    { merge: true }
+  );
+  return 0;
+}
 async function assignUniqueFriendId(database, userId) {
   for (let attempt = 0; attempt < 64; attempt += 1) {
     const candidate = generateRandomFriendId();
@@ -29305,6 +29322,8 @@ function createAccountSidebarController({
   let savedGameHistory = [];
   let historyLoading = false;
   let deletingGameId = null;
+  let clearSavedGamesConfirmOpen = false;
+  let clearSavedGamesBusy = false;
   let importSourceDraft = "";
   let importComposerOpen = false;
   let importBusy = false;
@@ -30168,10 +30187,11 @@ function createAccountSidebarController({
     if (!authenticatedUser || !isFirebaseAuthEnabled()) {
       return;
     }
-    if (deletingGameId) {
+    if (deletingGameId || clearSavedGamesBusy) {
       return;
     }
     deletingGameId = game.id;
+    clearSavedGamesConfirmOpen = false;
     renderSavedHistoryPanel();
     try {
       storedGamesCount = await deleteStoredGameForUser(authenticatedUser.uid, game.id);
@@ -30181,6 +30201,33 @@ function createAccountSidebarController({
       showToast("Could not delete saved game.");
     } finally {
       deletingGameId = null;
+      renderAuthPanel();
+      renderSavedHistoryPanel();
+    }
+  }
+  async function handleClearSavedGames() {
+    if (!authenticatedUser || !isFirebaseAuthEnabled()) {
+      return;
+    }
+    if (clearSavedGamesBusy || deletingGameId) {
+      return;
+    }
+    if (savedGameHistory.length === 0) {
+      clearSavedGamesConfirmOpen = false;
+      renderSavedHistoryPanel();
+      return;
+    }
+    clearSavedGamesBusy = true;
+    renderSavedHistoryPanel();
+    try {
+      storedGamesCount = await clearStoredGamesForUser(authenticatedUser.uid);
+      savedGameHistory = [];
+      clearSavedGamesConfirmOpen = false;
+      showToast("All saved games cleared.");
+    } catch {
+      showToast("Could not clear saved games.");
+    } finally {
+      clearSavedGamesBusy = false;
       renderAuthPanel();
       renderSavedHistoryPanel();
     }
@@ -30378,12 +30425,63 @@ function createAccountSidebarController({
     }
     const sortedGames = getSortedSavedGameHistory();
     if (sortedGames.length === 0) {
+      clearSavedGamesConfirmOpen = false;
       refs.historyPanelStatus.textContent = "No saved games yet. Finished games are saved automatically.";
       return;
     }
     refs.historyPanelStatus.textContent = `Showing ${sortedGames.length} saved game${sortedGames.length === 1 ? "" : "s"}. Select one to analyze.`;
+    const controls = document.createElement("div");
+    controls.className = "saved-games-toolbar";
+    const clearButton = document.createElement("button");
+    clearButton.type = "button";
+    clearButton.className = "ghost saved-games-clear-button";
+    clearButton.disabled = Boolean(deletingGameId) || clearSavedGamesBusy || importBusy;
+    clearButton.textContent = clearSavedGamesBusy ? "Clearing..." : "Clear";
+    clearButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (clearSavedGamesBusy) {
+        return;
+      }
+      clearSavedGamesConfirmOpen = !clearSavedGamesConfirmOpen;
+      renderSavedHistoryPanel();
+    });
+    controls.appendChild(clearButton);
+    refs.savedGamesList.appendChild(controls);
+    if (clearSavedGamesConfirmOpen) {
+      const confirmCard = document.createElement("article");
+      confirmCard.className = "saved-games-clear-confirm";
+      const confirmText = document.createElement("p");
+      confirmText.className = "saved-games-clear-confirm-text";
+      confirmText.textContent = "Clear all saved games?";
+      const confirmActions = document.createElement("div");
+      confirmActions.className = "saved-games-clear-confirm-actions";
+      const acceptButton = document.createElement("button");
+      acceptButton.type = "button";
+      acceptButton.className = "ghost saved-games-clear-accept";
+      acceptButton.disabled = clearSavedGamesBusy;
+      acceptButton.textContent = clearSavedGamesBusy ? "Clearing..." : "Accept";
+      acceptButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void handleClearSavedGames();
+      });
+      const cancelButton = document.createElement("button");
+      cancelButton.type = "button";
+      cancelButton.className = "ghost saved-games-clear-cancel";
+      cancelButton.disabled = clearSavedGamesBusy;
+      cancelButton.textContent = "Cancel";
+      cancelButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        clearSavedGamesConfirmOpen = false;
+        renderSavedHistoryPanel();
+      });
+      confirmActions.appendChild(acceptButton);
+      confirmActions.appendChild(cancelButton);
+      confirmCard.appendChild(confirmText);
+      confirmCard.appendChild(confirmActions);
+      refs.savedGamesList.appendChild(confirmCard);
+    }
     sortedGames.forEach((game) => {
-      const deletingThisGame = deletingGameId === game.id;
+      const deletingThisGame = deletingGameId === game.id || clearSavedGamesBusy;
       const item = document.createElement("article");
       item.className = "saved-game-item";
       item.setAttribute("role", "button");
@@ -30419,7 +30517,7 @@ function createAccountSidebarController({
       item.appendChild(dateLabel);
       item.appendChild(openHint);
       item.addEventListener("click", () => {
-        if (deletingGameId) {
+        if (deletingGameId || clearSavedGamesBusy) {
           return;
         }
         setSidebarOpen(false);
@@ -30430,7 +30528,7 @@ function createAccountSidebarController({
           return;
         }
         event.preventDefault();
-        if (deletingGameId) {
+        if (deletingGameId || clearSavedGamesBusy) {
           return;
         }
         setSidebarOpen(false);
@@ -33329,6 +33427,7 @@ function mountThemeSwitcher() {
           <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
           <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
           <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
+          <button class="theme-btn" data-theme="base" title="Base" aria-label="Base wood theme"></button>
         </div>
       </div>
       <div class="theme-switcher-row">
@@ -35049,10 +35148,10 @@ var require_main_runtime = __commonJS({
         updateManualSnapshot(botMove);
         finalizeBotClockAfterMove(botRole);
         playSoundForSnapshot(state.snapshot);
-        if (state.premoves.length > 0) {
-          checkAndExecutePremove();
+        const premoveExecuted = state.premoves.length > 0 && checkAndExecutePremove();
+        if (!premoveExecuted) {
+          render(true);
         }
-        render(true);
       }
     }
     promotionDialog.addEventListener("click", (event) => {
@@ -35511,11 +35610,13 @@ var require_main_runtime = __commonJS({
         boardRefreshForcedByArrowClear = clearArrows();
       }
       if (state.selectedSquare) {
-        const currentPiece = chess.get(state.selectedSquare);
+        const activeRole = state.role;
+        const selectionBoard = activeRole && activeRole !== "spectator" && snapshot.turn !== activeRole ? getVirtualBoard(chess.fen(), state.premoves, activeRole) : chess;
+        const currentPiece = selectionBoard.get(state.selectedSquare);
         if (!currentPiece || !isOwnPiece(currentPiece.color)) {
           clearSelection();
         } else {
-          state.legalTargets = snapshot.turn === state.role ? legalTargetsFor(state.selectedSquare) : legalTargetsForRole(state.selectedSquare, state.role);
+          state.legalTargets = selectionBoard.moves({ square: state.selectedSquare, verbose: true }).map((move) => move.to);
         }
       }
       if (!snapshot.analysis.enabled) {
@@ -35954,8 +36055,10 @@ var require_main_runtime = __commonJS({
     }
     function renderBoard() {
       if (ptrDragFrom) {
-        const pieceAtSource = chess.get(ptrDragFrom);
-        if (!pieceAtSource || pieceAtSource.color !== state.role) {
+        const activeRole = state.role;
+        const dragBoard = activeRole && activeRole !== "spectator" && state.snapshot?.turn !== activeRole ? getVirtualBoard(chess.fen(), state.premoves, activeRole) : chess;
+        const pieceAtSource = dragBoard.get(ptrDragFrom);
+        if (!pieceAtSource || activeRole && activeRole !== "spectator" && pieceAtSource.color !== activeRole) {
           cancelCurrentDrag();
         }
       }
@@ -36238,15 +36341,15 @@ var require_main_runtime = __commonJS({
     }
     function checkAndExecutePremove() {
       const snapshot = state.snapshot;
-      if (!snapshot || !state.role || state.role === "spectator") return;
+      if (!snapshot || !state.role || state.role === "spectator") return false;
       if (snapshot.turn !== state.role || state.premoves.length === 0) {
-        return;
+        return false;
       }
       if (snapshot.checkmate || snapshot.draw || snapshot.winner !== null) {
         state.premoves = [];
         requestBoardRefresh();
         updateCaption();
-        return;
+        return false;
       }
       const { move: nextMove, pruned } = pullNextLegalPremove();
       if (!nextMove) {
@@ -36254,12 +36357,12 @@ var require_main_runtime = __commonJS({
           requestBoardRefresh();
           updateCaption();
         }
-        return;
+        return false;
       }
       suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
       animationFinished = true;
       tryMoveFromTo(nextMove.from, nextMove.to);
-      requestBoardRefresh(true);
+      return true;
     }
     function renderMoves() {
       const snapshot = state.snapshot;
@@ -36801,12 +36904,6 @@ var require_main_runtime = __commonJS({
     }
     function legalTargetsFor(square) {
       return chess.moves({ square, verbose: true }).map((move) => move.to);
-    }
-    function legalTargetsForRole(square, role) {
-      const fenParts = chess.fen().split(" ");
-      fenParts[1] = role;
-      const roleChess = new Chess(fenParts.join(" "));
-      return roleChess.moves({ square, verbose: true }).map((move) => move.to);
     }
     function canStartMoveFrom(square) {
       if (state.viewCursor !== null) return false;

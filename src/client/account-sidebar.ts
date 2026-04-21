@@ -2,6 +2,7 @@ import type { User } from "firebase/auth";
 import { Chess } from "chess.js";
 
 import {
+  clearStoredGamesForUser,
   deleteStoredGameForUser,
   FriendListEntry,
   FriendRequestEntry,
@@ -147,6 +148,8 @@ export function createAccountSidebarController({
   let savedGameHistory: SavedGameHistoryEntry[] = [];
   let historyLoading = false;
   let deletingGameId: string | null = null;
+  let clearSavedGamesConfirmOpen = false;
+  let clearSavedGamesBusy = false;
   let importSourceDraft = "";
   let importComposerOpen = false;
   let importBusy = false;
@@ -1217,11 +1220,12 @@ export function createAccountSidebarController({
       return;
     }
 
-    if (deletingGameId) {
+    if (deletingGameId || clearSavedGamesBusy) {
       return;
     }
 
     deletingGameId = game.id;
+    clearSavedGamesConfirmOpen = false;
     renderSavedHistoryPanel();
 
     try {
@@ -1232,6 +1236,38 @@ export function createAccountSidebarController({
       showToast("Could not delete saved game.");
     } finally {
       deletingGameId = null;
+      renderAuthPanel();
+      renderSavedHistoryPanel();
+    }
+  }
+
+  async function handleClearSavedGames(): Promise<void> {
+    if (!authenticatedUser || !isFirebaseAuthEnabled()) {
+      return;
+    }
+
+    if (clearSavedGamesBusy || deletingGameId) {
+      return;
+    }
+
+    if (savedGameHistory.length === 0) {
+      clearSavedGamesConfirmOpen = false;
+      renderSavedHistoryPanel();
+      return;
+    }
+
+    clearSavedGamesBusy = true;
+    renderSavedHistoryPanel();
+
+    try {
+      storedGamesCount = await clearStoredGamesForUser(authenticatedUser.uid);
+      savedGameHistory = [];
+      clearSavedGamesConfirmOpen = false;
+      showToast("All saved games cleared.");
+    } catch {
+      showToast("Could not clear saved games.");
+    } finally {
+      clearSavedGamesBusy = false;
       renderAuthPanel();
       renderSavedHistoryPanel();
     }
@@ -1477,14 +1513,75 @@ export function createAccountSidebarController({
 
     const sortedGames = getSortedSavedGameHistory();
     if (sortedGames.length === 0) {
+      clearSavedGamesConfirmOpen = false;
       refs.historyPanelStatus.textContent = "No saved games yet. Finished games are saved automatically.";
       return;
     }
 
     refs.historyPanelStatus.textContent = `Showing ${sortedGames.length} saved game${sortedGames.length === 1 ? "" : "s"}. Select one to analyze.`;
 
+    const controls = document.createElement("div");
+    controls.className = "saved-games-toolbar";
+
+    const clearButton = document.createElement("button");
+    clearButton.type = "button";
+    clearButton.className = "ghost saved-games-clear-button";
+    clearButton.disabled = Boolean(deletingGameId) || clearSavedGamesBusy || importBusy;
+    clearButton.textContent = clearSavedGamesBusy ? "Clearing..." : "Clear";
+    clearButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (clearSavedGamesBusy) {
+        return;
+      }
+
+      clearSavedGamesConfirmOpen = !clearSavedGamesConfirmOpen;
+      renderSavedHistoryPanel();
+    });
+
+    controls.appendChild(clearButton);
+    refs.savedGamesList.appendChild(controls);
+
+    if (clearSavedGamesConfirmOpen) {
+      const confirmCard = document.createElement("article");
+      confirmCard.className = "saved-games-clear-confirm";
+
+      const confirmText = document.createElement("p");
+      confirmText.className = "saved-games-clear-confirm-text";
+      confirmText.textContent = "Clear all saved games?";
+
+      const confirmActions = document.createElement("div");
+      confirmActions.className = "saved-games-clear-confirm-actions";
+
+      const acceptButton = document.createElement("button");
+      acceptButton.type = "button";
+      acceptButton.className = "ghost saved-games-clear-accept";
+      acceptButton.disabled = clearSavedGamesBusy;
+      acceptButton.textContent = clearSavedGamesBusy ? "Clearing..." : "Accept";
+      acceptButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void handleClearSavedGames();
+      });
+
+      const cancelButton = document.createElement("button");
+      cancelButton.type = "button";
+      cancelButton.className = "ghost saved-games-clear-cancel";
+      cancelButton.disabled = clearSavedGamesBusy;
+      cancelButton.textContent = "Cancel";
+      cancelButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        clearSavedGamesConfirmOpen = false;
+        renderSavedHistoryPanel();
+      });
+
+      confirmActions.appendChild(acceptButton);
+      confirmActions.appendChild(cancelButton);
+      confirmCard.appendChild(confirmText);
+      confirmCard.appendChild(confirmActions);
+      refs.savedGamesList.appendChild(confirmCard);
+    }
+
     sortedGames.forEach((game) => {
-      const deletingThisGame = deletingGameId === game.id;
+      const deletingThisGame = deletingGameId === game.id || clearSavedGamesBusy;
 
       const item = document.createElement("article");
       item.className = "saved-game-item";
@@ -1530,7 +1627,7 @@ export function createAccountSidebarController({
       item.appendChild(openHint);
 
       item.addEventListener("click", () => {
-        if (deletingGameId) {
+        if (deletingGameId || clearSavedGamesBusy) {
           return;
         }
 
@@ -1544,7 +1641,7 @@ export function createAccountSidebarController({
         }
 
         event.preventDefault();
-        if (deletingGameId) {
+        if (deletingGameId || clearSavedGamesBusy) {
           return;
         }
 

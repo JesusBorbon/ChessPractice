@@ -295,6 +295,31 @@
   --legal-dot-color: rgba(255, 195, 60, 0.8);
   --text-on-accent-strong: #353535;
 }
+[data-theme=base] {
+  --bg: #f6e8d6;
+  --paper: rgba(255, 248, 236, 0.9);
+  --paper-strong: rgba(255, 249, 240, 0.97);
+  --ink: #3d2412;
+  --muted: #7f5a3f;
+  --accent: #b86b35;
+  --accent-strong: #7f4724;
+  --accent-soft: #f1dbc4;
+  --gold: #c58a3f;
+  --move-row-bg:
+    linear-gradient(
+      135deg,
+      rgba(201, 121, 61, 0.2),
+      rgba(167, 93, 40, 0.16));
+  --move-row-border: rgba(120, 70, 36, 0.24);
+  --move-row-glow: rgba(184, 107, 53, 0.15);
+  --move-card-glow: rgba(156, 86, 38, 0.12);
+  --board-light: #f2d7b2;
+  --board-dark: #c9793d;
+  --board-highlight: #ffd166;
+  --shadow: 0 24px 70px rgba(70, 40, 20, 0.14);
+  --legal-dot-color: rgba(255, 170, 74, 0.78);
+  --text-on-accent-strong: #353535;
+}
 [data-theme=refined] {
   --bg: #e8eef5;
   --paper: rgba(248, 252, 255, 0.88);
@@ -423,6 +448,21 @@
       #f5edd8,
       #ece0c4);
 }
+[data-theme=base] body {
+  background:
+    radial-gradient(
+      circle at top left,
+      rgba(201, 121, 61, 0.2),
+      transparent 32%),
+    radial-gradient(
+      circle at bottom right,
+      rgba(166, 93, 45, 0.14),
+      transparent 28%),
+    linear-gradient(
+      135deg,
+      #f7ebdb,
+      #edd8be);
+}
 [data-theme=refined] body {
   background:
     radial-gradient(
@@ -464,6 +504,9 @@
 }
 [data-theme=walnut] .board {
   background: #a07848;
+}
+[data-theme=base] .board {
+  background: #b86d37;
 }
 [data-theme=refined] .board {
   background: #4d687f;
@@ -548,9 +591,16 @@
 [data-theme=walnut] .square.selected {
   box-shadow: inset 0 0 0 5px rgba(240, 196, 50, 0.88);
 }
+[data-theme=base] .square.selected {
+  box-shadow: inset 0 0 0 5px rgba(255, 201, 109, 0.9);
+}
 [data-theme=walnut] .square.last-move::before {
   background: rgba(255, 140, 0, 0.4) !important;
   box-shadow: inset 0 0 0 2px rgba(255, 140, 0, 0.6) !important;
+}
+[data-theme=base] .square.last-move::before {
+  background: rgba(255, 161, 72, 0.42) !important;
+  box-shadow: inset 0 0 0 2px rgba(255, 145, 56, 0.58) !important;
 }
 [data-theme=refined] .square.selected {
   box-shadow: inset 0 0 0 5px rgba(255, 209, 102, 0.84);
@@ -582,6 +632,9 @@
 [data-theme=walnut] .theme-switcher {
   border-color: rgba(92, 58, 30, 0.14);
 }
+[data-theme=base] .theme-switcher {
+  border-color: rgba(120, 70, 36, 0.14);
+}
 [data-theme=refined] .theme-switcher {
   border-color: rgba(24, 71, 108, 0.16);
 }
@@ -606,6 +659,13 @@
       #b58863 40%,
       #f0d9b5 100%);
 }
+.theme-btn[data-theme=base] {
+  background:
+    linear-gradient(
+      135deg,
+      #c9793d 40%,
+      #f2d7b2 100%);
+}
 .theme-btn[data-theme=refined] {
   background:
     linear-gradient(
@@ -618,6 +678,9 @@
 }
 [data-theme=walnut] .animation-btn.active {
   background: color-mix(in srgb, #8b5e34 66%, #3d2412);
+}
+[data-theme=base] .animation-btn.active {
+  background: color-mix(in srgb, #b86b35 66%, #542e16);
 }
 [data-theme=refined] .animation-btn.active {
   background: color-mix(in srgb, #2f678f 66%, #1a3a57);
@@ -652,6 +715,9 @@
 }
 [data-theme=walnut] .captures-row {
   background: rgba(139, 94, 52, 0.08);
+}
+[data-theme=base] .captures-row {
+  background: rgba(184, 107, 53, 0.08);
 }
 
 /* src/client/button-animations.css */
@@ -4134,6 +4200,45 @@ body.focus-mode.focus-analyze .nav-row button:hover {
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
 }
+.saved-games-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+.saved-games-clear-button {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+}
+.saved-games-clear-confirm {
+  border: 1px solid rgba(25, 35, 32, 0.14);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--paper) 92%, #f6c9b0 8%);
+  padding: 10px 11px;
+  display: grid;
+  gap: 9px;
+}
+.saved-games-clear-confirm-text {
+  margin: 0;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+.saved-games-clear-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.saved-games-clear-accept,
+.saved-games-clear-cancel {
+  min-height: 33px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+}
+.saved-games-clear-accept {
+  border-color: rgba(150, 35, 35, 0.3) !important;
+  color: #8a1f1f !important;
+}
 .saved-game-item {
   border: 1px solid rgba(25, 35, 32, 0.1);
   border-radius: 14px;
@@ -4230,6 +4335,12 @@ body.focus-mode .sidebar-backdrop {
   .saved-game-delete-button {
     min-height: 32px;
     padding: 0 9px;
+  }
+  .saved-games-clear-button,
+  .saved-games-clear-accept,
+  .saved-games-clear-cancel {
+    min-height: 32px;
+    padding: 0 10px;
   }
   .auth-name-input {
     min-width: 100%;

@@ -894,6 +894,27 @@ export async function deleteStoredGameForUser(userId: string, gameId: string): P
   return updatedGames.length;
 }
 
+export async function clearStoredGamesForUser(userId: string): Promise<number> {
+  const normalizedUserId = userId.trim();
+  if (!normalizedUserId) {
+    return 0;
+  }
+
+  const database = requireDb();
+  const documentRef = doc(database, "userGameHistory", normalizedUserId);
+
+  await setDoc(
+    documentRef,
+    {
+      games: [],
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+
+  return 0;
+}
+
 async function assignUniqueFriendId(database: Firestore, userId: string): Promise<string> {
   for (let attempt = 0; attempt < 64; attempt += 1) {
     const candidate = generateRandomFriendId();

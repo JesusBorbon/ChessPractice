@@ -1,4 +1,4 @@
-export type Theme = "forest" | "purple" | "walnut" | "refined";
+export type Theme = "forest" | "purple" | "walnut" | "refined" | "base";
 export type PieceThemeChoice = "original" | "chesscom" | "chesscomocean";
 export type SoundThemeChoice = "original" | "chesscom";
 
@@ -139,6 +139,7 @@ export function mountThemeSwitcher(): void {
           <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
           <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
           <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
+          <button class="theme-btn" data-theme="base" title="Base" aria-label="Base wood theme"></button>
         </div>
       </div>
       <div class="theme-switcher-row">

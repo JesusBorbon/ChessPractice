@@ -1959,12 +1959,11 @@ async function triggerBotResponse(engineMoveTimeMs?: number) {
     finalizeBotClockAfterMove(botRole);
     playSoundForSnapshot(state.snapshot);
 
-    if (state.premoves.length > 0) {
-      checkAndExecutePremove(); 
+    const premoveExecuted = state.premoves.length > 0 && checkAndExecutePremove();
+    if (!premoveExecuted) {
+      // Keep board, moves, and material captures in sync on all devices.
+      render(true);
     }
-
-    // Keep board, moves, and material captures in sync on all devices.
-    render(true);
   }
 }
 promotionDialog.addEventListener("click", (event) => {
@@ -2566,13 +2565,15 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
 
   // Sync selection
   if (state.selectedSquare) {
-    const currentPiece = chess.get(state.selectedSquare);
+    const activeRole = state.role;
+    const selectionBoard = activeRole && activeRole !== "spectator" && snapshot.turn !== activeRole
+      ? getVirtualBoard(chess.fen(), state.premoves, activeRole)
+      : chess;
+    const currentPiece = selectionBoard.get(state.selectedSquare);
     if (!currentPiece || !isOwnPiece(currentPiece.color)) {
       clearSelection();
     } else {
-      state.legalTargets = snapshot.turn === state.role
-        ? legalTargetsFor(state.selectedSquare)
-        : legalTargetsForRole(state.selectedSquare, state.role as PlayerRole);
+      state.legalTargets = selectionBoard.moves({ square: state.selectedSquare, verbose: true }).map((move) => move.to);
     }
   }
 
@@ -3159,8 +3160,12 @@ function getDisplayBoard(): Chess {
 
 function renderBoard(): void {
   if (ptrDragFrom) {
-    const pieceAtSource = chess.get(ptrDragFrom);
-    if (!pieceAtSource || pieceAtSource.color !== state.role) {
+    const activeRole = state.role;
+    const dragBoard = activeRole && activeRole !== "spectator" && state.snapshot?.turn !== activeRole
+      ? getVirtualBoard(chess.fen(), state.premoves, activeRole)
+      : chess;
+    const pieceAtSource = dragBoard.get(ptrDragFrom);
+    if (!pieceAtSource || (activeRole && activeRole !== "spectator" && pieceAtSource.color !== activeRole)) {
       cancelCurrentDrag();
     }
   }
@@ -3533,19 +3538,19 @@ function syncBoardInteractionState(): void {
 
 
 // main.ts
-function checkAndExecutePremove(): void {
+function checkAndExecutePremove(): boolean {
   const snapshot = state.snapshot;
-  if (!snapshot || !state.role || state.role === "spectator") return;
+  if (!snapshot || !state.role || state.role === "spectator") return false;
 
   if (snapshot.turn !== state.role || state.premoves.length === 0) {
-    return;
+    return false;
   }
 
   if (snapshot.checkmate || snapshot.draw || snapshot.winner !== null) {
     state.premoves = [];
     requestBoardRefresh();
     updateCaption();
-    return;
+    return false;
   }
 
   const { move: nextMove, pruned } = pullNextLegalPremove();
@@ -3554,16 +3559,14 @@ function checkAndExecutePremove(): void {
       requestBoardRefresh();
       updateCaption();
     }
-    return;
+    return false;
   }
 
   // Marcamos para que renderBoard sepa que este movimiento NO se anima
   suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
   animationFinished = true;
   tryMoveFromTo(nextMove.from, nextMove.to);
-
-  // Forzamos el refresco inmediato para limpiar las marcas rojas del premove
-  requestBoardRefresh(true);
+  return true;
 }
 
 function renderMoves(): void {
