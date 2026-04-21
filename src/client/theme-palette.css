@@ -280,6 +280,103 @@
   background: #b86d37;
 }
 
+/* Base wood: subtle grain/scratch texture with lightweight static gradients */
+[data-theme="base"] .board .square {
+  --base-file-shift: 0px;
+  --base-file-shift-2: 0px;
+  --base-rank-shift: 0px;
+  --base-rank-shift-2: 0px;
+}
+
+[data-theme="base"] .square.light {
+  background-color: #f2d7b2;
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      rgba(133, 84, 47, var(--base-grain-alpha-1, 0.075)) 0px,
+      rgba(133, 84, 47, var(--base-grain-alpha-1, 0.075)) 1px,
+      transparent 1px,
+      transparent var(--base-grain-gap-1, 12px)
+    ),
+    repeating-linear-gradient(
+      var(--base-grain-angle-2, 103deg),
+      transparent 0px,
+      transparent var(--base-grain-gap-2, 16px),
+      rgba(122, 72, 35, var(--base-grain-alpha-2, 0.06)) var(--base-grain-gap-2, 16px),
+      rgba(122, 72, 35, var(--base-grain-alpha-2, 0.06)) calc(var(--base-grain-gap-2, 16px) + 1px),
+      transparent calc(var(--base-grain-gap-2, 16px) + 1px),
+      transparent calc(var(--base-grain-gap-2, 16px) + var(--base-grain-repeat-2, 20px))
+    ),
+    repeating-linear-gradient(
+      var(--base-grain-angle-3, 17deg),
+      transparent 0px,
+      transparent var(--base-grain-gap-3, 28px),
+      rgba(154, 97, 55, var(--base-grain-alpha-3, 0.045)) var(--base-grain-gap-3, 28px),
+      rgba(154, 97, 55, var(--base-grain-alpha-3, 0.045)) calc(var(--base-grain-gap-3, 28px) + 1px),
+      transparent calc(var(--base-grain-gap-3, 28px) + 1px),
+      transparent calc(var(--base-grain-gap-3, 28px) + var(--base-grain-repeat-3, 31px))
+    );
+  background-position:
+    var(--base-file-shift) var(--base-rank-shift),
+    var(--base-file-shift-2) var(--base-rank-shift-2),
+    calc(var(--base-file-shift) + var(--base-file-shift-2)) calc(var(--base-rank-shift) + var(--base-rank-shift-2));
+}
+
+[data-theme="base"] .square.dark {
+  background-color: #c9793d;
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      rgba(107, 58, 27, var(--base-grain-alpha-1, 0.11)) 0px,
+      rgba(107, 58, 27, var(--base-grain-alpha-1, 0.11)) 1px,
+      transparent 1px,
+      transparent var(--base-grain-gap-1, 11px)
+    ),
+    repeating-linear-gradient(
+      var(--base-grain-angle-2, 102deg),
+      transparent 0px,
+      transparent var(--base-grain-gap-2, 14px),
+      rgba(90, 46, 18, var(--base-grain-alpha-2, 0.08)) var(--base-grain-gap-2, 14px),
+      rgba(90, 46, 18, var(--base-grain-alpha-2, 0.08)) calc(var(--base-grain-gap-2, 14px) + 1px),
+      transparent calc(var(--base-grain-gap-2, 14px) + 1px),
+      transparent calc(var(--base-grain-gap-2, 14px) + var(--base-grain-repeat-2, 16px))
+    ),
+    repeating-linear-gradient(
+      var(--base-grain-angle-3, 16deg),
+      transparent 0px,
+      transparent var(--base-grain-gap-3, 24px),
+      rgba(72, 35, 14, var(--base-grain-alpha-3, 0.06)) var(--base-grain-gap-3, 24px),
+      rgba(72, 35, 14, var(--base-grain-alpha-3, 0.06)) calc(var(--base-grain-gap-3, 24px) + 1px),
+      transparent calc(var(--base-grain-gap-3, 24px) + 1px),
+      transparent calc(var(--base-grain-gap-3, 24px) + var(--base-grain-repeat-3, 30px))
+    );
+  background-position:
+    var(--base-file-shift) var(--base-rank-shift),
+    var(--base-file-shift-2) var(--base-rank-shift-2),
+    calc(var(--base-file-shift) + var(--base-file-shift-2)) calc(var(--base-rank-shift) + var(--base-rank-shift-2));
+}
+
+/* Per-file offsets (a-h): creates non-repetitive grain flow */
+[data-theme="base"] .board .square[data-square^="a"] { --base-file-shift: -4px; --base-file-shift-2: 2px; }
+[data-theme="base"] .board .square[data-square^="b"] { --base-file-shift: 1px;  --base-file-shift-2: -3px; }
+[data-theme="base"] .board .square[data-square^="c"] { --base-file-shift: 5px;  --base-file-shift-2: 1px; }
+[data-theme="base"] .board .square[data-square^="d"] { --base-file-shift: -1px; --base-file-shift-2: 4px; }
+[data-theme="base"] .board .square[data-square^="e"] { --base-file-shift: 3px;  --base-file-shift-2: -1px; }
+[data-theme="base"] .board .square[data-square^="f"] { --base-file-shift: -3px; --base-file-shift-2: 3px; }
+[data-theme="base"] .board .square[data-square^="g"] { --base-file-shift: 2px;  --base-file-shift-2: -4px; }
+[data-theme="base"] .board .square[data-square^="h"] { --base-file-shift: -5px; --base-file-shift-2: 0px; }
+
+/* Per-rank offsets (1-8): adds vertical variation */
+[data-theme="base"] .board .square[data-square$="1"] { --base-rank-shift: -3px; --base-rank-shift-2: 2px; }
+[data-theme="base"] .board .square[data-square$="2"] { --base-rank-shift: 2px;  --base-rank-shift-2: -2px; }
+[data-theme="base"] .board .square[data-square$="3"] { --base-rank-shift: 4px;  --base-rank-shift-2: 1px; }
+[data-theme="base"] .board .square[data-square$="4"] { --base-rank-shift: -2px; --base-rank-shift-2: 3px; }
+[data-theme="base"] .board .square[data-square$="5"] { --base-rank-shift: 1px;  --base-rank-shift-2: -4px; }
+[data-theme="base"] .board .square[data-square$="6"] { --base-rank-shift: -4px; --base-rank-shift-2: 0px; }
+[data-theme="base"] .board .square[data-square$="7"] { --base-rank-shift: 3px;  --base-rank-shift-2: 4px; }
+[data-theme="base"] .board .square[data-square$="8"] { --base-rank-shift: 0px;  --base-rank-shift-2: -3px; }
+}
+
 [data-theme="refined"] .board {
   background: #4d687f;
 }

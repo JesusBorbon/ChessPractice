@@ -98,6 +98,23 @@ type IncomingRoomJoinRequest = {
   roomId: string;
 };
 
+type WoodTextureOffsets = {
+  fileShift: number;
+  fileShift2: number;
+  rankShift: number;
+  rankShift2: number;
+  grainGap1: number;
+  grainGap2: number;
+  grainRepeat2: number;
+  grainGap3: number;
+  grainRepeat3: number;
+  grainAngle2: number;
+  grainAngle3: number;
+  grainAlpha1: number;
+  grainAlpha2: number;
+  grainAlpha3: number;
+};
+
 function computeBotResponseTiming(preset: BotDifficultyPreset, playerMove: Move | null): BotResponseTiming {
   const legalReplies = chess.moves({ verbose: true }).length;
   const moveCount = state.snapshot?.moveCount ?? 0;
@@ -287,6 +304,8 @@ let lowTimeWarningTimer: number | null = null;
 let profileIdentitySyncedForAutoJoin = false;
 let shouldCleanUiBeforeAutoJoin = initialRejoinRequested || Boolean(storedRoomReturnContext);
 const lowTimeWarningShownByColor: Record<PlayerRole, boolean> = { w: false, b: false };
+const woodTextureOffsetsBySquare = new Map<Square, WoodTextureOffsets>();
+let woodTextureSeed = (Math.random() * 0xffffffff) >>> 0;
 
 const SMOOTH_MOVE_DURATION_MS = 580;
 const FAST_MOVE_DURATION_MS = 244;
@@ -308,6 +327,76 @@ const PIECE_SYMBOLS_MAP: Record<string, string> = {
 } as const;
 const ROOM_CODE_LENGTH = 4;
 const ROOM_ID_PATTERN = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
+
+function createSeededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  if (state === 0) {
+    state = 0x9e3779b9;
+  }
+
+  return () => {
+    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+
+function randomIntInclusive(rand: () => number, min: number, max: number): number {
+  return Math.floor(rand() * (max - min + 1)) + min;
+}
+
+function randomFloat(rand: () => number, min: number, max: number): number {
+  return min + rand() * (max - min);
+}
+
+function regenerateWoodTextureOffsets(seed = (Math.random() * 0xffffffff) >>> 0): void {
+  woodTextureSeed = seed >>> 0;
+  const rand = createSeededRandom(woodTextureSeed ^ 0xa5c31d29);
+  woodTextureOffsetsBySquare.clear();
+
+  for (const squareName of buildSquareList("w")) {
+    const square = squareName as Square;
+    woodTextureOffsetsBySquare.set(square, {
+      fileShift: randomIntInclusive(rand, -10, 10),
+      fileShift2: randomIntInclusive(rand, -10, 10),
+      rankShift: randomIntInclusive(rand, -10, 10),
+      rankShift2: randomIntInclusive(rand, -10, 10),
+      grainGap1: randomIntInclusive(rand, 8, 18),
+      grainGap2: randomIntInclusive(rand, 10, 24),
+      grainRepeat2: randomIntInclusive(rand, 18, 46),
+      grainGap3: randomIntInclusive(rand, 14, 38),
+      grainRepeat3: randomIntInclusive(rand, 24, 68),
+      grainAngle2: randomIntInclusive(rand, 94, 116),
+      grainAngle3: randomIntInclusive(rand, 6, 30),
+      grainAlpha1: randomFloat(rand, 0.045, 0.12),
+      grainAlpha2: randomFloat(rand, 0.035, 0.1),
+      grainAlpha3: randomFloat(rand, 0.025, 0.085),
+    });
+  }
+}
+
+function applyWoodTextureOffsets(button: HTMLButtonElement, square: Square): void {
+  const offsets = woodTextureOffsetsBySquare.get(square);
+  if (!offsets) {
+    return;
+  }
+
+  button.style.setProperty("--base-file-shift", `${offsets.fileShift}px`);
+  button.style.setProperty("--base-file-shift-2", `${offsets.fileShift2}px`);
+  button.style.setProperty("--base-rank-shift", `${offsets.rankShift}px`);
+  button.style.setProperty("--base-rank-shift-2", `${offsets.rankShift2}px`);
+  button.style.setProperty("--base-grain-gap-1", `${offsets.grainGap1}px`);
+  button.style.setProperty("--base-grain-gap-2", `${offsets.grainGap2}px`);
+  button.style.setProperty("--base-grain-repeat-2", `${offsets.grainRepeat2}px`);
+  button.style.setProperty("--base-grain-gap-3", `${offsets.grainGap3}px`);
+  button.style.setProperty("--base-grain-repeat-3", `${offsets.grainRepeat3}px`);
+  button.style.setProperty("--base-grain-angle-2", `${offsets.grainAngle2}deg`);
+  button.style.setProperty("--base-grain-angle-3", `${offsets.grainAngle3}deg`);
+  button.style.setProperty("--base-grain-alpha-1", offsets.grainAlpha1.toFixed(3));
+  button.style.setProperty("--base-grain-alpha-2", offsets.grainAlpha2.toFixed(3));
+  button.style.setProperty("--base-grain-alpha-3", offsets.grainAlpha3.toFixed(3));
+}
+
+regenerateWoodTextureOffsets();
 
 function resolveSmoothMoveDurationMs(style: AnimationStyle): number {
   return style === "fast" ? FAST_MOVE_DURATION_MS : SMOOTH_MOVE_DURATION_MS;
@@ -844,6 +933,7 @@ function resetTransientRoomUiBeforeControlledRejoin(): void {
   animatingToSquare = null;
   _lastPlayedMoveCount = -1;
   roomInput.value = "";
+  regenerateWoodTextureOffsets();
   voiceChatController.syncSession({
     roomId: null,
     role: null,
@@ -2451,6 +2541,7 @@ socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl
     suppressAnimationForMove = null;
     lastAnimatedMoveKey = null;
     _lastPlayedMoveCount = -1;
+    regenerateWoodTextureOffsets();
     clearArrows();
     chess.reset();
     resetLowTimeWarningState();
@@ -2538,6 +2629,7 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
     && previousMoveCount > 0
   ) {
     resetLowTimeWarningState();
+    regenerateWoodTextureOffsets();
   }
 
   state.snapshot = snapshot;
@@ -3225,6 +3317,7 @@ function renderBoard(): void {
     button.tabIndex = -1;
     button.className = `square ${isLightSquare(squareName) ? "light" : "dark"}`;
     button.dataset.square = squareName;
+    applyWoodTextureOffsets(button, square);
 
   if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
   if (checkedKingSquare === squareName) button.classList.add("in-check");
@@ -4394,6 +4487,7 @@ function startBotGame(playerSide: PlayerRole = state.botPlayerSide) {
   state.legalTargets = [];
   state.viewCursor = null;
   accountSidebarController.setFriendPresenceActivity("playing-bot");
+  regenerateWoodTextureOffsets();
   
   chess.reset();
   
