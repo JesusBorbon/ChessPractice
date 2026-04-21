@@ -34621,8 +34621,7 @@ var require_main_runtime = __commonJS({
       const squareButton = event.target.closest(".square");
       const square = squareButton?.dataset.square;
       if (!square) {
-        if (state.premoves.length > 0 || state.selectedSquare) {
-          state.premoves = [];
+        if (state.selectedSquare) {
           state.selectedSquare = null;
           state.legalTargets = [];
           requestBoardRefresh(true);
@@ -35426,6 +35425,7 @@ var require_main_runtime = __commonJS({
       const previousLegalTargetsKey = state.legalTargets.join(",");
       const previousFen = chess.fen();
       let boardRefreshForcedByArrowClear = false;
+      let boardRefreshForcedByPremoveQueueChange = false;
       if (!snapshot.checkmate && !snapshot.draw && snapshot.winner === null && snapshot.moveCount === 0 && previousMoveCount > 0) {
         resetLowTimeWarningState();
       }
@@ -35462,22 +35462,25 @@ var require_main_runtime = __commonJS({
         }
       }
       if (state.role && state.role !== "spectator" && snapshot.turn === state.role && state.premoves.length > 0) {
-        const nextMove = state.premoves.shift();
-        if (nextMove) {
-          const isLegal = chess.moves({ verbose: true }).some((m) => m.from === nextMove.from && m.to === nextMove.to);
-          if (isLegal && !snapshot.checkmate && !snapshot.draw) {
+        if (!snapshot.checkmate && !snapshot.draw && snapshot.winner === null) {
+          const { move: nextMove, pruned } = pullNextLegalPremove();
+          if (pruned > 0) {
+            boardRefreshForcedByPremoveQueueChange = true;
+          }
+          if (nextMove) {
             suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
             socket.emit("game:move", nextMove.promotion ? nextMove : { from: nextMove.from, to: nextMove.to });
             void maybeRunLiveAnalysis(snapshot);
             return;
-          } else {
-            state.premoves = [];
           }
+        } else {
+          state.premoves = [];
+          boardRefreshForcedByPremoveQueueChange = true;
         }
       }
       const legalTargetsChanged = previousLegalTargetsKey !== state.legalTargets.join(",");
       const boardStateChanged = previousFen !== snapshot.fen || previousMoveCount !== snapshot.moveCount || previousTurn !== snapshot.turn || previousStatus !== snapshot.status || previousWinner !== snapshot.winner || previousCheckmate !== snapshot.checkmate || previousDraw !== snapshot.draw || previousAnalysisEnabled !== snapshot.analysis.enabled || previousSelectedSquare !== state.selectedSquare || legalTargetsChanged || previousSnapshot === null;
-      if (!boardRefreshForcedByArrowClear && boardStateChanged) {
+      if (!boardRefreshForcedByArrowClear && (boardStateChanged || boardRefreshForcedByPremoveQueueChange)) {
         requestBoardRefresh();
       }
       renderSession();
@@ -36171,20 +36174,27 @@ var require_main_runtime = __commonJS({
     function checkAndExecutePremove() {
       const snapshot = state.snapshot;
       if (!snapshot || !state.role || state.role === "spectator") return;
-      if (snapshot.turn === state.role && state.premoves.length > 0) {
-        const nextMove = state.premoves.shift();
-        if (nextMove) {
-          const isLegal = chess.moves({ verbose: true }).some((m) => m.from === nextMove.from && m.to === nextMove.to);
-          if (isLegal && !snapshot.checkmate && !snapshot.draw) {
-            suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
-            animationFinished = true;
-            tryMoveFromTo(nextMove.from, nextMove.to);
-            requestBoardRefresh(true);
-          } else {
-            state.premoves = [];
-          }
-        }
+      if (snapshot.turn !== state.role || state.premoves.length === 0) {
+        return;
       }
+      if (snapshot.checkmate || snapshot.draw || snapshot.winner !== null) {
+        state.premoves = [];
+        requestBoardRefresh();
+        updateCaption();
+        return;
+      }
+      const { move: nextMove, pruned } = pullNextLegalPremove();
+      if (!nextMove) {
+        if (pruned > 0) {
+          requestBoardRefresh();
+          updateCaption();
+        }
+        return;
+      }
+      suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
+      animationFinished = true;
+      tryMoveFromTo(nextMove.from, nextMove.to);
+      requestBoardRefresh(true);
     }
     function renderMoves() {
       const snapshot = state.snapshot;
@@ -36921,12 +36931,6 @@ var require_main_runtime = __commonJS({
           state.legalTargets = vBoard.moves({ square, verbose: true }).map((m) => m.to);
           requestBoardRefresh(true);
           updateCaption();
-        } else {
-          if (state.premoves.length > 0) {
-            state.premoves = [];
-            requestBoardRefresh(true);
-            updateCaption();
-          }
         }
         return;
       }
@@ -36940,11 +36944,34 @@ var require_main_runtime = __commonJS({
       if (pieceToMove && isTheoreticallyPossible(state.selectedSquare, square, pieceToMove.type, pieceToMove.color)) {
         queuePremove(state.selectedSquare, square);
       } else {
-        state.premoves = [];
-        clearSelection();
+        if (clickedPiece && clickedPiece.color === state.role) {
+          state.selectedSquare = square;
+          state.legalTargets = vBoard.moves({ square, verbose: true }).map((m) => m.to);
+        } else {
+          clearSelection();
+        }
         requestBoardRefresh(true);
       }
       updateCaption();
+    }
+    function pullNextLegalPremove() {
+      const legalMoves = chess.moves({ verbose: true });
+      let pruned = 0;
+      while (state.premoves.length > 0) {
+        const queued = state.premoves[0];
+        if (!queued) {
+          break;
+        }
+        const isLegalNow = legalMoves.some((move) => move.from === queued.from && move.to === queued.to);
+        if (!isLegalNow) {
+          state.premoves.shift();
+          pruned += 1;
+          continue;
+        }
+        state.premoves.shift();
+        return { move: queued, pruned };
+      }
+      return { move: null, pruned };
     }
     function isOwnPiece(color) {
       return state.role === color;

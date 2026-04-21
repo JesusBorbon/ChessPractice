@@ -1421,8 +1421,7 @@ board.addEventListener("click", (event) => {
   const squareButton = (event.target as HTMLElement).closest<HTMLButtonElement>(".square");
   const square = squareButton?.dataset.square as Square | undefined;
   if (!square) {
-    if (state.premoves.length > 0 || state.selectedSquare) {
-      state.premoves = [];
+    if (state.selectedSquare) {
       state.selectedSquare = null;
       state.legalTargets = [];
       requestBoardRefresh(true); // Force a refresh even if animating
@@ -2468,6 +2467,7 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
   const previousLegalTargetsKey = state.legalTargets.join(",");
   const previousFen = chess.fen();
   let boardRefreshForcedByArrowClear = false;
+  let boardRefreshForcedByPremoveQueueChange = false;
   
   if (
     !snapshot.checkmate
@@ -2525,19 +2525,22 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
 
   // PREMOVE EXECUTION
   if (state.role && state.role !== "spectator" && snapshot.turn === state.role && state.premoves.length > 0) {
-    const nextMove = state.premoves.shift();
-    if (nextMove) {
-      const isLegal = chess.moves({ verbose: true }).some(m => m.from === nextMove.from && m.to === nextMove.to);
-      
-      if (isLegal && !snapshot.checkmate && !snapshot.draw) {
+    if (!snapshot.checkmate && !snapshot.draw && snapshot.winner === null) {
+      const { move: nextMove, pruned } = pullNextLegalPremove();
+      if (pruned > 0) {
+        boardRefreshForcedByPremoveQueueChange = true;
+      }
+
+      if (nextMove) {
         suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
         socket.emit("game:move", nextMove.promotion ? nextMove : { from: nextMove.from, to: nextMove.to });
         void maybeRunLiveAnalysis(snapshot);
         // Note: We return here because the server will send another state for this move.
-        return; 
-      } else {
-        state.premoves = [];
+        return;
       }
+    } else {
+      state.premoves = [];
+      boardRefreshForcedByPremoveQueueChange = true;
     }
   }
 
@@ -2557,7 +2560,7 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
 
   // Keep board work limited to actual board-state changes.
   // This avoids iOS/Safari-class flicker when only clocks/session text update.
-  if (!boardRefreshForcedByArrowClear && boardStateChanged) {
+  if (!boardRefreshForcedByArrowClear && (boardStateChanged || boardRefreshForcedByPremoveQueueChange)) {
     // Never force-cancel active animations on routine room ticks.
     // If an animation is active, requestBoardRefresh() queues a safe render.
     requestBoardRefresh();
@@ -3472,25 +3475,33 @@ function checkAndExecutePremove(): void {
   const snapshot = state.snapshot;
   if (!snapshot || !state.role || state.role === "spectator") return;
 
-  if (snapshot.turn === state.role && state.premoves.length > 0) {
-    const nextMove = state.premoves.shift();
-    if (nextMove) {
-      const isLegal = chess.moves({ verbose: true }).some(m => m.from === nextMove.from && m.to === nextMove.to);
-      
-      if (isLegal && !snapshot.checkmate && !snapshot.draw) {
-        // Marcamos para que renderBoard sepa que este movimiento NO se anima
-        suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
-        animationFinished = true; 
-
-        tryMoveFromTo(nextMove.from, nextMove.to);
-
-        // Forzamos el refresco inmediato para limpiar las marcas rojas del premove
-        requestBoardRefresh(true); 
-      } else {
-        state.premoves = [];
-      }
-    }
+  if (snapshot.turn !== state.role || state.premoves.length === 0) {
+    return;
   }
+
+  if (snapshot.checkmate || snapshot.draw || snapshot.winner !== null) {
+    state.premoves = [];
+    requestBoardRefresh();
+    updateCaption();
+    return;
+  }
+
+  const { move: nextMove, pruned } = pullNextLegalPremove();
+  if (!nextMove) {
+    if (pruned > 0) {
+      requestBoardRefresh();
+      updateCaption();
+    }
+    return;
+  }
+
+  // Marcamos para que renderBoard sepa que este movimiento NO se anima
+  suppressAnimationForMove = { from: nextMove.from, to: nextMove.to };
+  animationFinished = true;
+  tryMoveFromTo(nextMove.from, nextMove.to);
+
+  // Forzamos el refresco inmediato para limpiar las marcas rojas del premove
+  requestBoardRefresh(true);
 }
 
 function renderMoves(): void {
@@ -4452,13 +4463,6 @@ function onPremoveSquarePressed(square: Square): void {
       state.legalTargets = vBoard.moves({ square, verbose: true }).map(m => m.to);
       requestBoardRefresh(true); // Force refresh to show selection
       updateCaption();
-    } else {
-      // FIX: Clicking empty or opponent piece cancels all premoves ONLY if you have them.
-      if (state.premoves.length > 0) {
-        state.premoves = [];
-        requestBoardRefresh(true);
-        updateCaption();
-      }
     }
     return;
   }
@@ -4474,13 +4478,40 @@ function onPremoveSquarePressed(square: Square): void {
   if (pieceToMove && isTheoreticallyPossible(state.selectedSquare, square, pieceToMove.type, pieceToMove.color)) {
     queuePremove(state.selectedSquare, square);
   } else {
-    // Clicking a random area while a piece is selected now clears everything
-    state.premoves = [];
-    clearSelection();
-    requestBoardRefresh(true);
+    // Keep queued premoves intact; only adjust the active selection context.
+    if (clickedPiece && clickedPiece.color === state.role) {
+      state.selectedSquare = square;
+      state.legalTargets = vBoard.moves({ square, verbose: true }).map(m => m.to);
+    } else {
+      clearSelection();
+    }
+    requestBoardRefresh(true); 
   }
 
   updateCaption();
+}
+
+function pullNextLegalPremove(): { move: (typeof state.premoves)[number] | null; pruned: number } {
+  const legalMoves = chess.moves({ verbose: true });
+  let pruned = 0;
+
+  while (state.premoves.length > 0) {
+    const queued = state.premoves[0];
+    if (!queued) {
+      break;
+    }
+    const isLegalNow = legalMoves.some((move) => move.from === queued.from && move.to === queued.to);
+    if (!isLegalNow) {
+      state.premoves.shift();
+      pruned += 1;
+      continue;
+    }
+
+    state.premoves.shift();
+    return { move: queued, pruned };
+  }
+
+  return { move: null, pruned };
 }
 
 function isOwnPiece(color: PlayerRole): boolean {
