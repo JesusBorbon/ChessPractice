@@ -55,6 +55,31 @@ body {
   font-family: "Space Grotesk", "Segoe UI", sans-serif;
 }
 
+/* Mobile GPU fallback: disable forced GPU compositing and heavy glass layers */
+html.gpu-accel-off .square,
+html.gpu-accel-off .piece-image {
+  transform: none !important;
+}
+
+html.gpu-accel-off .piece,
+html.gpu-accel-off .ghost-piece,
+html.gpu-accel-off .capture-splatter,
+html.gpu-accel-off .capture-drop,
+html.gpu-accel-off .capture-blood-pool {
+  will-change: auto !important;
+}
+
+html.gpu-accel-off .piece-image {
+  backface-visibility: visible !important;
+}
+
+html.gpu-accel-off *,
+html.gpu-accel-off *::before,
+html.gpu-accel-off *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 button,
 input {
   font: inherit;

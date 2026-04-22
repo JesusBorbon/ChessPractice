@@ -89,7 +89,7 @@ import { buildFinishedGameSignature, buildPgnFromMoves } from "./pgn-utils";
 import { StockfishBridge } from "./stockfish-bridge";
 import { mountThemeSwitcher, normalizeAnimationStyle, type AnimationStyle, type PieceThemeChoice, type SoundThemeChoice } from "./theme";
 import { formatClockMs, getDisplayClockMs } from "./utils/clock-render-utils";
-import { isElementMostlyVisible, isTypingTarget, shouldAutoScrollInviteJoin } from "./utils/interaction-utils";
+import { isElementMostlyVisible, isTypingTarget, mountGpuAccelerationPolicy, shouldAutoScrollInviteJoin } from "./utils/interaction-utils";
 
 type IncomingRoomJoinRequest = {
   requestId: string;
@@ -219,6 +219,8 @@ const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
   throw new Error("Missing #app root element.");
 }
+
+mountGpuAccelerationPolicy();
 
 const initialQuery = new URLSearchParams(window.location.search);
 const initialRoomCode = initialQuery.get("room")?.trim() ?? null;

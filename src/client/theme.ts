@@ -1,4 +1,4 @@
-export type Theme = "forest" | "purple" | "walnut" | "refined" | "base";
+export type Theme = "forest" | "purple" | "walnut" | "refined" | "base" | "slate";
 export type PieceThemeChoice = "original" | "chesscom" | "chesscomocean";
 export type SoundThemeChoice = "original" | "chesscom";
 
@@ -12,6 +12,7 @@ export type AnimationStyle = "smooth" | "fast" | "epic";
 const ANIMATION_STORAGE_KEY = "chess-animation-style";
 const BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
 const LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves"; // NEW
+const THEME_OPTIONS: readonly Theme[] = ["forest", "purple", "walnut", "refined", "base", "slate"];
 
 export function normalizeAnimationStyle(value: string | null): AnimationStyle {
   if (value === "epic") return "epic";
@@ -27,6 +28,13 @@ function normalizePieceTheme(value: string | null): PieceThemeChoice {
 
 function normalizeSoundTheme(value: string | null): SoundThemeChoice {
   return value === "chesscom" ? "chesscom" : "original";
+}
+
+function normalizeTheme(value: string | null): Theme {
+  if (value && THEME_OPTIONS.includes(value as Theme)) {
+    return value as Theme;
+  }
+  return "forest";
 }
 
 function setTheme(theme: Theme): void {
@@ -105,7 +113,7 @@ function setPanelCollapsed(widget: HTMLElement, toggleBtn: HTMLButtonElement, co
 }
 
 export function mountThemeSwitcher(): void {
-  const savedTheme = (localStorage.getItem(THEME_STORAGE_KEY) as Theme | null) || "forest";
+  const savedTheme = normalizeTheme(localStorage.getItem(THEME_STORAGE_KEY));
   const savedAnimationStyle = normalizeAnimationStyle(localStorage.getItem(ANIMATION_STORAGE_KEY));
   const savedPieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
   const savedSoundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
@@ -140,6 +148,7 @@ export function mountThemeSwitcher(): void {
           <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
           <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
           <button class="theme-btn" data-theme="base" title="Base" aria-label="Base wood theme"></button>
+          <button class="theme-btn" data-theme="slate" title="Soft Slate" aria-label="Soft Slate theme"></button>
         </div>
       </div>
       <div class="theme-switcher-row">

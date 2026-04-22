@@ -25,6 +25,7 @@ import {
 } from "./contexts/room-return-context";
 import { resolveGameParticipants, resolveGameParticipantsFromPgn } from "./game-display";
 import { mountThemeSwitcher, normalizeAnimationStyle, type AnimationStyle, type PieceThemeChoice, type SoundThemeChoice } from "./theme";
+import { mountGpuAccelerationPolicy } from "./utils/interaction-utils";
 
 type PromotionPiece = "q" | "r" | "b" | "n";
 type MoveCategory = "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder";
@@ -388,6 +389,7 @@ let analyzedBlackName = "Black";
 
 // ── Mount ──────────────────────────────────────────────────────────────────────
 const app = document.querySelector<HTMLDivElement>("#app")!;
+mountGpuAccelerationPolicy();
 
 app.innerHTML = `
 <div class="analyze-shell">

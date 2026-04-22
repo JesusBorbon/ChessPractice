@@ -418,6 +418,102 @@
   --legal-dot-color: rgba(60, 200, 255, 0.75);
   --text-on-accent-strong: #353535;
 }
+[data-theme=slate] {
+  --bg: #10161d;
+  --paper: rgba(19, 26, 34, 0.9);
+  --paper-strong: rgba(24, 32, 41, 0.96);
+  --ink: #e4ecf4;
+  --muted: #aab7c4;
+  --accent: #6f8da9;
+  --accent-strong: #3f566d;
+  --accent-soft: #22303d;
+  --gold: #c29e5b;
+  --quality-brilliant-bg: #d8f4ff;
+  --quality-brilliant-fg: #005f73;
+  --quality-great-bg: #dceeff;
+  --quality-great-fg: #214f80;
+  --quality-excellent-bg: #e8efd8;
+  --quality-excellent-fg: #3f5f19;
+  --quality-good-bg: #f1efd8;
+  --quality-good-fg: #6b6515;
+  --quality-inaccuracy-bg: #fef0d9;
+  --quality-inaccuracy-fg: #885814;
+  --quality-mistake-bg: #fee1d6;
+  --quality-mistake-fg: #913a21;
+  --quality-blunder-bg: #a04b5c;
+  --quality-blunder-fg: #fff4f6;
+  --quality-tag-blunder-bg: #efd5db;
+  --quality-tag-blunder-fg: #6d2f3f;
+  --move-row-bg:
+    linear-gradient(
+      135deg,
+      rgba(62, 84, 103, 0.34),
+      rgba(41, 58, 73, 0.28));
+  --move-row-border: rgba(126, 151, 174, 0.2);
+  --move-row-glow: rgba(76, 106, 132, 0.18);
+  --move-card-glow: rgba(58, 85, 108, 0.2);
+  --board-light: #d9dfdd;
+  --board-dark: #4d5662;
+  --board-highlight: #e6c36d;
+  --cta-rainbow-border:
+    linear-gradient(
+      120deg,
+      #7fa3c7,
+      #6f90b0,
+      #89a4be,
+      #a7b9cb,
+      #8fa8be,
+      #7fa3c7);
+  --cta-rainbow-glow:
+    linear-gradient(
+      130deg,
+      rgba(127, 163, 199, 0.34),
+      rgba(111, 144, 176, 0.3),
+      rgba(137, 164, 190, 0.28),
+      rgba(167, 185, 203, 0.3),
+      rgba(143, 168, 190, 0.3));
+  --cta-gold-border:
+    linear-gradient(
+      120deg,
+      #fff1cf,
+      #e7c77d,
+      #c99a4c,
+      #e2bf6f,
+      #f3db9f,
+      #fff1cf);
+  --cta-gold-glow:
+    linear-gradient(
+      130deg,
+      rgba(255, 241, 207, 0.3),
+      rgba(231, 199, 125, 0.28),
+      rgba(201, 154, 76, 0.28),
+      rgba(226, 191, 111, 0.27),
+      rgba(243, 219, 159, 0.3));
+  --cta-turquoise-border:
+    linear-gradient(
+      120deg,
+      #d5ebf7,
+      #a6d5ec,
+      #7fc4e3,
+      #9cd0ea,
+      #c0e3f3,
+      #d5ebf7);
+  --cta-turquoise-glow:
+    linear-gradient(
+      130deg,
+      rgba(213, 235, 247, 0.3),
+      rgba(166, 213, 236, 0.28),
+      rgba(127, 196, 227, 0.26),
+      rgba(156, 208, 234, 0.28),
+      rgba(192, 227, 243, 0.3));
+  --cta-random-hue: 210;
+  --shadow: 0 24px 70px rgba(6, 10, 14, 0.42);
+  --radius-xl: 28px;
+  --radius-lg: 20px;
+  --radius-md: 14px;
+  --legal-dot-color: rgba(64, 146, 207, 0.72);
+  --text-on-accent-strong: #eef4fb;
+}
 [data-theme=purple] body {
   background:
     radial-gradient(
@@ -478,6 +574,21 @@
       #edf3f9,
       #e1e9f2);
 }
+[data-theme=slate] body {
+  background:
+    radial-gradient(
+      circle at top left,
+      rgba(108, 136, 163, 0.2),
+      transparent 34%),
+    radial-gradient(
+      circle at bottom right,
+      rgba(183, 148, 76, 0.1),
+      transparent 30%),
+    linear-gradient(
+      135deg,
+      #121922,
+      #0d141b);
+}
 [data-theme=purple] .pregame-placeholder {
   border-color: rgba(186, 146, 255, 0.26);
   --pregame-overlay-start: rgba(32, 20, 58, 0.8);
@@ -498,6 +609,12 @@
   --pregame-overlay-start: rgba(244, 250, 255, 0.84);
   --pregame-overlay-end: rgba(229, 239, 247, 0.7);
   color: #102437;
+}
+[data-theme=slate] .pregame-placeholder {
+  border-color: rgba(53, 78, 101, 0.18);
+  --pregame-overlay-start: rgba(25, 34, 43, 0.84);
+  --pregame-overlay-end: rgba(18, 26, 33, 0.72);
+  color: #d9e5ef;
 }
 [data-theme=purple] .board {
   background: #28105a;
@@ -641,6 +758,9 @@
 } [data-theme="refined"] .board {
   background: #4d687f;
 }
+[data-theme=slate] .board {
+  background: #3f4751;
+}
 [data-theme=classic] .board {
   background: #09ff00;
 }
@@ -651,6 +771,10 @@
 [data-theme=refined] .hero-card,
 [data-theme=refined] .panel {
   border-color: rgba(36, 95, 142, 0.14);
+}
+[data-theme=slate] .hero-card,
+[data-theme=slate] .panel {
+  border-color: rgba(53, 78, 101, 0.14);
 }
 [data-theme=purple] .ghost,
 [data-theme=purple] .chip,
@@ -674,6 +798,17 @@
 [data-theme=refined] .promotion-button:hover {
   background: rgba(31, 93, 139, 0.18);
 }
+[data-theme=slate] .ghost,
+[data-theme=slate] .chip,
+[data-theme=slate] .promotion-button {
+  background: rgba(130, 159, 185, 0.16);
+  color: var(--ink);
+}
+[data-theme=slate] .ghost:hover,
+[data-theme=slate] .chip:hover,
+[data-theme=slate] .promotion-button:hover {
+  background: rgba(130, 159, 185, 0.24);
+}
 [data-theme=purple] .join-input {
   background: rgba(40, 25, 72, 0.85);
   border-color: rgba(180, 140, 255, 0.22);
@@ -684,11 +819,19 @@
   border-color: rgba(24, 71, 108, 0.18);
   color: var(--ink);
 }
+[data-theme=slate] .join-input {
+  background: rgba(22, 31, 39, 0.94);
+  border-color: rgba(126, 151, 174, 0.24);
+  color: var(--ink);
+}
 [data-theme=purple] .promotion-card {
   background: #1c1232;
 }
 [data-theme=refined] .promotion-card {
   background: #f6fafe;
+}
+[data-theme=slate] .promotion-card {
+  background: #1a242f;
 }
 [data-theme=purple] .seat {
   background: rgba(160, 100, 255, 0.1);
@@ -707,6 +850,48 @@
 }
 [data-theme=refined] .status-pill {
   background: rgba(31, 93, 139, 0.1);
+}
+[data-theme=slate] .seat {
+  background: rgba(70, 96, 122, 0.22);
+}
+[data-theme=slate] .move-row {
+  background: rgba(70, 96, 122, 0.22);
+}
+[data-theme=slate] .status-pill {
+  background: rgba(70, 96, 122, 0.24);
+}
+[data-theme=slate] .game-nav {
+  width: fit-content;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(16, 23, 30, 0.92),
+      rgba(10, 16, 22, 0.9));
+  border: 1px solid rgba(210, 224, 237, 0.14);
+  box-shadow: 0 10px 24px rgba(11, 16, 21, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+[data-theme=slate] .nav-back-link {
+  color: #d8e4ef;
+}
+[data-theme=slate] .nav-back-link:hover {
+  color: #f3f8fc;
+}
+[data-theme=slate] .nav-row {
+  width: fit-content;
+  margin-inline: auto;
+  padding: 6px;
+  border-radius: 14px;
+  background: rgba(11, 17, 23, 0.8);
+  border: 1px solid rgba(210, 224, 237, 0.14);
+}
+[data-theme=slate] .nav-row button {
+  background: rgba(129, 157, 183, 0.22);
+  color: #e7eff7;
+}
+[data-theme=slate] .nav-row button:hover {
+  background: rgba(129, 157, 183, 0.3);
 }
 [data-theme=purple] .square.selected {
   box-shadow: inset 0 0 0 5px rgba(220, 160, 255, 0.85);
@@ -742,6 +927,16 @@
 [data-theme=refined] .square.legal::before {
   background: rgba(16, 56, 88, 0.2);
 }
+[data-theme=slate] .square.selected {
+  box-shadow: inset 0 0 0 5px rgba(230, 195, 109, 0.84);
+}
+[data-theme=slate] .square.last-move::before {
+  background: rgba(84, 159, 222, 0.34) !important;
+  box-shadow: inset 0 0 0 2px rgba(84, 159, 222, 0.5) !important;
+}
+[data-theme=slate] .square.legal::before {
+  background: rgba(33, 61, 86, 0.18);
+}
 [data-theme=refined] .square.premove-from::before {
   background: rgba(200, 50, 30, 0.45);
   box-shadow: inset 0 0 0 4px rgba(220, 50, 20, 0.95);
@@ -767,6 +962,18 @@
 }
 [data-theme=refined] .theme-switcher {
   border-color: rgba(24, 71, 108, 0.16);
+}
+[data-theme=slate] .theme-switcher {
+  background: rgba(10, 16, 22, 0.86);
+  border-color: rgba(53, 78, 101, 0.16);
+  box-shadow: 0 20px 44px rgba(9, 14, 18, 0.34);
+}
+[data-theme=slate] .theme-toggle-btn {
+  background: rgba(129, 157, 183, 0.24);
+  color: #e7eff7;
+}
+[data-theme=slate] .theme-toggle-btn:hover {
+  background: rgba(129, 157, 183, 0.32);
 }
 .theme-btn[data-theme=forest] {
   background:
@@ -803,6 +1010,13 @@
       #6c879d 40%,
       #eaf0f5 100%);
 }
+.theme-btn[data-theme=slate] {
+  background:
+    linear-gradient(
+      135deg,
+      #4d5662 40%,
+      #d9dfdd 100%);
+}
 [data-theme=purple] .animation-btn.active {
   background: color-mix(in srgb, #a568e8 65%, #2a154a);
 }
@@ -814,6 +1028,9 @@
 }
 [data-theme=refined] .animation-btn.active {
   background: color-mix(in srgb, #2f678f 66%, #1a3a57);
+}
+[data-theme=slate] .animation-btn.active {
+  background: color-mix(in srgb, #546b81 68%, #2f4458);
 }
 [data-theme=purple] #resignButton {
   background: rgba(255, 92, 92, 0.1);
@@ -848,6 +1065,9 @@
 }
 [data-theme=base] .captures-row {
   background: rgba(184, 107, 53, 0.08);
+}
+[data-theme=slate] .captures-row {
+  background: rgba(70, 96, 122, 0.08);
 }
 
 /* src/client/button-animations.css */
@@ -1058,6 +1278,26 @@ body {
     "Space Grotesk",
     "Segoe UI",
     sans-serif;
+}
+html.gpu-accel-off .square,
+html.gpu-accel-off .piece-image {
+  transform: none !important;
+}
+html.gpu-accel-off .piece,
+html.gpu-accel-off .ghost-piece,
+html.gpu-accel-off .capture-splatter,
+html.gpu-accel-off .capture-drop,
+html.gpu-accel-off .capture-blood-pool {
+  will-change: auto !important;
+}
+html.gpu-accel-off .piece-image {
+  backface-visibility: visible !important;
+}
+html.gpu-accel-off *,
+html.gpu-accel-off *::before,
+html.gpu-accel-off *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 button,
 input {

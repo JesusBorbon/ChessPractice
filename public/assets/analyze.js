@@ -3843,6 +3843,12 @@ function normalizePieceTheme2(value) {
 function normalizeSoundTheme2(value) {
   return value === "chesscom" ? "chesscom" : "original";
 }
+function normalizeTheme(value) {
+  if (value && THEME_OPTIONS.includes(value)) {
+    return value;
+  }
+  return "forest";
+}
 function setTheme(theme) {
   if (theme === "forest") {
     document.documentElement.removeAttribute("data-theme");
@@ -3911,7 +3917,7 @@ function setPanelCollapsed(widget, toggleBtn, collapsed) {
   localStorage.setItem(THEME_PANEL_COLLAPSED_KEY, collapsed ? "1" : "0");
 }
 function mountThemeSwitcher() {
-  const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || "forest";
+  const savedTheme = normalizeTheme(localStorage.getItem(THEME_STORAGE_KEY));
   const savedAnimationStyle = normalizeAnimationStyle(localStorage.getItem(ANIMATION_STORAGE_KEY));
   const savedPieceTheme = normalizePieceTheme2(localStorage.getItem(PIECE_THEME_STORAGE_KEY2));
   const savedSoundTheme = normalizeSoundTheme2(localStorage.getItem(SOUND_THEME_STORAGE_KEY2));
@@ -3938,6 +3944,7 @@ function mountThemeSwitcher() {
           <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
           <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
           <button class="theme-btn" data-theme="base" title="Base" aria-label="Base wood theme"></button>
+          <button class="theme-btn" data-theme="slate" title="Soft Slate" aria-label="Soft Slate theme"></button>
         </div>
       </div>
       <div class="theme-switcher-row">
@@ -4047,7 +4054,7 @@ function mountThemeSwitcher() {
     btn.setAttribute("aria-checked", String(isActive));
   });
 }
-var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, PIECE_THEME_STORAGE_KEY2, SOUND_THEME_STORAGE_KEY2, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY, LEGAL_MOVES_STORAGE_KEY;
+var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, PIECE_THEME_STORAGE_KEY2, SOUND_THEME_STORAGE_KEY2, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY, LEGAL_MOVES_STORAGE_KEY, THEME_OPTIONS;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
@@ -4058,6 +4065,54 @@ var init_theme = __esm({
     ANIMATION_STORAGE_KEY = "chess-animation-style";
     BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
     LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
+    THEME_OPTIONS = ["forest", "purple", "walnut", "refined", "base", "slate"];
+  }
+});
+
+// src/client/utils/interaction-utils.ts
+function isMobileGpuFallbackTarget() {
+  const nav = navigator;
+  const userAgent = navigator.userAgent;
+  const normalizedPlatform = (nav.userAgentData?.platform ?? navigator.platform ?? "").toLowerCase();
+  const uaDataMobile = nav.userAgentData?.mobile === true;
+  const uaMobileOrTablet = /android|iphone|ipad|ipod|mobile|tablet|silk|kindle|playbook|opera mini|opera mobi/i.test(userAgent);
+  const platformMobileOrTablet = /android|ios|ipados|iphone|ipad|ipod/.test(normalizedPlatform);
+  const isIpadOsDesktopUa = normalizedPlatform === "macintel" && navigator.maxTouchPoints > 1;
+  const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
+  const hasNoHover = window.matchMedia("(hover: none)").matches;
+  const likelyTouchFirstDevice = isCoarsePointer && hasNoHover;
+  return uaDataMobile || uaMobileOrTablet || platformMobileOrTablet || isIpadOsDesktopUa || likelyTouchFirstDevice;
+}
+function applyGpuAccelerationPolicyClass() {
+  document.documentElement.classList.toggle(GPU_ACCEL_DISABLED_CLASS, isMobileGpuFallbackTarget());
+}
+function mountGpuAccelerationPolicy() {
+  if (gpuPolicyMounted) {
+    return;
+  }
+  gpuPolicyMounted = true;
+  applyGpuAccelerationPolicyClass();
+  const onViewportChange = () => {
+    applyGpuAccelerationPolicyClass();
+  };
+  window.addEventListener("resize", onViewportChange, { passive: true });
+  window.addEventListener("orientationchange", onViewportChange);
+  const coarsePointerQuery = window.matchMedia("(pointer: coarse)");
+  const noHoverQuery = window.matchMedia("(hover: none)");
+  if (typeof coarsePointerQuery.addEventListener === "function") {
+    coarsePointerQuery.addEventListener("change", onViewportChange);
+    noHoverQuery.addEventListener("change", onViewportChange);
+  } else {
+    coarsePointerQuery.addListener(onViewportChange);
+    noHoverQuery.addListener(onViewportChange);
+  }
+}
+var GPU_ACCEL_DISABLED_CLASS, gpuPolicyMounted;
+var init_interaction_utils = __esm({
+  "src/client/utils/interaction-utils.ts"() {
+    "use strict";
+    GPU_ACCEL_DISABLED_CLASS = "gpu-accel-off";
+    gpuPolicyMounted = false;
   }
 });
 
@@ -4076,6 +4131,7 @@ var require_analyze = __commonJS({
     init_room_return_context();
     init_game_display();
     init_theme();
+    init_interaction_utils();
     var CATEGORY_LABELS = {
       brilliant: "Brilliant",
       great: "Great",
@@ -4340,6 +4396,7 @@ var require_analyze = __commonJS({
     var analyzedWhiteName = "White";
     var analyzedBlackName = "Black";
     var app = document.querySelector("#app");
+    mountGpuAccelerationPolicy();
     app.innerHTML = `
 <div class="analyze-shell">
   <div class="analyze-topbar">

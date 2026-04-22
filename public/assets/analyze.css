@@ -1004,6 +1004,41 @@ body.focus-mode.focus-analyze .analyze-move-list {
 [data-theme=refined] .analyze-move-row span:not(:empty):hover {
   background: rgba(31, 93, 139, 0.14);
 }
+[data-theme=slate] .analyze-topbar {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(16, 23, 30, 0.92),
+      rgba(10, 16, 22, 0.9));
+  border: 1px solid rgba(210, 224, 237, 0.14);
+}
+[data-theme=slate] .analyze-topbar a {
+  color: #d8e4ef;
+}
+[data-theme=slate] .analyze-topbar a:hover {
+  color: #f3f8fc;
+}
+[data-theme=slate] .btn-ghost,
+[data-theme=slate] .nav-row button {
+  background: rgba(129, 157, 183, 0.22);
+  color: #e7eff7;
+}
+[data-theme=slate] .btn-ghost:hover,
+[data-theme=slate] .nav-row button:hover {
+  background: rgba(129, 157, 183, 0.3);
+}
+[data-theme=slate] .analyze-move-row {
+  background: rgba(70, 96, 122, 0.24);
+}
+[data-theme=slate] .analyze-move-row span.active-half {
+  background: rgba(112, 151, 183, 0.26);
+  color: #eef5fb;
+}
+[data-theme=slate] .analyze-move-row span:not(:empty):hover {
+  background: rgba(110, 146, 176, 0.24);
+}
 [data-theme=purple] .move-quality-badge.brilliant,
 [data-theme=purple] .piece-quality-marker.brilliant {
   background: #103645;
