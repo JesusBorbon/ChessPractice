@@ -1299,6 +1299,9 @@ html.gpu-accel-off *::after {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+html.gpu-accel-off .theme-switcher {
+  background: var(--bg) !important;
+}
 button,
 input {
   font: inherit;

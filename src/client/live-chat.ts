@@ -88,6 +88,7 @@ export type VoiceChatController = {
 
 const MAX_RECORDING_MS = 20_000;
 const RECORDER_AUDIO_BITS_PER_SECOND = 96_000;
+const RECORDER_STREAM_IDLE_RELEASE_MS = 8_000;
 const AUDIO_CAPTURE_CONSTRAINTS: MediaTrackConstraints = {
   echoCancellation: true,
   noiseSuppression: true,
@@ -124,6 +125,7 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
   let recording = false;
   let recordingStartedAt = 0;
   let recordingMaxTimer: number | null = null;
+  let recorderStreamReleaseTimer: number | null = null;
   let recorderMimeType = "audio/webm";
 
   const onChatState = (payload: ChatStatePayload): void => {
@@ -323,6 +325,7 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
     readMessageIds.clear();
     refs.chatInput.value = "";
     resetRecordingState();
+    stopRecorderStream();
   }
 
   async function sendTextMessage(): Promise<void> {
@@ -357,6 +360,40 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
     refs.chatVoiceButton.textContent = "Hold to Talk";
   }
 
+  function stopRecorderStream(): void {
+    if (recorderStreamReleaseTimer !== null) {
+      window.clearTimeout(recorderStreamReleaseTimer);
+      recorderStreamReleaseTimer = null;
+    }
+
+    if (!recorderStream) {
+      return;
+    }
+
+    for (const track of recorderStream.getTracks()) {
+      track.stop();
+    }
+    recorderStream = null;
+  }
+
+  function scheduleRecorderStreamRelease(delayMs = RECORDER_STREAM_IDLE_RELEASE_MS): void {
+    if (recording) {
+      return;
+    }
+
+    if (recorderStreamReleaseTimer !== null) {
+      window.clearTimeout(recorderStreamReleaseTimer);
+    }
+
+    recorderStreamReleaseTimer = window.setTimeout(() => {
+      recorderStreamReleaseTimer = null;
+      if (recording) {
+        return;
+      }
+      stopRecorderStream();
+    }, delayMs);
+  }
+
   function chooseRecorderMimeType(): string {
     if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
       return "audio/webm";
@@ -379,6 +416,11 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
   }
 
   async function ensureRecorderStream(): Promise<MediaStream | null> {
+    if (recorderStreamReleaseTimer !== null) {
+      window.clearTimeout(recorderStreamReleaseTimer);
+      recorderStreamReleaseTimer = null;
+    }
+
     if (recorderStream && recorderStream.active) {
       return recorderStream;
     }
@@ -458,6 +500,7 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
     }
 
     if (typeof MediaRecorder === "undefined") {
+      scheduleRecorderStreamRelease(0);
       showToast("Voice notes are not supported in this browser.");
       return;
     }
@@ -483,6 +526,7 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
     }
 
     if (!recorder) {
+      scheduleRecorderStreamRelease(0);
       showToast("Could not initialize voice recording.");
       return;
     }
@@ -512,6 +556,7 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
     } catch {
       recorder = null;
       resetRecordingState();
+      scheduleRecorderStreamRelease(0);
       showToast("Could not start voice recording.");
     }
   }
@@ -526,6 +571,7 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
         recorder.stop();
       } catch {
         resetRecordingState();
+        scheduleRecorderStreamRelease();
       }
     }
   }
@@ -538,6 +584,7 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
 
     recorder = null;
     resetRecordingState();
+    scheduleRecorderStreamRelease();
 
     if (!activeRecorder || !canUseChat() || !chatState.mutualConsent) {
       return;
@@ -757,6 +804,7 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
         shouldRender = true;
       }
       lastSyncKey = null;
+      stopRecorderStream();
     }
 
     if (shouldRender) {
@@ -792,13 +840,7 @@ export function createVoiceChatController({ socket, refs, showToast }: CreateVoi
 
     recorder = null;
     resetRecordingState();
-
-    if (recorderStream) {
-      for (const track of recorderStream.getTracks()) {
-        track.stop();
-      }
-      recorderStream = null;
-    }
+    stopRecorderStream();
   }
 
   render();

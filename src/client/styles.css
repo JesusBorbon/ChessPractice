@@ -80,6 +80,11 @@ html.gpu-accel-off *::after {
   -webkit-backdrop-filter: none !important;
 }
 
+/* Keep the theme switcher readable on mobile when glass blur is disabled. */
+html.gpu-accel-off .theme-switcher {
+  background: var(--bg) !important;
+}
+
 button,
 input {
   font: inherit;

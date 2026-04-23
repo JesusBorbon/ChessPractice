@@ -46,6 +46,7 @@ import {
   parseStoredRoomReturnContext,
   type StoredRoomReturnContext,
 } from "./contexts/room-return-context";
+import { createSoundEffectsPlayer } from "./audio/sound-effects-player";
 import { playSoundForHistoryNavigation, playSoundForMoveTraversal } from "./analysis/history-audio";
 import {
   appendLiveCategoryMarkerContent,
@@ -441,17 +442,14 @@ function triggerGameOverScreen(title: string, subtitle: string) {
 }
 
 // â”€â”€ Sound â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-const _audioCache: Record<string, HTMLAudioElement> = {};
+const soundEffectsPlayer = createSoundEffectsPlayer();
 
 function getPieceSpritePath(color: PlayerRole, piece: PieceSymbol): string {
   return resolvePieceSpritePath(state.pieceTheme, color, piece);
 }
 
 function stopAllCachedAudio(): void {
-  for (const audio of Object.values(_audioCache)) {
-    audio.pause();
-    audio.currentTime = 0;
-  }
+  soundEffectsPlayer.stopAll();
 }
 
 function playSound(name: string): void {
@@ -461,13 +459,7 @@ function playSound(name: string): void {
   }
 
   const src = resolveSoundPackSrc(state.soundTheme, normalizedName);
-  let audio = _audioCache[src];
-  if (!audio) {
-    audio = new Audio(src);
-    _audioCache[src] = audio;
-  }
-  audio.currentTime = 0;
-  audio.play().catch(() => {});
+  soundEffectsPlayer.play(src);
 }
 let _lastPlayedMoveCount = -1;
 

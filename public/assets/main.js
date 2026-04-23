@@ -31213,6 +31213,113 @@ var init_room_return_context = __esm({
   }
 });
 
+// src/client/audio/sound-effects-player.ts
+function createSoundEffectsPlayer() {
+  const fallbackAudioCache = {};
+  const decodedBufferLoads = /* @__PURE__ */ new Map();
+  const activeSources = /* @__PURE__ */ new Set();
+  let stopEpoch = 0;
+  let audioContext = null;
+  let masterGainNode = null;
+  function ensureAudioContext() {
+    if (audioContext) {
+      return audioContext;
+    }
+    const webkitWindow = window;
+    const AudioContextCtor = window.AudioContext ?? webkitWindow.webkitAudioContext;
+    if (!AudioContextCtor) {
+      return null;
+    }
+    audioContext = new AudioContextCtor();
+    masterGainNode = audioContext.createGain();
+    masterGainNode.gain.value = DEFAULT_SFX_GAIN;
+    masterGainNode.connect(audioContext.destination);
+    return audioContext;
+  }
+  async function loadDecodedBuffer(src, context) {
+    try {
+      const response = await fetch(src);
+      if (!response.ok) {
+        return null;
+      }
+      const encodedBuffer = await response.arrayBuffer();
+      return await context.decodeAudioData(encodedBuffer.slice(0));
+    } catch {
+      return null;
+    }
+  }
+  function playFallbackAudio(src) {
+    let audio = fallbackAudioCache[src];
+    if (!audio) {
+      audio = new Audio(src);
+      audio.preload = "auto";
+      fallbackAudioCache[src] = audio;
+    }
+    audio.currentTime = 0;
+    void audio.play().catch(() => {
+    });
+  }
+  function playFromBuffer(src) {
+    const requestEpoch = stopEpoch;
+    const context = ensureAudioContext();
+    if (!context || !masterGainNode) {
+      playFallbackAudio(src);
+      return;
+    }
+    void context.resume().catch(() => {
+    });
+    let bufferLoad = decodedBufferLoads.get(src);
+    if (!bufferLoad) {
+      bufferLoad = loadDecodedBuffer(src, context);
+      decodedBufferLoads.set(src, bufferLoad);
+    }
+    void bufferLoad.then((buffer) => {
+      if (requestEpoch !== stopEpoch) {
+        return;
+      }
+      if (!buffer) {
+        playFallbackAudio(src);
+        return;
+      }
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      source.connect(masterGainNode);
+      source.onended = () => {
+        activeSources.delete(source);
+      };
+      activeSources.add(source);
+      source.start(0);
+    }).catch(() => {
+      playFallbackAudio(src);
+    });
+  }
+  function stopAll() {
+    stopEpoch += 1;
+    for (const source of activeSources) {
+      try {
+        source.stop(0);
+      } catch {
+      }
+    }
+    activeSources.clear();
+    for (const audio of Object.values(fallbackAudioCache)) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+  }
+  return {
+    play: playFromBuffer,
+    stopAll
+  };
+}
+var DEFAULT_SFX_GAIN;
+var init_sound_effects_player = __esm({
+  "src/client/audio/sound-effects-player.ts"() {
+    "use strict";
+    DEFAULT_SFX_GAIN = 0.9;
+  }
+});
+
 // src/client/analysis/history-audio.ts
 function playSoundForMoveTraversal(moveSan, isCheck, isGameEnd, playSound) {
   if (isGameEnd) {
@@ -31453,6 +31560,7 @@ function createVoiceChatController({ socket, refs, showToast }) {
   let recording = false;
   let recordingStartedAt = 0;
   let recordingMaxTimer = null;
+  let recorderStreamReleaseTimer = null;
   let recorderMimeType = "audio/webm";
   const onChatState = (payload) => {
     chatState = payload;
@@ -31611,6 +31719,7 @@ function createVoiceChatController({ socket, refs, showToast }) {
     readMessageIds.clear();
     refs.chatInput.value = "";
     resetRecordingState();
+    stopRecorderStream();
   }
   async function sendTextMessage() {
     if (!canUseChat()) {
@@ -31638,6 +31747,34 @@ function createVoiceChatController({ socket, refs, showToast }) {
     refs.chatVoiceButton.classList.remove("is-recording");
     refs.chatVoiceButton.textContent = "Hold to Talk";
   }
+  function stopRecorderStream() {
+    if (recorderStreamReleaseTimer !== null) {
+      window.clearTimeout(recorderStreamReleaseTimer);
+      recorderStreamReleaseTimer = null;
+    }
+    if (!recorderStream) {
+      return;
+    }
+    for (const track of recorderStream.getTracks()) {
+      track.stop();
+    }
+    recorderStream = null;
+  }
+  function scheduleRecorderStreamRelease(delayMs = RECORDER_STREAM_IDLE_RELEASE_MS) {
+    if (recording) {
+      return;
+    }
+    if (recorderStreamReleaseTimer !== null) {
+      window.clearTimeout(recorderStreamReleaseTimer);
+    }
+    recorderStreamReleaseTimer = window.setTimeout(() => {
+      recorderStreamReleaseTimer = null;
+      if (recording) {
+        return;
+      }
+      stopRecorderStream();
+    }, delayMs);
+  }
   function chooseRecorderMimeType() {
     if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
       return "audio/webm";
@@ -31656,6 +31793,10 @@ function createVoiceChatController({ socket, refs, showToast }) {
     return "audio/webm";
   }
   async function ensureRecorderStream() {
+    if (recorderStreamReleaseTimer !== null) {
+      window.clearTimeout(recorderStreamReleaseTimer);
+      recorderStreamReleaseTimer = null;
+    }
     if (recorderStream && recorderStream.active) {
       return recorderStream;
     }
@@ -31719,6 +31860,7 @@ function createVoiceChatController({ socket, refs, showToast }) {
       return;
     }
     if (typeof MediaRecorder === "undefined") {
+      scheduleRecorderStreamRelease(0);
       showToast("Voice notes are not supported in this browser.");
       return;
     }
@@ -31739,6 +31881,7 @@ function createVoiceChatController({ socket, refs, showToast }) {
       }
     }
     if (!recorder) {
+      scheduleRecorderStreamRelease(0);
       showToast("Could not initialize voice recording.");
       return;
     }
@@ -31763,6 +31906,7 @@ function createVoiceChatController({ socket, refs, showToast }) {
     } catch {
       recorder = null;
       resetRecordingState();
+      scheduleRecorderStreamRelease(0);
       showToast("Could not start voice recording.");
     }
   }
@@ -31775,6 +31919,7 @@ function createVoiceChatController({ socket, refs, showToast }) {
         recorder.stop();
       } catch {
         resetRecordingState();
+        scheduleRecorderStreamRelease();
       }
     }
   }
@@ -31785,6 +31930,7 @@ function createVoiceChatController({ socket, refs, showToast }) {
     const mimeType = activeRecorder?.mimeType || recorderMimeType || "audio/webm";
     recorder = null;
     resetRecordingState();
+    scheduleRecorderStreamRelease();
     if (!activeRecorder || !canUseChat() || !chatState.mutualConsent) {
       return;
     }
@@ -31948,6 +32094,7 @@ function createVoiceChatController({ socket, refs, showToast }) {
         shouldRender = true;
       }
       lastSyncKey = null;
+      stopRecorderStream();
     }
     if (shouldRender) {
       render();
@@ -31977,12 +32124,7 @@ function createVoiceChatController({ socket, refs, showToast }) {
     }
     recorder = null;
     resetRecordingState();
-    if (recorderStream) {
-      for (const track of recorderStream.getTracks()) {
-        track.stop();
-      }
-      recorderStream = null;
-    }
+    stopRecorderStream();
   }
   render();
   return {
@@ -31990,12 +32132,13 @@ function createVoiceChatController({ socket, refs, showToast }) {
     dispose
   };
 }
-var MAX_RECORDING_MS, RECORDER_AUDIO_BITS_PER_SECOND, AUDIO_CAPTURE_CONSTRAINTS;
+var MAX_RECORDING_MS, RECORDER_AUDIO_BITS_PER_SECOND, RECORDER_STREAM_IDLE_RELEASE_MS, AUDIO_CAPTURE_CONSTRAINTS;
 var init_live_chat = __esm({
   "src/client/live-chat.ts"() {
     "use strict";
     MAX_RECORDING_MS = 2e4;
     RECORDER_AUDIO_BITS_PER_SECOND = 96e3;
+    RECORDER_STREAM_IDLE_RELEASE_MS = 8e3;
     AUDIO_CAPTURE_CONSTRAINTS = {
       echoCancellation: true,
       noiseSuppression: true,
@@ -33669,6 +33812,7 @@ var require_main_runtime = __commonJS({
     init_asset_theme_context();
     init_analyze_launch_context();
     init_room_return_context();
+    init_sound_effects_player();
     init_history_audio();
     init_live_analysis_utils();
     init_live_chat();
@@ -33944,15 +34088,12 @@ var require_main_runtime = __commonJS({
       void marker.offsetWidth;
       marker.classList.add("marker-reveal");
     }
-    var _audioCache = {};
+    var soundEffectsPlayer = createSoundEffectsPlayer();
     function getPieceSpritePath(color, piece) {
       return resolvePieceSpritePath(state.pieceTheme, color, piece);
     }
     function stopAllCachedAudio() {
-      for (const audio of Object.values(_audioCache)) {
-        audio.pause();
-        audio.currentTime = 0;
-      }
+      soundEffectsPlayer.stopAll();
     }
     function playSound(name4) {
       const normalizedName = normalizeSoundEffectName(name4);
@@ -33960,14 +34101,7 @@ var require_main_runtime = __commonJS({
         return;
       }
       const src = resolveSoundPackSrc(state.soundTheme, normalizedName);
-      let audio = _audioCache[src];
-      if (!audio) {
-        audio = new Audio(src);
-        _audioCache[src] = audio;
-      }
-      audio.currentTime = 0;
-      audio.play().catch(() => {
-      });
+      soundEffectsPlayer.play(src);
     }
     var _lastPlayedMoveCount = -1;
     function navigateToHistoryPosition(targetPos) {

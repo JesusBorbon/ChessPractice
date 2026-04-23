@@ -23,6 +23,7 @@ import {
   ROOM_RETURN_CONTEXT_STORAGE_KEY,
   parseStoredRoomReturnContext,
 } from "./contexts/room-return-context";
+import { createSoundEffectsPlayer } from "./audio/sound-effects-player";
 import { resolveGameParticipants, resolveGameParticipantsFromPgn } from "./game-display";
 import { mountThemeSwitcher, normalizeAnimationStyle, type AnimationStyle, type PieceThemeChoice, type SoundThemeChoice } from "./theme";
 import { mountGpuAccelerationPolicy } from "./utils/interaction-utils";
@@ -254,7 +255,7 @@ function appendCategoryMarkerContent(marker: HTMLElement, category: MoveCategory
 }
 
 // ── Sound ────────────────────────────────────────────────────────────────────
-const _audioCache: Record<string, HTMLAudioElement> = {};
+const soundEffectsPlayer = createSoundEffectsPlayer();
 function playSound(name: string): void {
   const normalizedName = normalizeSoundEffectName(name);
   if (!normalizedName) {
@@ -262,13 +263,7 @@ function playSound(name: string): void {
   }
 
   const src = resolveSoundPackSrc(soundTheme, normalizedName);
-  let audio = _audioCache[src];
-  if (!audio) {
-    audio = new Audio(src);
-    _audioCache[src] = audio;
-  }
-  audio.currentTime = 0;
-  audio.play().catch(() => {});
+  soundEffectsPlayer.play(src);
 }
 
 function getPieceSpritePath(color: "w" | "b", piece: PieceSymbol): string {
@@ -276,10 +271,7 @@ function getPieceSpritePath(color: "w" | "b", piece: PieceSymbol): string {
 }
 
 function stopAllCachedAudio(): void {
-  for (const audio of Object.values(_audioCache)) {
-    audio.pause();
-    audio.currentTime = 0;
-  }
+  soundEffectsPlayer.stopAll();
 }
 
 // ── State ──────────────────────────────────────────────────────────────────────
