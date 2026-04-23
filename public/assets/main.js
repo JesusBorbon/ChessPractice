@@ -29367,6 +29367,7 @@ function createAccountSidebarController({
   let authUnsubscribe = null;
   let authBusy = false;
   let authInitFinished = false;
+  let authStateHydrated = false;
   let storedGamesCount = null;
   let editableUsername = "";
   let currentProfile = null;
@@ -29887,6 +29888,15 @@ function createAccountSidebarController({
       friendUserIds,
       activity: friendPresenceActivity
     });
+  }
+  function isIdentityHydrated() {
+    if (!authInitFinished) {
+      return false;
+    }
+    if (!isFirebaseAuthEnabled()) {
+      return true;
+    }
+    return authStateHydrated;
   }
   function setFriendPresenceActivity(activity) {
     const normalized = activity === "playing-bot" ? "playing-bot" : null;
@@ -30793,6 +30803,7 @@ function createAccountSidebarController({
     }
     authUnsubscribe?.();
     authUnsubscribe = listenToAuthState((user) => {
+      authStateHydrated = true;
       authenticatedUser = user;
       currentProfile = null;
       storedGamesCount = null;
@@ -30850,6 +30861,7 @@ function createAccountSidebarController({
     dispose,
     emitCurrentProfileName,
     emitFriendshipState,
+    isIdentityHydrated,
     setFriendPresenceActivity,
     getCurrentPlayerName,
     getAuthenticatedUserId,
@@ -33978,16 +33990,18 @@ var require_main_runtime = __commonJS({
     var initialRoomCode = initialQuery.get("room")?.trim() ?? null;
     var initialInviteToken = initialQuery.get("invite")?.trim() ?? null;
     var initialRejoinRequested = initialQuery.get("rejoin") === "1";
-    var savedRoomId = localStorage.getItem("chess_roomId");
-    var savedInviteToken = localStorage.getItem("chess_roomInviteToken");
+    var savedRoomId = localStorage.getItem("chess_roomId")?.trim() || null;
+    var savedInviteToken = localStorage.getItem("chess_roomInviteToken")?.trim() || null;
     var storedRoomReturnContext = parseStoredRoomReturnContext(localStorage.getItem(ROOM_RETURN_CONTEXT_STORAGE_KEY));
     if (!storedRoomReturnContext) {
       localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
     }
     var hasExplicitRoomJoinIntent = Boolean(initialRoomCode || initialInviteToken || initialRejoinRequested);
-    var autoJoinCode = initialRoomCode ?? storedRoomReturnContext?.roomId ?? (savedRoomId || null);
-    var autoJoinInviteToken = initialInviteToken ?? storedRoomReturnContext?.inviteToken ?? (savedInviteToken || null);
-    var autoJoinFromPersistedRoom = initialRejoinRequested || !initialRoomCode && Boolean(storedRoomReturnContext || savedRoomId);
+    var persistedRoomId = storedRoomReturnContext?.roomId ?? savedRoomId;
+    var autoJoinCode = initialRoomCode ?? persistedRoomId;
+    var autoJoinInviteToken = initialInviteToken ?? storedRoomReturnContext?.inviteToken ?? savedInviteToken;
+    var urlRoomMatchesPersistedRoom = Boolean(initialRoomCode && persistedRoomId && initialRoomCode === persistedRoomId);
+    var autoJoinFromPersistedRoom = initialRejoinRequested || urlRoomMatchesPersistedRoom || !initialRoomCode && Boolean(persistedRoomId);
     var savedBotLevel = clampBotLevel(Number(localStorage.getItem("chess-bot-level")) || 1);
     var savedBotTimeControlId = normalizeBotTimeControlId(localStorage.getItem("chess-bot-time-control"));
     var savedBotPlayerSide = localStorage.getItem("chess-bot-player-side") === "b" ? "b" : "w";
@@ -34611,13 +34625,17 @@ var require_main_runtime = __commonJS({
       }
       const hasInviteToken = Boolean(state.autoJoinInviteToken);
       const shouldPreferSeatRecovery = autoJoinFromPersistedRoom && !hasInviteToken;
-      if (shouldPreferSeatRecovery && (!accountSidebarController.getAuthenticatedUserId() || !profileIdentitySyncedForAutoJoin)) {
+      if (shouldPreferSeatRecovery && (!profileIdentitySyncedForAutoJoin || !accountSidebarController.isIdentityHydrated())) {
+        return;
+      }
+      const shouldAttemptSeatRecovery = shouldPreferSeatRecovery && Boolean(accountSidebarController.getAuthenticatedUserId());
+      if (shouldPreferSeatRecovery && !shouldAttemptSeatRecovery) {
         return;
       }
       socket.emit("room:join", {
         roomId: state.autoJoinCode,
         inviteToken: state.autoJoinInviteToken,
-        spectateOnly: !hasInviteToken && !shouldPreferSeatRecovery
+        spectateOnly: !hasInviteToken && !shouldAttemptSeatRecovery
       });
       clearPersistedBotSession();
       state.autoJoinCode = null;
@@ -36336,11 +36354,12 @@ var require_main_runtime = __commonJS({
       refreshBotDifficultyUi();
       const isMultiplayer = state.gameMode === "multiplayer";
       const bothConnected = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
+      const isStartedMultiplayerGame = Boolean(isMultiplayer && snapshot?.isStarted);
       const canPlayOnlineMultiplayer = accountSidebarController.canPlayOnlineMultiplayer();
       const canSendRoomInvites = hasRoom && isMultiplayer && accountSidebarController.canSendRoomInvites();
       const hasPlayerInviteLink = Boolean(state.shareUrl && state.role && state.role !== "spectator");
       const isGameActive = Boolean(
-        isMultiplayer && bothConnected && snapshot?.isStarted || state.gameMode === "bot" && snapshot !== null
+        isStartedMultiplayerGame || state.gameMode === "bot" && snapshot !== null
       );
       voiceChatController.syncSession({
         roomId: state.roomId,

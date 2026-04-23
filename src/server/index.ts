@@ -1851,7 +1851,7 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
 
   for (const room of rooms.values()) {
     let changed = false;
-    const shouldHoldSeat = !immediate && Boolean(socketUserId);
+    const shouldHoldSeat = !immediate;
 
     // Si es desconexión normal (no inmediata), marcar como "desconectado temporalmente"
     // permitiendo reconexión dentro del grace period
@@ -1947,7 +1947,7 @@ function removeFromRoom(socketId: string, immediate: boolean = false): void {
     const bothDisconnected = !room.white && !room.black;
     const noSpectators = getSpectatorCount(room.id, room) === 0;
 
-    if (bothDisconnected && (immediate || noSpectators)) {
+    if (bothDisconnected && noSpectators && immediate) {
       closeRoom(room, "abandoned");
       resetSocketState(socketId);
       continue;
@@ -1984,6 +1984,75 @@ function assignRole(room: GameRoom, socketId: string, allowSeatClaim = true): Ro
 
   room.spectators.add(socketId);
   return "spectator";
+}
+
+function reclaimDisconnectedSeatForIdentity(
+  room: GameRoom,
+  socketId: string,
+  userId: string,
+): PlayerRole | null {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    return null;
+  }
+
+  const now = Date.now();
+
+  const tryReclaim = (role: PlayerRole): boolean => {
+    const seatSocketId = role === "w" ? room.white : room.black;
+    const seatUserId = role === "w" ? room.whiteUserId : room.blackUserId;
+    const seatDisconnectedAt = role === "w" ? room.whiteDisconnectedAt : room.blackDisconnectedAt;
+    if (!seatSocketId || seatUserId !== normalizedUserId) {
+      return false;
+    }
+
+    if (seatSocketId === socketId) {
+      return true;
+    }
+
+    const seatConnected = isSocketConnected(seatSocketId);
+    const seatGraceMs = getSeatDisconnectGraceMs(room, seatSocketId);
+    const stillRecoverable = !seatConnected && (
+      !seatDisconnectedAt || now - seatDisconnectedAt < seatGraceMs
+    );
+    if (!stillRecoverable) {
+      return false;
+    }
+
+    const ownerWasSeat = room.ownerId === seatSocketId;
+    room.colorChoices.delete(seatSocketId);
+    room.readyPlayers.delete(seatSocketId);
+    if (room.pendingUndoRequester === seatSocketId) {
+      delete room.pendingUndoRequester;
+    }
+
+    if (role === "w") {
+      room.white = socketId;
+      room.whiteUserId = normalizedUserId;
+      delete room.whiteDisconnectedAt;
+    } else {
+      room.black = socketId;
+      room.blackUserId = normalizedUserId;
+      delete room.blackDisconnectedAt;
+    }
+
+    if (ownerWasSeat) {
+      room.ownerId = socketId;
+      delete room.ownerDisconnectedAt;
+    }
+
+    room.spectators.delete(socketId);
+    return true;
+  };
+
+  if (tryReclaim("w")) {
+    return "w";
+  }
+  if (tryReclaim("b")) {
+    return "b";
+  }
+
+  return null;
 }
 
 function getRoomForSocket(socketId: string): GameRoom | undefined {
@@ -2325,13 +2394,31 @@ io.on("connection", (socket) => {
 
     const room = getRoomForSocket(socket.id);
     if (room) {
-      const isSeatedPlayer = room.white === socket.id || room.black === socket.id;
+      let liveRole = getLiveRoomRole(room, socket.id);
+      const isSeatedPlayer = liveRole === "w" || liveRole === "b";
       if (!normalizedUserId && isSeatedPlayer) {
         removeFromRoom(socket.id, true);
         socket.emit("session:left", { roomId: room.id });
         socket.emit("room:error", { message: "Guest mode is spectator-only online. Sign in to play online PvP." });
         emitProfileApplied();
         return;
+      }
+
+      if (normalizedUserId && liveRole === "spectator") {
+        const reclaimedRole = reclaimDisconnectedSeatForIdentity(room, socket.id, normalizedUserId);
+        if (reclaimedRole) {
+          const stateAfterReclaim = socket.data as ClientState;
+          stateAfterReclaim.role = reclaimedRole;
+          stateAfterReclaim.roomId = room.id;
+          socket.emit("session:joined", {
+            roomId: room.id,
+            role: reclaimedRole,
+            shareUrl: buildRoomShareUrl(socket.id, room),
+          });
+          emitRoomState(room);
+          emitProfileApplied();
+          return;
+        }
       }
 
       if (room.white === socket.id) {

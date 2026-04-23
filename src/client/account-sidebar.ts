@@ -107,6 +107,7 @@ export type AccountSidebarController = {
   dispose: () => void;
   emitCurrentProfileName: () => void;
   emitFriendshipState: () => void;
+  isIdentityHydrated: () => boolean;
   setFriendPresenceActivity: (activity: FriendPresenceActivity) => void;
   getCurrentPlayerName: () => string;
   getAuthenticatedUserId: () => string | null;
@@ -139,6 +140,7 @@ export function createAccountSidebarController({
   let authUnsubscribe: (() => void) | null = null;
   let authBusy = false;
   let authInitFinished = false;
+  let authStateHydrated = false;
   let storedGamesCount: number | null = null;
   let editableUsername = "";
   let currentProfile: PublicUserProfile | null = null;
@@ -773,6 +775,18 @@ export function createAccountSidebarController({
       friendUserIds,
       activity: friendPresenceActivity,
     });
+  }
+
+  function isIdentityHydrated(): boolean {
+    if (!authInitFinished) {
+      return false;
+    }
+
+    if (!isFirebaseAuthEnabled()) {
+      return true;
+    }
+
+    return authStateHydrated;
   }
 
   function setFriendPresenceActivity(activity: FriendPresenceActivity): void {
@@ -1893,6 +1907,7 @@ export function createAccountSidebarController({
 
     authUnsubscribe?.();
     authUnsubscribe = listenToAuthState((user) => {
+      authStateHydrated = true;
       authenticatedUser = user;
       currentProfile = null;
       storedGamesCount = null;
@@ -1955,6 +1970,7 @@ export function createAccountSidebarController({
     dispose,
     emitCurrentProfileName,
     emitFriendshipState,
+    isIdentityHydrated,
     setFriendPresenceActivity,
     getCurrentPlayerName,
     getAuthenticatedUserId,

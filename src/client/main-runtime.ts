@@ -235,16 +235,20 @@ const initialInviteToken = initialQuery.get("invite")?.trim() ?? null;
 const initialRejoinRequested = initialQuery.get("rejoin") === "1";
 
 // Restaurar roomId guardada en localStorage si existe
-const savedRoomId = localStorage.getItem("chess_roomId");
-const savedInviteToken = localStorage.getItem("chess_roomInviteToken");
+const savedRoomId = localStorage.getItem("chess_roomId")?.trim() || null;
+const savedInviteToken = localStorage.getItem("chess_roomInviteToken")?.trim() || null;
 const storedRoomReturnContext = parseStoredRoomReturnContext(localStorage.getItem(ROOM_RETURN_CONTEXT_STORAGE_KEY));
 if (!storedRoomReturnContext) {
   localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
 }
 const hasExplicitRoomJoinIntent = Boolean(initialRoomCode || initialInviteToken || initialRejoinRequested);
-const autoJoinCode = initialRoomCode ?? storedRoomReturnContext?.roomId ?? (savedRoomId || null);
-const autoJoinInviteToken = initialInviteToken ?? storedRoomReturnContext?.inviteToken ?? (savedInviteToken || null);
-const autoJoinFromPersistedRoom = initialRejoinRequested || (!initialRoomCode && Boolean(storedRoomReturnContext || savedRoomId));
+const persistedRoomId = storedRoomReturnContext?.roomId ?? savedRoomId;
+const autoJoinCode = initialRoomCode ?? persistedRoomId;
+const autoJoinInviteToken = initialInviteToken ?? storedRoomReturnContext?.inviteToken ?? savedInviteToken;
+const urlRoomMatchesPersistedRoom = Boolean(initialRoomCode && persistedRoomId && initialRoomCode === persistedRoomId);
+const autoJoinFromPersistedRoom = initialRejoinRequested
+  || urlRoomMatchesPersistedRoom
+  || (!initialRoomCode && Boolean(persistedRoomId));
 const savedBotLevel = clampBotLevel(Number(localStorage.getItem("chess-bot-level")) || 1);
 const savedBotTimeControlId = normalizeBotTimeControlId(localStorage.getItem("chess-bot-time-control"));
 const savedBotPlayerSide: PlayerRole = localStorage.getItem("chess-bot-player-side") === "b" ? "b" : "w";
@@ -986,18 +990,21 @@ function tryAutoJoinPendingRoom(): void {
 
   const hasInviteToken = Boolean(state.autoJoinInviteToken);
   const shouldPreferSeatRecovery = autoJoinFromPersistedRoom && !hasInviteToken;
-  if (
-    shouldPreferSeatRecovery
-    && (!accountSidebarController.getAuthenticatedUserId() || !profileIdentitySyncedForAutoJoin)
-  ) {
+  if (shouldPreferSeatRecovery && (!profileIdentitySyncedForAutoJoin || !accountSidebarController.isIdentityHydrated())) {
     // Wait for auth/profile hydration so server can restore by stable user identity.
+    return;
+  }
+  const shouldAttemptSeatRecovery = shouldPreferSeatRecovery && Boolean(accountSidebarController.getAuthenticatedUserId());
+  if (shouldPreferSeatRecovery && !shouldAttemptSeatRecovery) {
+    // Do not auto-join as spectator when we intended seat recovery.
+    // Keep pending room context so a later identity sync can recover the seat.
     return;
   }
 
   socket.emit("room:join", {
     roomId: state.autoJoinCode,
     inviteToken: state.autoJoinInviteToken,
-    spectateOnly: !hasInviteToken && !shouldPreferSeatRecovery,
+    spectateOnly: !hasInviteToken && !shouldAttemptSeatRecovery,
   });
   clearPersistedBotSession();
 
@@ -3223,12 +3230,13 @@ function renderSession(): void {
   // 1. Core State Calculations
   const isMultiplayer = state.gameMode === "multiplayer";
   const bothConnected = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
+  const isStartedMultiplayerGame = Boolean(isMultiplayer && snapshot?.isStarted);
   const canPlayOnlineMultiplayer = accountSidebarController.canPlayOnlineMultiplayer();
   const canSendRoomInvites = hasRoom && isMultiplayer && accountSidebarController.canSendRoomInvites();
   const hasPlayerInviteLink = Boolean(state.shareUrl && state.role && state.role !== "spectator");
   
   const isGameActive = Boolean(
-    (isMultiplayer && bothConnected && snapshot?.isStarted) || 
+    isStartedMultiplayerGame || 
     (state.gameMode === "bot" && snapshot !== null)
   );
 
