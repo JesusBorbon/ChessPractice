@@ -98,6 +98,7 @@ type CreateAccountSidebarControllerOptions = {
   socket: SocketLike;
   refs: AccountSidebarDomRefs;
   showToast: (message: string) => void;
+  showCenterFlash?: (message: string) => void;
   onIdentityUpdated: () => void;
   onOpenSavedGameForAnalysis?: (pgn: string) => void;
 };
@@ -124,7 +125,7 @@ export type AccountSidebarController = {
   handleFinishedGamePersist: (input: PersistFinishedGameInput) => Promise<void>;
 };
 
-const MOBILE_BREAKPOINT_PX = 640;
+const MOBILE_BREAKPOINT_PX = 1024;
 const MOBILE_SCROLL_LOCK_CLASS = "sidebar-open-mobile";
 const FRIEND_NUMERIC_ID_LENGTH = 5;
 const ROOM_ID_PATTERN = /^\d{4}$/;
@@ -133,6 +134,7 @@ export function createAccountSidebarController({
   socket,
   refs,
   showToast,
+  showCenterFlash,
   onIdentityUpdated,
   onOpenSavedGameForAnalysis,
 }: CreateAccountSidebarControllerOptions): AccountSidebarController {
@@ -146,6 +148,8 @@ export function createAccountSidebarController({
   let currentProfile: PublicUserProfile | null = null;
 
   let sidebarOpen = false;
+  let bodyScrollLocked = false;
+  let lockedBodyScrollY = 0;
   let activeSidebarTab: "profile" | "history" = "profile";
   let savedGameHistory: SavedGameHistoryEntry[] = [];
   let historyLoading = false;
@@ -451,6 +455,7 @@ export function createAccountSidebarController({
         });
       }
       showToast(`Request sent to ${request.toDisplayName}.`);
+      showCenterFlash?.("Friend request sent");
       await refreshFriendsPanel();
       return true;
     } catch (error) {
@@ -984,6 +989,7 @@ export function createAccountSidebarController({
           toUserId: entry.userId,
           roomId: entry.presenceRoomId,
         });
+        showCenterFlash?.("Join request sent");
       });
       actions.appendChild(joinButton);
     } else if (entry.canSpectate && entry.presenceRoomId && entry.presenceRoomId !== currentRoomId) {
@@ -1139,7 +1145,35 @@ export function createAccountSidebarController({
 
   function syncBodyScrollLock(): void {
     const isMobileViewport = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX}px)`).matches;
-    document.body.classList.toggle(MOBILE_SCROLL_LOCK_CLASS, sidebarOpen && isMobileViewport);
+    const shouldLock = sidebarOpen && isMobileViewport;
+
+    document.body.classList.toggle(MOBILE_SCROLL_LOCK_CLASS, shouldLock);
+    document.documentElement.classList.toggle(MOBILE_SCROLL_LOCK_CLASS, shouldLock);
+
+    if (shouldLock === bodyScrollLocked) {
+      return;
+    }
+
+    if (shouldLock) {
+      lockedBodyScrollY = window.scrollY || window.pageYOffset || 0;
+      document.body.style.top = `-${lockedBodyScrollY}px`;
+      document.body.style.position = "fixed";
+      document.body.style.left = "0";
+      document.body.style.right = "0";
+      document.body.style.width = "100%";
+      bodyScrollLocked = true;
+      return;
+    }
+
+    const restoreScrollY = lockedBodyScrollY;
+    document.body.style.top = "";
+    document.body.style.position = "";
+    document.body.style.left = "";
+    document.body.style.right = "";
+    document.body.style.width = "";
+    bodyScrollLocked = false;
+    lockedBodyScrollY = 0;
+    window.scrollTo({ top: restoreScrollY, behavior: "auto" });
   }
 
   function isMobileViewport(): boolean {
@@ -1962,7 +1996,8 @@ export function createAccountSidebarController({
     unsubscribeFriendActivity();
     friendActivityRealtime.dispose();
     unWireEventListeners();
-    document.body.classList.remove(MOBILE_SCROLL_LOCK_CLASS);
+    sidebarOpen = false;
+    syncBodyScrollLock();
   }
 
   return {

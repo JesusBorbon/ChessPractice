@@ -600,6 +600,7 @@ const chatSendButton = must<HTMLButtonElement>("#chatSendButton");
 const chatVoiceButton = must<HTMLButtonElement>("#chatVoiceButton");
 const moveList = must<HTMLDivElement>("#moveList");
 const toast = must<HTMLDivElement>("#toast");
+const centerFlash = must<HTMLDivElement>("#centerFlash");
 const friendInvitePrompt = must<HTMLElement>("#friendInvitePrompt");
 const friendInvitePromptText = must<HTMLParagraphElement>("#friendInvitePromptText");
 const friendInviteDeclineButton = must<HTMLButtonElement>("#friendInviteDeclineButton");
@@ -787,6 +788,7 @@ const accountSidebarController = createAccountSidebarController({
     signOutButton,
   },
   showToast,
+  showCenterFlash,
   onIdentityUpdated: () => {
     void (async () => {
       await syncBotSessionWithCloudIdentity();
@@ -2796,6 +2798,7 @@ socket.on("friends:room-join:incoming", (payload?: {
 });
 
 socket.on("friends:room-join:requested", (payload?: { roomId?: string }) => {
+  showCenterFlash("Join request sent");
   const roomId = typeof payload?.roomId === "string" ? payload.roomId.trim() : "";
   if (ROOM_ID_PATTERN.test(roomId)) {
     showToast(`Join request sent for room ${roomId}.`);
@@ -2868,6 +2871,7 @@ socket.on("friends:request:incoming", (payload?: {
 
 socket.on("friends:request:sent", () => {
   setSendFriendRequestState(false);
+  showCenterFlash("Friend request sent");
   showToast("Friend request sent.");
 });
 
@@ -5302,6 +5306,7 @@ async function toggleFocusMode(force?: boolean): Promise<void> {
 }
 
 let toastTimer = 0;
+let centerFlashTimer = 0;
 
 function showToast(message: string): void {
   state.toastMessage = message;
@@ -5311,6 +5316,17 @@ function showToast(message: string): void {
   toastTimer = window.setTimeout(() => {
     toast.classList.remove("visible");
   }, 2200);
+}
+
+function showCenterFlash(message: string): void {
+  centerFlash.textContent = message;
+  centerFlash.classList.remove("visible");
+  void centerFlash.offsetWidth;
+  centerFlash.classList.add("visible");
+  window.clearTimeout(centerFlashTimer);
+  centerFlashTimer = window.setTimeout(() => {
+    centerFlash.classList.remove("visible");
+  }, 1200);
 }
 
 render();

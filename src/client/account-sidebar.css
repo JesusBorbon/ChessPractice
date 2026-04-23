@@ -19,7 +19,7 @@
   position: fixed;
   inset: 0;
   background: color-mix(in srgb, var(--accent) 30%, transparent);
-  z-index: 800;
+  z-index: 3200;
 }
 
 [data-theme="purple"] .sidebar-backdrop {
@@ -41,7 +41,7 @@
   box-shadow: -5px 0 38px rgba(16, 28, 24, 0.25);
   transform: translateX(100%);
   transition: transform 220ms ease;
-  z-index: 850;
+  z-index: 3250;
 }
 
 .account-sidebar.open {
@@ -486,13 +486,64 @@ body.focus-mode .sidebar-backdrop {
   display: none !important;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 1024px) {
+  html.sidebar-open-mobile,
   body.sidebar-open-mobile {
     overflow: hidden;
     touch-action: none;
     overscroll-behavior: none;
   }
 
+  body.sidebar-open-mobile {
+    position: fixed;
+    left: 0;
+    right: 0;
+    width: 100%;
+  }
+
+  .sidebar-backdrop {
+    background: #0f1815;
+  }
+
+  [data-theme="purple"] .sidebar-backdrop {
+    background: #0b042a;
+  }
+
+  .account-sidebar {
+    background: color-mix(in srgb, var(--bg) 90%, #000 10%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: none;
+  }
+
+  .sidebar-panel,
+  .friends-player-id-wrap,
+  .friends-toggle,
+  .friends-list,
+  .friend-item,
+  .saved-games-list,
+  .saved-game-item,
+  .saved-games-clear-confirm,
+  .friend-invite-prompt {
+    background: color-mix(in srgb, var(--bg) 84%, #fff 16%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: none;
+  }
+
+  .friends-list,
+  .friend-item {
+    border-color: rgba(25, 35, 32, 0.16);
+  }
+
+  .sidebar-close-button {
+    background-color: #d31313 !important;
+    backdrop-filter: none;
+  }
+}
+
+
+@media (max-width: 640px) {
   .top-utility {
     justify-content: space-between;
     gap: 8px;

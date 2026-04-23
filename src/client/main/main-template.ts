@@ -351,6 +351,7 @@ export function buildMainAppMarkup(params: BuildMainAppMarkupParams): string {
   </section>
 
   <div class="toast" id="toast"></div>
+  <div class="toast toast-center" id="centerFlash" aria-live="polite"></div>
 
   <section class="friend-invite-prompt" id="friendInvitePrompt" hidden aria-live="polite">
     <p class="friend-invite-prompt-text" id="friendInvitePromptText">New invitation</p>

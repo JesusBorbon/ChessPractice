@@ -1885,6 +1885,23 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   opacity: 1;
   transform: translateY(0);
 }
+
+.toast.toast-center {
+  right: auto;
+  left: 50%;
+  bottom: auto;
+  top: 50%;
+  max-width: min(92vw, 320px);
+  text-align: center;
+  font-weight: 700;
+  transform: translate(-50%, 14px) scale(0.98);
+  box-shadow: 0 18px 44px rgba(7, 10, 15, 0.35);
+  z-index: 1800;
+}
+
+.toast.toast-center.visible {
+  transform: translate(-50%, 0) scale(1);
+}
 .promotion-dialog {
   position: fixed;
   inset: 0;
