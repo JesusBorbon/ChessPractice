@@ -27844,6 +27844,16 @@ function normalizeUserId(value2) {
   }
   return value2.trim();
 }
+function normalizeBotSessionPayload(value2) {
+  if (typeof value2 !== "string") {
+    return null;
+  }
+  const normalized = value2.trim();
+  if (!normalized || normalized.length > MAX_BOT_SESSION_PAYLOAD_LENGTH) {
+    return null;
+  }
+  return normalized;
+}
 function normalizeDisplayName(value2) {
   if (typeof value2 !== "string") {
     return "";
@@ -28444,6 +28454,48 @@ async function clearStoredGamesForUser(userId) {
   );
   return 0;
 }
+async function getBotSessionPayloadForUser(userId) {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    return null;
+  }
+  const database = requireDb();
+  const documentRef = doc(database, "userBotSessions", normalizedUserId);
+  const snapshot = await getDoc(documentRef);
+  if (!snapshot.exists()) {
+    return null;
+  }
+  return normalizeBotSessionPayload(snapshot.data().payloadJson);
+}
+async function saveBotSessionPayloadForUser(userId, payloadJson) {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    return;
+  }
+  const normalizedPayload = normalizeBotSessionPayload(payloadJson);
+  if (!normalizedPayload) {
+    throw new Error("Invalid bot session payload.");
+  }
+  const database = requireDb();
+  const documentRef = doc(database, "userBotSessions", normalizedUserId);
+  await setDoc(
+    documentRef,
+    {
+      payloadJson: normalizedPayload,
+      updatedAt: serverTimestamp()
+    },
+    { merge: true }
+  );
+}
+async function clearBotSessionPayloadForUser(userId) {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    return;
+  }
+  const database = requireDb();
+  const documentRef = doc(database, "userBotSessions", normalizedUserId);
+  await deleteDoc(documentRef);
+}
 async function assignUniqueFriendId(database, userId) {
   for (let attempt = 0; attempt < 64; attempt += 1) {
     const candidate = generateRandomFriendId();
@@ -28952,7 +29004,7 @@ async function removeFriendForUser(userId, friendUserId) {
     )
   ]);
 }
-var REQUIRED_CONFIG_KEYS, GOOGLE_PROVIDER, POPUP_RECOVERY_CODES, MAX_FRIENDS, MAX_FRIEND_REQUESTS, FRIEND_ID_DIGITS, FRIEND_ID_MIN, FRIEND_ID_MAX, USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH, auth, db, disabledReason, initPromise;
+var REQUIRED_CONFIG_KEYS, GOOGLE_PROVIDER, POPUP_RECOVERY_CODES, MAX_FRIENDS, MAX_FRIEND_REQUESTS, FRIEND_ID_DIGITS, FRIEND_ID_MIN, FRIEND_ID_MAX, MAX_BOT_SESSION_PAYLOAD_LENGTH, USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH, auth, db, disabledReason, initPromise;
 var init_firebase = __esm({
   "src/client/firebase.ts"() {
     "use strict";
@@ -28978,6 +29030,7 @@ var init_firebase = __esm({
     FRIEND_ID_DIGITS = 5;
     FRIEND_ID_MIN = 1e4;
     FRIEND_ID_MAX = 99999;
+    MAX_BOT_SESSION_PAYLOAD_LENGTH = 9e5;
     USERNAME_MIN_LENGTH = 2;
     USERNAME_MAX_LENGTH = 24;
     auth = null;
@@ -31262,7 +31315,8 @@ function createSoundEffectsPlayer() {
   function playFromBuffer(src) {
     const requestEpoch = stopEpoch;
     const context = ensureAudioContext();
-    if (!context || !masterGainNode) {
+    const gainNode = masterGainNode;
+    if (!context || !gainNode) {
       playFallbackAudio(src);
       return;
     }
@@ -31283,7 +31337,7 @@ function createSoundEffectsPlayer() {
       }
       const source = context.createBufferSource();
       source.buffer = buffer;
-      source.connect(masterGainNode);
+      source.connect(gainNode);
       source.onended = () => {
         activeSources.delete(source);
       };
@@ -33812,6 +33866,7 @@ var require_main_runtime = __commonJS({
     init_asset_theme_context();
     init_analyze_launch_context();
     init_room_return_context();
+    init_firebase();
     init_sound_effects_player();
     init_history_audio();
     init_live_analysis_utils();
@@ -33929,6 +33984,7 @@ var require_main_runtime = __commonJS({
     if (!storedRoomReturnContext) {
       localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
     }
+    var hasExplicitRoomJoinIntent = Boolean(initialRoomCode || initialInviteToken || initialRejoinRequested);
     var autoJoinCode = initialRoomCode ?? storedRoomReturnContext?.roomId ?? (savedRoomId || null);
     var autoJoinInviteToken = initialInviteToken ?? storedRoomReturnContext?.inviteToken ?? (savedInviteToken || null);
     var autoJoinFromPersistedRoom = initialRejoinRequested || !initialRoomCode && Boolean(storedRoomReturnContext || savedRoomId);
@@ -33989,6 +34045,9 @@ var require_main_runtime = __commonJS({
     var botPickerHideTimer = null;
     var botPickerLockedScrollY = null;
     var botResponseTimer = null;
+    var lastBotSessionPersistAt = 0;
+    var lastBotCloudSyncAt = 0;
+    var pendingBotCloudRestore = false;
     var pendingFriendInvite = null;
     var pendingInGameFriendRequest = null;
     var activeRoomJoinRequest = null;
@@ -34012,6 +34071,10 @@ var require_main_runtime = __commonJS({
     var LOW_TIME_WARNING_EFFECT_MS = 1e4;
     var ROOM_CODE_LENGTH = 4;
     var ROOM_ID_PATTERN3 = new RegExp(`^\\d{${ROOM_CODE_LENGTH}}$`);
+    var BOT_SESSION_STORAGE_KEY = "chess-bot-session-v1";
+    var BOT_SESSION_SCHEMA_VERSION = 1;
+    var BOT_SESSION_PERSIST_INTERVAL_MS = 1e3;
+    var BOT_CLOUD_SYNC_INTERVAL_MS = 5e3;
     function createSeededRandom(seed) {
       let state2 = seed >>> 0;
       if (state2 === 0) {
@@ -34370,8 +34433,11 @@ var require_main_runtime = __commonJS({
       },
       showToast,
       onIdentityUpdated: () => {
-        tryAutoJoinPendingRoom();
-        render();
+        void (async () => {
+          await syncBotSessionWithCloudIdentity();
+          tryAutoJoinPendingRoom();
+          render();
+        })();
       },
       onOpenSavedGameForAnalysis: (pgn2) => {
         openAnalyzeInIsolatedTab({
@@ -34553,8 +34619,261 @@ var require_main_runtime = __commonJS({
         inviteToken: state.autoJoinInviteToken,
         spectateOnly: !hasInviteToken && !shouldPreferSeatRecovery
       });
+      clearPersistedBotSession();
       state.autoJoinCode = null;
       state.autoJoinInviteToken = null;
+    }
+    async function clearPersistedBotSessionFromCloud() {
+      if (!isFirebaseAuthEnabled()) {
+        return;
+      }
+      const userId = accountSidebarController.getAuthenticatedUserId();
+      if (!userId) {
+        return;
+      }
+      try {
+        await clearBotSessionPayloadForUser(userId);
+        lastBotCloudSyncAt = Date.now();
+      } catch {
+      }
+    }
+    function clearPersistedBotSession(options = {}) {
+      const shouldClearCloud = options.clearCloud ?? true;
+      lastBotSessionPersistAt = 0;
+      localStorage.removeItem(BOT_SESSION_STORAGE_KEY);
+      if (shouldClearCloud) {
+        void clearPersistedBotSessionFromCloud();
+      }
+    }
+    function isBoardSquare(value2) {
+      return typeof value2 === "string" && /^[a-h][1-8]$/.test(value2);
+    }
+    function parsePersistedBotSession(raw) {
+      if (!raw) {
+        return null;
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") {
+          return null;
+        }
+        if (parsed.version !== BOT_SESSION_SCHEMA_VERSION) {
+          return null;
+        }
+        const botPlayerSide = parsed.botPlayerSide;
+        if (botPlayerSide !== "w" && botPlayerSide !== "b") {
+          return null;
+        }
+        if (typeof parsed.botLevel !== "number" || !Number.isFinite(parsed.botLevel)) {
+          return null;
+        }
+        if (typeof parsed.botTimeControlId !== "string") {
+          return null;
+        }
+        if (!parsed.snapshot || typeof parsed.snapshot !== "object") {
+          return null;
+        }
+        const snapshot = parsed.snapshot;
+        if (typeof snapshot.fen !== "string" || !Array.isArray(snapshot.moves) || snapshot.turn !== "w" && snapshot.turn !== "b" || !snapshot.timeControl || typeof snapshot.timeControl !== "object" || typeof snapshot.clock !== "object") {
+          return null;
+        }
+        const movesValid = snapshot.moves.every((move) => {
+          const candidate = move;
+          return candidate && (candidate.color === "w" || candidate.color === "b") && isBoardSquare(candidate.from) && isBoardSquare(candidate.to) && typeof candidate.san === "string" && candidate.san.trim().length > 0 && typeof candidate.piece === "string";
+        });
+        if (!movesValid) {
+          return null;
+        }
+        const savedAt = typeof parsed.savedAt === "number" && Number.isFinite(parsed.savedAt) ? parsed.savedAt : Date.now();
+        return {
+          version: BOT_SESSION_SCHEMA_VERSION,
+          savedAt,
+          botPlayerSide,
+          botLevel: parsed.botLevel,
+          botTimeControlId: parsed.botTimeControlId,
+          snapshot: parsed.snapshot
+        };
+      } catch {
+        return null;
+      }
+    }
+    function buildPersistedBotSession() {
+      if (state.gameMode !== "bot" || !state.snapshot) {
+        return null;
+      }
+      return {
+        version: BOT_SESSION_SCHEMA_VERSION,
+        savedAt: Date.now(),
+        botPlayerSide: getBotPlayerRole(),
+        botLevel: state.botLevel,
+        botTimeControlId: state.botTimeControlId,
+        snapshot: state.snapshot
+      };
+    }
+    async function persistBotSessionToCloud(payloadJson, force = false) {
+      if (!isFirebaseAuthEnabled()) {
+        return;
+      }
+      const userId = accountSidebarController.getAuthenticatedUserId();
+      if (!userId) {
+        return;
+      }
+      const now = Date.now();
+      if (!force && now - lastBotCloudSyncAt < BOT_CLOUD_SYNC_INTERVAL_MS) {
+        return;
+      }
+      try {
+        await saveBotSessionPayloadForUser(userId, payloadJson);
+        lastBotCloudSyncAt = now;
+      } catch {
+      }
+    }
+    function persistBotSession(force = false) {
+      const payload = buildPersistedBotSession();
+      if (!payload) {
+        clearPersistedBotSession();
+        return;
+      }
+      const now = Date.now();
+      if (!force && now - lastBotSessionPersistAt < BOT_SESSION_PERSIST_INTERVAL_MS) {
+        return;
+      }
+      try {
+        const payloadJson = JSON.stringify(payload);
+        localStorage.setItem(BOT_SESSION_STORAGE_KEY, payloadJson);
+        lastBotSessionPersistAt = now;
+        void persistBotSessionToCloud(payloadJson, force);
+      } catch {
+      }
+    }
+    function hydratePersistedBotSession(persisted, source) {
+      const replay = new Chess();
+      for (const move of persisted.snapshot.moves) {
+        try {
+          const applied = replay.move(move.san);
+          if (!applied) {
+            return false;
+          }
+        } catch {
+          return false;
+        }
+      }
+      if (replay.fen() !== persisted.snapshot.fen) {
+        return false;
+      }
+      chess.reset();
+      for (const move of persisted.snapshot.moves) {
+        chess.move(move.san);
+      }
+      const normalizedSide = persisted.botPlayerSide === "b" ? "b" : "w";
+      const normalizedBotLevel = clampBotLevel(persisted.botLevel);
+      const normalizedBotTimeControlId = normalizeBotTimeControlId(persisted.botTimeControlId);
+      const snapshotTimeControlId = isTimeControlPresetId(persisted.snapshot.timeControl.id) ? persisted.snapshot.timeControl.id : normalizedBotTimeControlId;
+      const normalizedLowTimeThresholdMs = getLowTimeThresholdMs(persisted.snapshot.timeControl.initialMs);
+      state.gameMode = "bot";
+      state.botPlayerSide = normalizedSide;
+      state.botLevel = normalizedBotLevel;
+      state.botTimeControlId = snapshotTimeControlId;
+      state.role = normalizedSide;
+      state.orientation = normalizedSide;
+      state.roomId = "BOT";
+      state.shareUrl = "";
+      state.pendingPromotion = null;
+      state.premoves = [];
+      state.selectedSquare = null;
+      state.legalTargets = [];
+      state.viewCursor = null;
+      state.autoJoinCode = null;
+      state.autoJoinInviteToken = null;
+      shouldCleanUiBeforeAutoJoin = false;
+      state.snapshot = {
+        ...persisted.snapshot,
+        roomId: "LOCAL",
+        timeControl: {
+          ...persisted.snapshot.timeControl,
+          id: snapshotTimeControlId
+        },
+        clock: {
+          ...persisted.snapshot.clock,
+          lowTimeThresholdMs: normalizedLowTimeThresholdMs
+        }
+      };
+      localStorage.removeItem("chess_roomId");
+      localStorage.removeItem("chess_roomInviteToken");
+      localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
+      syncUrl(null);
+      accountSidebarController.setFriendPresenceActivity("playing-bot");
+      regenerateWoodTextureOffsets();
+      clearArrows();
+      resetLowTimeWarningState();
+      lastRoomStateReceivedAtMs = Date.now();
+      syncBotClockToNow(lastRoomStateReceivedAtMs);
+      clearScheduledBotResponse();
+      const botRole = getBotRole();
+      if (state.snapshot.turn === botRole && !state.snapshot.checkmate && !state.snapshot.draw && state.snapshot.winner === null) {
+        scheduleBotResponse(null);
+      }
+      persistBotSession(true);
+      showToast(source === "cloud" ? "Recovered your bot game from cloud." : "Recovered your bot game.");
+      return true;
+    }
+    function restorePersistedBotSessionFromLocal() {
+      if (hasExplicitRoomJoinIntent) {
+        return false;
+      }
+      const persisted = parsePersistedBotSession(localStorage.getItem(BOT_SESSION_STORAGE_KEY));
+      if (!persisted) {
+        clearPersistedBotSession({ clearCloud: false });
+        return false;
+      }
+      const hydrated = hydratePersistedBotSession(persisted, "local");
+      if (!hydrated) {
+        clearPersistedBotSession({ clearCloud: false });
+      }
+      return hydrated;
+    }
+    async function restorePersistedBotSessionFromCloud() {
+      if (pendingBotCloudRestore || hasExplicitRoomJoinIntent) {
+        return false;
+      }
+      if (state.gameMode === "bot" || Boolean(state.roomId)) {
+        return false;
+      }
+      if (!isFirebaseAuthEnabled()) {
+        return false;
+      }
+      const userId = accountSidebarController.getAuthenticatedUserId();
+      if (!userId) {
+        return false;
+      }
+      pendingBotCloudRestore = true;
+      try {
+        const payloadJson = await getBotSessionPayloadForUser(userId);
+        const persisted = parsePersistedBotSession(payloadJson);
+        if (!persisted) {
+          return false;
+        }
+        const hydrated = hydratePersistedBotSession(persisted, "cloud");
+        if (!hydrated) {
+          return false;
+        }
+        render();
+        return true;
+      } catch {
+        return false;
+      } finally {
+        pendingBotCloudRestore = false;
+      }
+    }
+    async function syncBotSessionWithCloudIdentity() {
+      if (state.gameMode === "bot" && state.snapshot) {
+        persistBotSession(true);
+        return;
+      }
+      if (state.roomId || hasExplicitRoomJoinIntent) {
+        return;
+      }
+      await restorePersistedBotSessionFromCloud();
     }
     async function maybePersistFinishedGame(snapshot) {
       if (!snapshot) {
@@ -34575,6 +34894,8 @@ var require_main_runtime = __commonJS({
     }
     void accountSidebarController.initialize();
     void notificationsStateController.initialize();
+    void restorePersistedBotSessionFromLocal();
+    void syncBotSessionWithCloudIdentity();
     window.addEventListener("beforeunload", () => {
       unsubscribeNotificationsState();
       notificationsUiController.dispose();
@@ -34733,6 +35054,7 @@ var require_main_runtime = __commonJS({
       }
       setRoomCreatePending(true);
       state.gameMode = "multiplayer";
+      clearPersistedBotSession();
       socket.emit("room:create");
       scrollToInviteJoinCardOnMobile();
     });
@@ -34747,6 +35069,7 @@ var require_main_runtime = __commonJS({
         showToast("Room ID must be exactly 4 digits.");
         return;
       }
+      clearPersistedBotSession();
       socket.emit("room:join", { roomId: code, spectateOnly: true });
       showToast(`Joining room ${code} as spectator...`);
     }
@@ -34938,6 +35261,7 @@ var require_main_runtime = __commonJS({
         } else if (state.snapshot) {
           state.snapshot.winner = state.role === "w" ? "b" : "w";
           state.snapshot.status = "Resigned";
+          persistBotSession(true);
           render();
         }
       } else if (action === "settings") {
@@ -35247,6 +35571,7 @@ var require_main_runtime = __commonJS({
       state.snapshot.clock.active = null;
       state.snapshot.clock.serverNowMs = Date.now();
       clearScheduledBotResponse();
+      persistBotSession(true);
       render(true);
       showToast(state.snapshot.status);
     }
@@ -35337,11 +35662,13 @@ var require_main_runtime = __commonJS({
         state.snapshot.clock.running = false;
         state.snapshot.clock.active = null;
         state.snapshot.clock.serverNowMs = now;
+        persistBotSession(true);
         return;
       }
       state.snapshot.clock.running = true;
       state.snapshot.clock.active = state.snapshot.turn;
       state.snapshot.clock.serverNowMs = now;
+      persistBotSession(true);
     }
     function scheduleBotResponse(playerMove) {
       clearScheduledBotResponse();
@@ -35661,7 +35988,10 @@ var require_main_runtime = __commonJS({
     });
     socket.on("profile:setName:applied", () => {
       profileIdentitySyncedForAutoJoin = true;
-      tryAutoJoinPendingRoom();
+      void (async () => {
+        await syncBotSessionWithCloudIdentity();
+        tryAutoJoinPendingRoom();
+      })();
     });
     socket.on("friends:invite:incoming", (payload) => {
       const inviteId = typeof payload?.inviteId === "string" ? payload.inviteId : "";
@@ -35778,6 +36108,7 @@ var require_main_runtime = __commonJS({
       }
       setRoomCreatePending(false);
       state.gameMode = "multiplayer";
+      clearPersistedBotSession();
       state.roomId = payload.roomId;
       state.role = payload.role;
       state.shareUrl = payload.shareUrl || `${window.location.origin}/?room=${payload.roomId}`;
@@ -37282,6 +37613,7 @@ var require_main_runtime = __commonJS({
       showToast(
         `Bot mode active. ${botTimeControl.label}. You are ${normalizedPlayerSide === "w" ? "White" : "Black"}. ${botDifficultySummary(botPreset)}.`
       );
+      persistBotSession(true);
       render();
       if (state.snapshot.turn === botSide && !state.snapshot.checkmate && !state.snapshot.draw) {
         scheduleBotResponse(null);
@@ -37314,6 +37646,7 @@ var require_main_runtime = __commonJS({
       if (state.snapshot.checkmate) {
         state.snapshot.winner = move.color;
       }
+      persistBotSession(true);
     }
     function queuePremove(from, to) {
       if (!state.role || state.role === "spectator") return;
@@ -37452,6 +37785,7 @@ var require_main_runtime = __commonJS({
       lastRoomStateReceivedAtMs = Date.now();
       localStorage.removeItem("chess_roomId");
       localStorage.removeItem("chess_roomInviteToken");
+      clearPersistedBotSession();
       if (!options.preserveRoomReturnContext) {
         localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
       }
@@ -37617,10 +37951,12 @@ var require_main_runtime = __commonJS({
       }
       if (state.gameMode === "bot") {
         syncBotClockToNow();
+        persistBotSession();
       }
       renderSession();
     }, 250);
     window.addEventListener("beforeunload", () => {
+      persistBotSession(true);
       liveAnalyzer?.terminate();
       botAnalyzer?.terminate();
     });

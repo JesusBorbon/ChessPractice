@@ -92,6 +92,7 @@ const MAX_FRIEND_REQUESTS = 300;
 const FRIEND_ID_DIGITS = 5;
 const FRIEND_ID_MIN = 10_000;
 const FRIEND_ID_MAX = 99_999;
+const MAX_BOT_SESSION_PAYLOAD_LENGTH = 900_000;
 const USERNAME_MIN_LENGTH = 2;
 const USERNAME_MAX_LENGTH = 24;
 
@@ -144,6 +145,19 @@ function normalizeUserId(value: unknown): string {
   }
 
   return value.trim();
+}
+
+function normalizeBotSessionPayload(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  if (!normalized || normalized.length > MAX_BOT_SESSION_PAYLOAD_LENGTH) {
+    return null;
+  }
+
+  return normalized;
 }
 
 function normalizeDisplayName(value: unknown): string {
@@ -913,6 +927,56 @@ export async function clearStoredGamesForUser(userId: string): Promise<number> {
   );
 
   return 0;
+}
+
+export async function getBotSessionPayloadForUser(userId: string): Promise<string | null> {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    return null;
+  }
+
+  const database = requireDb();
+  const documentRef = doc(database, "userBotSessions", normalizedUserId);
+  const snapshot = await getDoc(documentRef);
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  return normalizeBotSessionPayload(snapshot.data().payloadJson);
+}
+
+export async function saveBotSessionPayloadForUser(userId: string, payloadJson: string): Promise<void> {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    return;
+  }
+
+  const normalizedPayload = normalizeBotSessionPayload(payloadJson);
+  if (!normalizedPayload) {
+    throw new Error("Invalid bot session payload.");
+  }
+
+  const database = requireDb();
+  const documentRef = doc(database, "userBotSessions", normalizedUserId);
+  await setDoc(
+    documentRef,
+    {
+      payloadJson: normalizedPayload,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+}
+
+export async function clearBotSessionPayloadForUser(userId: string): Promise<void> {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    return;
+  }
+
+  const database = requireDb();
+  const documentRef = doc(database, "userBotSessions", normalizedUserId);
+  await deleteDoc(documentRef);
 }
 
 async function assignUniqueFriendId(database: Firestore, userId: string): Promise<string> {

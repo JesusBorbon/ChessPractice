@@ -65,7 +65,8 @@ export function createSoundEffectsPlayer(): SoundEffectsPlayer {
   function playFromBuffer(src: string): void {
     const requestEpoch = stopEpoch;
     const context = ensureAudioContext();
-    if (!context || !masterGainNode) {
+    const gainNode = masterGainNode;
+    if (!context || !gainNode) {
       playFallbackAudio(src);
       return;
     }
@@ -90,7 +91,7 @@ export function createSoundEffectsPlayer(): SoundEffectsPlayer {
 
       const source = context.createBufferSource();
       source.buffer = buffer;
-      source.connect(masterGainNode);
+      source.connect(gainNode);
       source.onended = () => {
         activeSources.delete(source);
       };

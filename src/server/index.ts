@@ -22,6 +22,7 @@ import {
 } from "./room-access";
 import { createRoomJoinRequestStore, StoredRoomJoinRequest } from "./room-join-request-store";
 import { canStartPregameMatch, sanitizePregameSeatState } from "./room-readiness";
+import { createRoomStateStore, type PersistedRoomState } from "./room-state-store";
 
 type PlayerRole = "w" | "b";
 type RoomRole = PlayerRole | "spectator";
@@ -248,9 +249,12 @@ const publicDir =
     : path.join(projectRoot, "public");
 const liveChatStore = createLiveChatStore(projectRoot);
 const roomJoinRequestStore = createRoomJoinRequestStore(projectRoot);
+const roomStateStore = createRoomStateStore(projectRoot);
 
 const MAX_IMPORT_SOURCE_LENGTH = 200_000;
 const IMPORT_FETCH_TIMEOUT_MS = 12_000;
+const PERSISTED_SEAT_PLACEHOLDER_PREFIX = "__persisted-seat__";
+const PERSISTED_SEAT_RECOVERY_GRACE_MS = 1000 * 60 * 60 * 24 * 7;
 
 app.use(express.static(publicDir));
 app.use("/stockfish", express.static(path.join(projectRoot, "node_modules", "stockfish", "bin")));
@@ -585,6 +589,207 @@ function roomTrace(event: string, details: Record<string, unknown>): void {
   console.info(`[room:${event}]`, details);
 }
 
+function createPersistedSeatPlaceholder(roomId: string, role: PlayerRole): string {
+  return `${PERSISTED_SEAT_PLACEHOLDER_PREFIX}:${roomId}:${role}`;
+}
+
+function isPersistedSeatPlaceholder(socketId: string | undefined): boolean {
+  return typeof socketId === "string" && socketId.startsWith(`${PERSISTED_SEAT_PLACEHOLDER_PREFIX}:`);
+}
+
+function resolveSeatUserId(
+  room: GameRoom,
+  role: PlayerRole,
+): string | null {
+  if (role === "w") {
+    return room.whiteUserId ?? (room.white ? getSocketUserId(room.white) : null);
+  }
+
+  return room.blackUserId ?? (room.black ? getSocketUserId(room.black) : null);
+}
+
+function resolveOwnerUserId(room: GameRoom): string | null {
+  if (!room.ownerId) {
+    return null;
+  }
+
+  if (room.ownerId === room.white) {
+    return resolveSeatUserId(room, "w");
+  }
+
+  if (room.ownerId === room.black) {
+    return resolveSeatUserId(room, "b");
+  }
+
+  return getSocketUserId(room.ownerId);
+}
+
+function serializeRoomState(room: GameRoom): PersistedRoomState {
+  const whiteUserId = resolveSeatUserId(room, "w");
+  const blackUserId = resolveSeatUserId(room, "b");
+  const ownerUserId = resolveOwnerUserId(room);
+  const whiteChoice = room.white ? room.colorChoices.get(room.white) ?? null : null;
+  const blackChoice = room.black ? room.colorChoices.get(room.black) ?? null : null;
+  const whiteReady = room.white ? room.readyPlayers.has(room.white) : false;
+  const blackReady = room.black ? room.readyPlayers.has(room.black) : false;
+
+  return {
+    id: room.id,
+    movesSan: room.chess.history(),
+    whiteUserId,
+    blackUserId,
+    ownerUserId,
+    winner: room.winner ?? null,
+    statusOverride: room.statusOverride ?? null,
+    whiteDisconnectedAt: room.whiteDisconnectedAt ?? null,
+    blackDisconnectedAt: room.blackDisconnectedAt ?? null,
+    ownerDisconnectedAt: room.ownerDisconnectedAt ?? null,
+    updatedAt: room.updatedAt,
+    isStarted: room.isStarted,
+    analysisEnabled: room.analysisEnabled,
+    analysisLabelsOnlyEnabled: room.analysisLabelsOnlyEnabled,
+    timeControl: room.timeControl,
+    clockWhiteMs: room.clockWhiteMs,
+    clockBlackMs: room.clockBlackMs,
+    clockActive: room.clockActive ?? null,
+    clockRunning: room.clockRunning,
+    clockLastUpdatedAt: room.clockLastUpdatedAt,
+    voiceWAcceptsB: room.voiceWAcceptsB,
+    voiceBAcceptsW: room.voiceBAcceptsW,
+    whiteColorChoice: whiteChoice,
+    blackColorChoice: blackChoice,
+    whiteReady,
+    blackReady,
+    access: {
+      inviteLinkToken: room.access.inviteLinkToken,
+      invitedUserIds: [...room.access.invitedUserIds],
+      allowedSpectatorUserIds: [...room.access.allowedSpectatorUserIds],
+    },
+  };
+}
+
+function deserializeRoomState(record: PersistedRoomState): GameRoom | null {
+  const chess = new Chess();
+  for (const san of record.movesSan) {
+    try {
+      const applied = chess.move(san);
+      if (!applied) {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  const whiteSeatId = record.whiteUserId ? createPersistedSeatPlaceholder(record.id, "w") : undefined;
+  const blackSeatId = record.blackUserId ? createPersistedSeatPlaceholder(record.id, "b") : undefined;
+  const ownerSeatId =
+    record.ownerUserId && record.ownerUserId === record.whiteUserId
+      ? whiteSeatId
+      : record.ownerUserId && record.ownerUserId === record.blackUserId
+      ? blackSeatId
+      : undefined;
+  const now = Date.now();
+
+  const room: GameRoom = {
+    id: record.id,
+    chess,
+    whiteUserId: record.whiteUserId,
+    blackUserId: record.blackUserId,
+    spectators: new Set<string>(),
+    rematchVotes: new Set<string>(),
+    analysisVotes: new Set<string>(),
+    labelsVotes: new Set<string>(),
+    analysisEnabled: record.analysisEnabled,
+    analysisLabelsOnlyEnabled: record.analysisLabelsOnlyEnabled,
+    updatedAt: record.updatedAt,
+    isStarted: record.isStarted,
+    colorChoices: new Map<string, "w" | "b">(),
+    readyPlayers: new Set<string>(),
+    timeControl: record.timeControl,
+    clockWhiteMs: record.clockWhiteMs,
+    clockBlackMs: record.clockBlackMs,
+    clockActive: record.clockActive,
+    clockRunning: record.clockRunning,
+    clockLastUpdatedAt: record.clockLastUpdatedAt,
+    voiceWAcceptsB: record.voiceWAcceptsB,
+    voiceBAcceptsW: record.voiceBAcceptsW,
+    access: {
+      inviteLinkToken: record.access.inviteLinkToken,
+      invitedUserIds: new Set<string>(record.access.invitedUserIds),
+      allowedSpectatorUserIds: new Set<string>(record.access.allowedSpectatorUserIds),
+    },
+  };
+
+  if (whiteSeatId) {
+    room.white = whiteSeatId;
+    room.whiteDisconnectedAt = record.whiteDisconnectedAt ?? now;
+  }
+  if (blackSeatId) {
+    room.black = blackSeatId;
+    room.blackDisconnectedAt = record.blackDisconnectedAt ?? now;
+  }
+  if (ownerSeatId) {
+    room.ownerId = ownerSeatId;
+    room.ownerDisconnectedAt = record.ownerDisconnectedAt ?? now;
+  }
+  if (record.winner) {
+    room.winner = record.winner;
+  }
+  if (record.statusOverride) {
+    room.statusOverride = record.statusOverride;
+  }
+
+  if (whiteSeatId && record.whiteColorChoice) {
+    room.colorChoices.set(whiteSeatId, record.whiteColorChoice);
+  }
+  if (blackSeatId && record.blackColorChoice) {
+    room.colorChoices.set(blackSeatId, record.blackColorChoice);
+  }
+  if (whiteSeatId && record.whiteReady) {
+    room.readyPlayers.add(whiteSeatId);
+  }
+  if (blackSeatId && record.blackReady) {
+    room.readyPlayers.add(blackSeatId);
+  }
+
+  return room;
+}
+
+function persistRoomsToDisk(): void {
+  const now = Date.now();
+  const serializedRooms: PersistedRoomState[] = [];
+
+  for (const room of rooms.values()) {
+    syncActiveClock(room, now);
+    serializedRooms.push(serializeRoomState(room));
+  }
+
+  roomStateStore.saveRooms(serializedRooms);
+}
+
+function restoreRoomsFromDisk(): void {
+  const restoredRooms = roomStateStore.loadRooms();
+  if (restoredRooms.length === 0) {
+    return;
+  }
+
+  for (const record of restoredRooms) {
+    const hydrated = deserializeRoomState(record);
+    if (!hydrated) {
+      roomTrace("restore-skip-invalid", { roomId: record.id });
+      continue;
+    }
+
+    rooms.set(hydrated.id, hydrated);
+  }
+
+  roomTrace("restore-complete", {
+    restoredCount: rooms.size,
+  });
+  persistRoomsToDisk();
+}
+
 function getSocketDisplayName(socketId: string | undefined): string {
   if (!socketId) {
     return "Guest";
@@ -795,7 +1000,9 @@ function areLikelyFriendsForJoinRequest(
 
 function pruneDisconnectedRoomSeats(room: GameRoom, now = Date.now()): boolean {
   let changed = false;
-  const seatGraceMs = getSeatDisconnectGraceMs(room);
+  const whiteSeatGraceMs = getSeatDisconnectGraceMs(room, room.white);
+  const blackSeatGraceMs = getSeatDisconnectGraceMs(room, room.black);
+  const ownerSeatGraceMs = getSeatDisconnectGraceMs(room, room.ownerId);
 
   const whiteConnected = isSocketConnected(room.white);
   const blackConnected = isSocketConnected(room.black);
@@ -822,7 +1029,7 @@ function pruneDisconnectedRoomSeats(room: GameRoom, now = Date.now()): boolean {
 
   const shouldReleaseWhite = Boolean(
     room.white && (
-      (room.whiteDisconnectedAt && now - room.whiteDisconnectedAt > seatGraceMs)
+      (room.whiteDisconnectedAt && now - room.whiteDisconnectedAt > whiteSeatGraceMs)
       || (!whiteConnected && !room.whiteDisconnectedAt && !room.whiteUserId)
     ),
   );
@@ -841,7 +1048,7 @@ function pruneDisconnectedRoomSeats(room: GameRoom, now = Date.now()): boolean {
 
   const shouldReleaseBlack = Boolean(
     room.black && (
-      (room.blackDisconnectedAt && now - room.blackDisconnectedAt > seatGraceMs)
+      (room.blackDisconnectedAt && now - room.blackDisconnectedAt > blackSeatGraceMs)
       || (!blackConnected && !room.blackDisconnectedAt && !room.blackUserId)
     ),
   );
@@ -860,7 +1067,7 @@ function pruneDisconnectedRoomSeats(room: GameRoom, now = Date.now()): boolean {
 
   const shouldReleaseOwner = Boolean(
     room.ownerId && (
-      (room.ownerDisconnectedAt && now - room.ownerDisconnectedAt > seatGraceMs)
+      (room.ownerDisconnectedAt && now - room.ownerDisconnectedAt > ownerSeatGraceMs)
       || (!ownerConnected && !room.ownerDisconnectedAt && !ownerHasPersistentIdentity)
     ),
   );
@@ -887,10 +1094,16 @@ function isFinishedStartedRoom(room: GameRoom): boolean {
   return room.isStarted && (Boolean(room.winner) || room.chess.isGameOver());
 }
 
-function getSeatDisconnectGraceMs(room: GameRoom): number {
-  return isFinishedStartedRoom(room)
+function getSeatDisconnectGraceMs(room: GameRoom, seatSocketId?: string): number {
+  const baseGraceMs = isFinishedStartedRoom(room)
     ? POST_GAME_DISCONNECT_GRACE_MS
     : PLAYER_DISCONNECT_GRACE_MS;
+
+  if (!isPersistedSeatPlaceholder(seatSocketId)) {
+    return baseGraceMs;
+  }
+
+  return Math.max(baseGraceMs, PERSISTED_SEAT_RECOVERY_GRACE_MS);
 }
 
 function clearSocketUserIdentity(socketId: string): void {
@@ -1588,6 +1801,7 @@ function emitRoomState(room: GameRoom): void {
   }
 
   room.updatedAt = Date.now();
+  persistRoomsToDisk();
   io.to(room.id).emit("room:state", buildSnapshot(room));
   notifyRoomParticipantPresence(room);
 }
@@ -1612,6 +1826,7 @@ function closeRoom(room: GameRoom, reason: "abandoned" | "room-closed" = "room-c
   }
 
   rooms.delete(room.id);
+  persistRoomsToDisk();
 }
 
 function resetSocketState(socketId: string): void {
@@ -1925,6 +2140,8 @@ function clearPendingRoomJoinRequestsForRoom(room: GameRoom, message: string): v
     });
   }
 }
+
+restoreRoomsFromDisk();
 
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
@@ -2286,6 +2503,7 @@ io.on("connection", (socket) => {
       senderSocketId: socket.id,
     });
     grantDirectRoomInvite(room.access, toUserId, true);
+    persistRoomsToDisk();
     pendingFriendInvites.set(inviteId, {
       inviteId,
       fromUserId: senderUserId,
@@ -2403,6 +2621,7 @@ io.on("connection", (socket) => {
       const room = rooms.get(pendingInvite.roomId);
       if (room) {
         grantDirectRoomInvite(room.access, receiverUserId, true);
+        persistRoomsToDisk();
         roomTrace("invite-respond-grant", {
           roomId: room.id,
           inviteId,
@@ -2683,6 +2902,7 @@ io.on("connection", (socket) => {
     }
 
     grantDirectRoomInvite(room.access, request.requesterUserId, true);
+    persistRoomsToDisk();
     emitRoomJoinRequestResultToRequester(request, {
       accepted: true,
       fromName: responderName,
@@ -2817,6 +3037,7 @@ io.on("connection", (socket) => {
 
     if (requesterUserId && joinAuthorization?.source === "invite-link") {
       grantDirectRoomInvite(room.access, requesterUserId, true);
+      persistRoomsToDisk();
     }
 
     pruneDisconnectedRoomSeats(room, Date.now());
@@ -2835,11 +3056,12 @@ io.on("connection", (socket) => {
       const ownerWasBlack = room.ownerId && room.black === room.ownerId;
 
       const now = Date.now();
-      const seatGraceMs = getSeatDisconnectGraceMs(room);
+      const whiteSeatGraceMs = getSeatDisconnectGraceMs(room, room.white);
+      const blackSeatGraceMs = getSeatDisconnectGraceMs(room, room.black);
       const canReclaimWhite = Boolean(
         room.white
         && room.whiteDisconnectedAt
-        && now - room.whiteDisconnectedAt < seatGraceMs
+        && now - room.whiteDisconnectedAt < whiteSeatGraceMs
         && room.whiteUserId
         && requesterUserId
         && requesterUserId === room.whiteUserId,
@@ -2847,7 +3069,7 @@ io.on("connection", (socket) => {
       const canReclaimBlack = Boolean(
         room.black
         && room.blackDisconnectedAt
-        && now - room.blackDisconnectedAt < seatGraceMs
+        && now - room.blackDisconnectedAt < blackSeatGraceMs
         && room.blackUserId
         && requesterUserId
         && requesterUserId === room.blackUserId,
@@ -2919,6 +3141,7 @@ io.on("connection", (socket) => {
       }
       if (requesterUserId) {
         room.access.allowedSpectatorUserIds.add(requesterUserId);
+        persistRoomsToDisk();
       }
     }
 
