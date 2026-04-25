@@ -1324,4 +1324,36 @@ body.focus-mode .piece-quality-marker.blunder {
     height: clamp(24px, 40%, 40px);
   }
 }
+@media (min-width: 641px) {
+  .piece-quality-marker.brilliant,
+  .piece-quality-marker.great,
+  .piece-quality-marker.bestmove,
+  .piece-quality-marker.forced,
+  .piece-quality-marker.excellent,
+  .piece-quality-marker.good,
+  .piece-quality-marker.inaccuracy,
+  .piece-quality-marker.mistake,
+  .piece-quality-marker.blunder {
+    width: clamp(20px, calc(100% * 0.34), 36px);
+    min-width: clamp(20px, calc(100% * 0.34), 36px);
+    height: clamp(20px, calc(100% * 0.34), 36px);
+    top: clamp(2px, 4.5%, 6px);
+    right: clamp(2px, 4.5%, 6px);
+  }
+  body.focus-mode .piece-quality-marker.brilliant,
+  body.focus-mode .piece-quality-marker.great,
+  body.focus-mode .piece-quality-marker.bestmove,
+  body.focus-mode .piece-quality-marker.forced,
+  body.focus-mode .piece-quality-marker.excellent,
+  body.focus-mode .piece-quality-marker.good,
+  body.focus-mode .piece-quality-marker.inaccuracy,
+  body.focus-mode .piece-quality-marker.mistake,
+  body.focus-mode .piece-quality-marker.blunder {
+    width: clamp(22px, calc(100% * 0.38), 42px);
+    min-width: clamp(22px, calc(100% * 0.38), 42px);
+    height: clamp(22px, calc(100% * 0.38), 42px);
+    top: clamp(2px, 3.8%, 6px);
+    right: clamp(2px, 3.8%, 6px);
+  }
+}
 /*# sourceMappingURL=analyze.css.map */

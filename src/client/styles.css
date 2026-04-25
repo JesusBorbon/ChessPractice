@@ -1048,15 +1048,15 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   position: absolute;
   top: clamp(2px, 0.45vmin, 6px);
   right: clamp(2px, 0.45vmin, 6px);
-  min-width: clamp(20px, 32%, 30px);
-  max-width: 40%;
-  height: clamp(18px, 32%, 30px);
-  padding: 0 clamp(2px, 0.5vmin, 6px);
-  border-radius: clamp(6px, 0.9vmin, 10px);
+  min-width: clamp(24px, 36%, 36px);
+  max-width: 44%;
+  height: clamp(22px, 36%, 36px);
+  padding: 0 clamp(3px, 0.6vmin, 7px);
+  border-radius: clamp(7px, 1vmin, 12px);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: clamp(0.5rem, 1.15vmin, 0.84rem);
+  font-size: clamp(0.58rem, 1.3vmin, 0.95rem);
   font-weight: 800;
   line-height: 1;
   border: 1px solid var(--marker-border);
@@ -1069,8 +1069,8 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
 }
 
 .piece-quality-marker-icon {
-  width: clamp(10px, 72%, 18px);
-  height: clamp(10px, 72%, 18px);
+  width: clamp(13px, 76%, 22px);
+  height: clamp(13px, 76%, 22px);
   display: block;
 }
 
