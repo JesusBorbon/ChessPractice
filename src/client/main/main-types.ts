@@ -2,6 +2,7 @@ import type { Square } from "chess.js";
 
 import type { BoardOrientation } from "../../../engine";
 import type { BestMoveArrow } from "../board/best-move-arrow";
+import type { MoveBadgeCategory } from "../move-badges";
 
 export type PlayerRole = "w" | "b";
 export type RoomRole = PlayerRole | "spectator";
@@ -24,14 +25,7 @@ export type TimeControlPreset = {
 
 export type PromotionPiece = "q" | "r" | "b" | "n";
 
-export type MoveCategory =
-  | "brilliant"
-  | "great"
-  | "excellent"
-  | "good"
-  | "inaccuracy"
-  | "mistake"
-  | "blunder";
+export type MoveCategory = MoveBadgeCategory;
 
 export type QualityResult = {
   category: MoveCategory;
@@ -179,6 +173,7 @@ export type EngineEval = {
   mate: number | null;
   bestMove: string;
   pv: string;
+  forced?: boolean;
 };
 
 export type BotDifficultyPreset = {

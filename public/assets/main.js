@@ -31471,6 +31471,48 @@ var init_history_audio = __esm({
   }
 });
 
+// src/client/move-badges.ts
+function appendMoveBadgeMarkerContent(marker, category) {
+  const icon = document.createElement("img");
+  icon.className = "piece-quality-marker-icon";
+  icon.src = MOVE_BADGE_ICON_PATHS[category];
+  icon.alt = `${MOVE_BADGE_LABELS[category]} move`;
+  icon.draggable = false;
+  marker.append(icon);
+}
+function renderMoveBadgeHtml(category, className, label = MOVE_BADGE_LABELS[category]) {
+  const iconClassName = `${className}-icon`;
+  return `<span class="${className} ${category}" title="${label}"><img class="${iconClassName}" src="${MOVE_BADGE_ICON_PATHS[category]}" alt="" aria-hidden="true" draggable="false">${label}</span>`;
+}
+var MOVE_BADGE_LABELS, MOVE_BADGE_ICON_PATHS;
+var init_move_badges = __esm({
+  "src/client/move-badges.ts"() {
+    "use strict";
+    MOVE_BADGE_LABELS = {
+      brilliant: "Brilliant",
+      great: "Great",
+      bestmove: "Best move",
+      forced: "Forced",
+      excellent: "Excellent",
+      good: "Good",
+      inaccuracy: "Inaccuracy",
+      mistake: "Mistake",
+      blunder: "Blunder"
+    };
+    MOVE_BADGE_ICON_PATHS = {
+      brilliant: "/assets/labelBadges/brilliant-move-chess.png",
+      great: "/assets/labelBadges/great.png",
+      bestmove: "/assets/labelBadges/bestmove.png",
+      forced: "/assets/labelBadges/forced.png",
+      excellent: "/assets/labelBadges/excellent.png",
+      good: "/assets/labelBadges/good.png",
+      inaccuracy: "/assets/labelBadges/unaccuracy.png",
+      mistake: "/assets/labelBadges/mistake.png",
+      blunder: "/assets/labelBadges/blunder.png"
+    };
+  }
+});
+
 // src/client/analysis/live-analysis-utils.ts
 function materialFromPerspective(fen, color) {
   const board = fen.split(" ")[0] ?? "";
@@ -31489,10 +31531,18 @@ function materialFromPerspective(fen, color) {
   }
   return color === "w" ? white - black : black - white;
 }
+function hasSingleLegalMove(fen) {
+  try {
+    return new Chess(fen).moves().length === 1;
+  } catch {
+    return false;
+  }
+}
 function classifyLiveMoveQuality(input) {
   const {
     cpl,
     matchesBestMove,
+    isForcedMove,
     materialDelta,
     evalGain,
     isCapture,
@@ -31503,25 +31553,31 @@ function classifyLiveMoveQuality(input) {
   const isSacrifice = materialDelta <= -100;
   const brilliantSacrifice = isSacrifice && evalGain >= 80 && cpl <= 35;
   const greatPunish = matchesBestMove && cpl <= 22 && opponentBlundered && (isCapture || materialDelta >= 100 || evalGain >= 110);
+  if (isForcedMove) {
+    return { category: "forced", label: MOVE_BADGE_LABELS.forced };
+  }
   if (brilliantSacrifice || brilliantOffer) {
-    return { category: "brilliant", label: LIVE_CATEGORY_LABELS.brilliant };
+    return { category: "brilliant", label: MOVE_BADGE_LABELS.brilliant };
   }
   if (greatPunish) {
-    return { category: "great", label: LIVE_CATEGORY_LABELS.great };
+    return { category: "great", label: MOVE_BADGE_LABELS.great };
+  }
+  if (matchesBestMove) {
+    return { category: "bestmove", label: MOVE_BADGE_LABELS.bestmove };
   }
   if (cpl <= 45) {
-    return { category: "excellent", label: LIVE_CATEGORY_LABELS.excellent };
+    return { category: "excellent", label: MOVE_BADGE_LABELS.excellent };
   }
   if (cpl <= 90) {
-    return { category: "good", label: LIVE_CATEGORY_LABELS.good };
+    return { category: "good", label: MOVE_BADGE_LABELS.good };
   }
   if (cpl <= 160) {
-    return { category: "inaccuracy", label: LIVE_CATEGORY_LABELS.inaccuracy };
+    return { category: "inaccuracy", label: MOVE_BADGE_LABELS.inaccuracy };
   }
   if (cpl <= 280) {
-    return { category: "mistake", label: LIVE_CATEGORY_LABELS.mistake };
+    return { category: "mistake", label: MOVE_BADGE_LABELS.mistake };
   }
-  return { category: "blunder", label: LIVE_CATEGORY_LABELS.blunder };
+  return { category: "blunder", label: MOVE_BADGE_LABELS.blunder };
 }
 async function verifyLiveBrilliantOffer(input) {
   const {
@@ -31563,21 +31619,8 @@ async function verifyLiveBrilliantOffer(input) {
   }
   return worstReplyScore >= Math.max(150, beforeMoverCp - 90);
 }
-function symbolForLiveCategory(category) {
-  return LIVE_CATEGORY_TEXT_SYMBOLS[category] ?? LIVE_CATEGORY_LABELS[category];
-}
 function appendLiveCategoryMarkerContent(marker, category) {
-  const iconPath = LIVE_CATEGORY_BADGE_ICON_PATHS[category];
-  if (iconPath) {
-    const icon = document.createElement("img");
-    icon.className = "piece-quality-marker-icon";
-    icon.src = iconPath;
-    icon.alt = `${LIVE_CATEGORY_LABELS[category]} move`;
-    icon.draggable = false;
-    marker.append(icon);
-    return;
-  }
-  marker.textContent = symbolForLiveCategory(category);
+  appendMoveBadgeMarkerContent(marker, category);
 }
 function summarizeLiveMove(label, cpl, san) {
   return `${label}: ${san} (${cpl} CPL)`;
@@ -31595,11 +31638,12 @@ function buildBeforeAfterFenFromMoves(moves) {
   const afterFen = replay.fen();
   return { beforeFen, afterFen };
 }
-var PIECE_VALUES2, LIVE_CATEGORY_LABELS, LIVE_CATEGORY_TEXT_SYMBOLS, LIVE_CATEGORY_BADGE_ICON_PATHS, LIVE_BRILLIANT_VERIFICATION_DEPTH;
+var PIECE_VALUES2, LIVE_BRILLIANT_VERIFICATION_DEPTH;
 var init_live_analysis_utils = __esm({
   "src/client/analysis/live-analysis-utils.ts"() {
     "use strict";
     init_chess();
+    init_move_badges();
     PIECE_VALUES2 = {
       p: 100,
       n: 320,
@@ -31607,26 +31651,6 @@ var init_live_analysis_utils = __esm({
       r: 500,
       q: 900,
       k: 0
-    };
-    LIVE_CATEGORY_LABELS = {
-      brilliant: "Brilliant",
-      great: "Great",
-      excellent: "Excellent",
-      good: "Good",
-      inaccuracy: "Inaccuracy",
-      mistake: "Mistake",
-      blunder: "Blunder"
-    };
-    LIVE_CATEGORY_TEXT_SYMBOLS = {
-      brilliant: "!!"
-    };
-    LIVE_CATEGORY_BADGE_ICON_PATHS = {
-      great: "/assets/labelBadges/great.png",
-      excellent: "/assets/labelBadges/excellent.png",
-      good: "/assets/labelBadges/good.png",
-      inaccuracy: "/assets/labelBadges/unaccuracy.png",
-      mistake: "/assets/labelBadges/mistake.png",
-      blunder: "/assets/labelBadges/blunder.png"
     };
     LIVE_BRILLIANT_VERIFICATION_DEPTH = 16;
   }
@@ -33916,6 +33940,7 @@ var require_main_runtime = __commonJS({
     init_live_chat();
     init_board_geometry();
     init_board_effects();
+    init_move_badges();
     init_chess_helpers();
     init_main_template();
     init_seat_context_utils();
@@ -36926,6 +36951,12 @@ var require_main_runtime = __commonJS({
     function isLabelsOnlyMode(snapshot) {
       return isLiveAnalysisLocked(snapshot) && snapshot.analysis.labelsOnly;
     }
+    function liveMoveKey(snapshot) {
+      if (!snapshot.lastMove || snapshot.moves.length === 0) {
+        return null;
+      }
+      return `${snapshot.moveCount}:${snapshot.lastMove.from}:${snapshot.lastMove.to}:${snapshot.lastMove.san}`;
+    }
     function isBotBadgesMode(snapshot) {
       return state.gameMode === "bot" && snapshot.analysis.enabled;
     }
@@ -37042,8 +37073,8 @@ var require_main_runtime = __commonJS({
         const blackPly = index + 2;
         const whiteGrade = state.liveMoveGrades[whitePly];
         const blackGrade = state.liveMoveGrades[blackPly];
-        const whiteBadge = whiteMove && whiteGrade ? ` <span class="move-quality-tag ${whiteGrade.category}">${whiteGrade.label}</span>` : "";
-        const blackBadge = blackMove && blackGrade ? ` <span class="move-quality-tag ${blackGrade.category}">${blackGrade.label}</span>` : "";
+        const whiteBadge = whiteMove && whiteGrade ? ` ${renderMoveBadgeHtml(whiteGrade.category, "move-quality-tag", whiteGrade.label)}` : "";
+        const blackBadge = blackMove && blackGrade ? ` ${renderMoveBadgeHtml(blackGrade.category, "move-quality-tag", blackGrade.label)}` : "";
         const moveNumber = Math.floor(index / 2) + 1;
         const wActiveStyle = state.viewCursor === whitePly ? "background: var(--accent); color: #fffdf8;" : "";
         const bActiveStyle = state.viewCursor === blackPly ? "background: var(--accent); color: #fffdf8;" : "";
@@ -37132,7 +37163,10 @@ var require_main_runtime = __commonJS({
       if (!snapshot.analysis.enabled && !labelsOnlyMode || !snapshot.lastMove || snapshot.moves.length === 0) {
         return;
       }
-      const moveKey = `${snapshot.moveCount}:${snapshot.lastMove.from}:${snapshot.lastMove.to}:${snapshot.lastMove.san}`;
+      const moveKey = liveMoveKey(snapshot);
+      if (!moveKey) {
+        return;
+      }
       if (state.lastAnalyzedMoveKey === moveKey) {
         return;
       }
@@ -37154,7 +37188,7 @@ var require_main_runtime = __commonJS({
         if (token !== liveAnalysisToken) {
           return;
         }
-        if (!state.snapshot) {
+        if (!state.snapshot || liveMoveKey(state.snapshot) !== moveKey) {
           return;
         }
         const stillLabelsOnly = isLabelsOnlyMode(state.snapshot);
@@ -37172,7 +37206,8 @@ var require_main_runtime = __commonJS({
         const materialDelta = materialAfter - materialBefore;
         const evalGain = Math.round(moverAfter - moverBefore);
         const previousOpponentCategory = state.liveMoveGrades[snapshot.moveCount - 1]?.category;
-        const brilliantOffer = await verifyLiveBrilliantOffer({
+        const isForcedMove = Boolean(before.forced) || hasSingleLegalMove(fenPair.beforeFen);
+        const brilliantOffer = isForcedMove ? false : await verifyLiveBrilliantOffer({
           engine: liveAnalyzer,
           move: snapshot.lastMove,
           beforeFen: fenPair.beforeFen,
@@ -37183,9 +37218,18 @@ var require_main_runtime = __commonJS({
           matchesBestMove,
           materialDelta
         });
+        if (token !== liveAnalysisToken || !state.snapshot || liveMoveKey(state.snapshot) !== moveKey) {
+          return;
+        }
+        const stillAnalysisEnabled = state.snapshot.analysis.enabled;
+        const stillLabelsOnlyAfterVerify = isLabelsOnlyMode(state.snapshot);
+        if (!stillAnalysisEnabled && !stillLabelsOnlyAfterVerify) {
+          return;
+        }
         const quality = classifyLiveMoveQuality({
           cpl,
           matchesBestMove,
+          isForcedMove,
           materialDelta,
           evalGain,
           isCapture: snapshot.lastMove.san.includes("x"),
@@ -37205,7 +37249,7 @@ var require_main_runtime = __commonJS({
       }
       render();
     }
-    async function maybeRunLiveAnalysisForMove(previousMoves, move, _expectedMoveCount, _expectedMoveKey) {
+    async function maybeRunLiveAnalysisForMove(previousMoves, move, expectedMoveCount, expectedMoveKey) {
       if (!liveAnalyzer) {
         try {
           liveAnalyzer = new StockfishBridge();
@@ -37239,7 +37283,8 @@ var require_main_runtime = __commonJS({
         const materialDelta = materialAfter - materialBefore;
         const evalGain = Math.round(moverAfter - moverBefore);
         const previousOpponentCategory = state.liveMoveGrades[(state.snapshot?.moveCount ?? 0) - 1]?.category;
-        const brilliantOffer = await verifyLiveBrilliantOffer({
+        const isForcedMove = Boolean(before.forced) || hasSingleLegalMove(beforeFen);
+        const brilliantOffer = isForcedMove ? false : await verifyLiveBrilliantOffer({
           engine: liveAnalyzer,
           move: moveResult,
           beforeFen,
@@ -37250,9 +37295,13 @@ var require_main_runtime = __commonJS({
           matchesBestMove,
           materialDelta
         });
+        if (!state.snapshot || state.snapshot.moveCount !== expectedMoveCount || liveMoveKey(state.snapshot) !== expectedMoveKey) {
+          return;
+        }
         const quality = classifyLiveMoveQuality({
           cpl,
           matchesBestMove,
+          isForcedMove,
           materialDelta,
           evalGain,
           isCapture: Boolean(moveResult.captured),

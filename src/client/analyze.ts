@@ -25,11 +25,17 @@ import {
 } from "./contexts/room-return-context";
 import { createSoundEffectsPlayer } from "./audio/sound-effects-player";
 import { resolveGameParticipants, resolveGameParticipantsFromPgn } from "./game-display";
+import {
+  MOVE_BADGE_LABELS,
+  appendMoveBadgeMarkerContent,
+  renderMoveBadgeHtml,
+  type MoveBadgeCategory,
+} from "./move-badges";
 import { mountThemeSwitcher, normalizeAnimationStyle, type AnimationStyle, type PieceThemeChoice, type SoundThemeChoice } from "./theme";
 import { mountGpuAccelerationPolicy } from "./utils/interaction-utils";
 
 type PromotionPiece = "q" | "r" | "b" | "n";
-type MoveCategory = "brilliant" | "great" | "excellent" | "good" | "inaccuracy" | "mistake" | "blunder";
+type MoveCategory = MoveBadgeCategory;
 type QualityResult = {
   category: MoveCategory;
   label: string;
@@ -40,6 +46,7 @@ type EngineEval = {
   mate: number | null;
   bestMove: string;
   pv: string;
+  forced?: boolean;
 };
 
 type MoveAnalysis = {
@@ -79,35 +86,14 @@ type GameAnalysisSummary = {
   };
 };
 
-const CATEGORY_LABELS: Record<MoveCategory, string> = {
-  brilliant: "Brilliant",
-  great: "Great",
-  excellent: "Excellent",
-  good: "Good",
-  inaccuracy: "Inaccuracy",
-  mistake: "Mistake",
-  blunder: "Blunder",
-};
+const CATEGORY_LABELS = MOVE_BADGE_LABELS;
 
 const SUMMARY_CATEGORY_SYMBOLS = {
   excellent: "★",
   great: "!",
-  brilliant: "!!",
+  brilliant: "B",
   blunder: "??",
 } as const;
-
-const CATEGORY_TEXT_SYMBOLS: Partial<Record<MoveCategory, string>> = {
-  brilliant: "!!",
-};
-
-const CATEGORY_BADGE_ICON_PATHS: Partial<Record<MoveCategory, string>> = {
-  great: "/assets/labelBadges/great.png",
-  excellent: "/assets/labelBadges/excellent.png",
-  good: "/assets/labelBadges/good.png",
-  inaccuracy: "/assets/labelBadges/unaccuracy.png",
-  mistake: "/assets/labelBadges/mistake.png",
-  blunder: "/assets/labelBadges/blunder.png",
-};
 
 const PIECE_VALUES: Record<string, number> = {
   p: 100,
@@ -240,18 +226,7 @@ function parseInfoLine(line: string): { cp: number; mate: number | null; pv: str
 }
 
 function appendCategoryMarkerContent(marker: HTMLElement, category: MoveCategory): void {
-  const iconPath = CATEGORY_BADGE_ICON_PATHS[category];
-  if (iconPath) {
-    const icon = document.createElement("img");
-    icon.className = "piece-quality-marker-icon";
-    icon.src = iconPath;
-    icon.alt = `${CATEGORY_LABELS[category]} move`;
-    icon.draggable = false;
-    marker.append(icon);
-    return;
-  }
-
-  marker.textContent = CATEGORY_TEXT_SYMBOLS[category] ?? CATEGORY_LABELS[category];
+  appendMoveBadgeMarkerContent(marker, category);
 }
 
 // ── Sound ────────────────────────────────────────────────────────────────────
@@ -1382,10 +1357,10 @@ function renderMoveList(): void {
     const whiteEval = analysisByPly[wIdx];
     const blackEval = analysisByPly[bIdx];
     const whiteBadge = whiteEval
-      ? `<span class="move-quality-badge ${whiteEval.category}">${whiteEval.label}</span>`
+      ? renderMoveBadgeHtml(whiteEval.category, "move-quality-badge", whiteEval.label)
       : "";
     const blackBadge = blackEval
-      ? `<span class="move-quality-badge ${blackEval.category}">${blackEval.label}</span>`
+      ? renderMoveBadgeHtml(blackEval.category, "move-quality-badge", blackEval.label)
       : "";
 
     rows.push(`
@@ -2129,7 +2104,12 @@ async function runGameAnalysis(): Promise<void> {
         return;
       }
 
-      analysisByPly[ply] = await classifyMove(ply, move, before, after, beforeFen, afterFen, engine);
+      const analysis = await classifyMove(ply, move, before, after, beforeFen, afterFen, engine);
+      if (runId !== analysisRunId) {
+        return;
+      }
+
+      analysisByPly[ply] = analysis;
       analysisProgressCompleted = ply;
       updateAnalysisLoadingOverlay();
       if (cursor === ply) {
@@ -2194,7 +2174,12 @@ async function analyzeLatestMove(): Promise<void> {
       return;
     }
 
-    analysisByPly[ply] = await classifyMove(ply, move, before, after, beforeFen, afterFen, engine);
+    const analysis = await classifyMove(ply, move, before, after, beforeFen, afterFen, engine);
+    if (runId !== analysisRunId) {
+      return;
+    }
+
+    analysisByPly[ply] = analysis;
     if (!isVariationMode) {
       syncGameLineFromCurrent();
     }
@@ -2244,27 +2229,31 @@ async function classifyMove(
   const afterMoverCp = -after.cp;
   const cpl = Math.max(0, Math.round(beforeMoverCp - afterMoverCp));
   const matchesBest = before.bestMove.startsWith(playedMove);
+  const isForcedMove = Boolean(before.forced) || hasSingleLegalMove(beforeFen);
   const moverColor = (beforeFen.split(" ")[1] as "w" | "b") || "w";
   const materialBefore = materialFromPerspective(beforeFen, moverColor);
   const materialAfter = materialFromPerspective(afterFen, moverColor);
   const materialDelta = materialAfter - materialBefore;
   const evalGain = Math.round(afterMoverCp - beforeMoverCp);
   const previousOpponentCategory = ply > 1 ? analysisByPly[ply - 1]?.category : undefined;
-  const brilliantOffer = await verifyBrilliantOffer({
-    engine,
-    move,
-    beforeFen,
-    afterFen,
-    beforeMoverCp,
-    afterMoverCp,
-    cpl,
-    matchesBest,
-    materialDelta,
-  });
+  const brilliantOffer = isForcedMove
+    ? { brilliantOffer: false as const }
+    : await verifyBrilliantOffer({
+        engine,
+        move,
+        beforeFen,
+        afterFen,
+        beforeMoverCp,
+        afterMoverCp,
+        cpl,
+        matchesBest,
+        materialDelta,
+      });
 
   const quality = classifyMoveQuality({
     cpl,
     matchesBest,
+    isForcedMove,
     materialDelta,
     evalGain,
     isCapture: Boolean(move.captured),
@@ -2290,6 +2279,7 @@ async function classifyMove(
 function classifyMoveQuality(input: {
   cpl: number;
   matchesBest: boolean;
+  isForcedMove: boolean;
   materialDelta: number;
   evalGain: number;
   isCapture: boolean;
@@ -2299,6 +2289,7 @@ function classifyMoveQuality(input: {
   const {
     cpl,
     matchesBest,
+    isForcedMove,
     materialDelta,
     evalGain,
     isCapture,
@@ -2314,12 +2305,20 @@ function classifyMoveQuality(input: {
     && opponentBlundered
     && (isCapture || materialDelta >= 100 || evalGain >= 110);
 
+  if (isForcedMove) {
+    return { category: "forced", label: CATEGORY_LABELS.forced };
+  }
+
   if (brilliantSacrifice || brilliantOffer) {
     return { category: "brilliant", label: CATEGORY_LABELS.brilliant };
   }
 
   if (greatPunish) {
     return { category: "great", label: CATEGORY_LABELS.great };
+  }
+
+  if (matchesBest) {
+    return { category: "bestmove", label: CATEGORY_LABELS.bestmove };
   }
 
   if (cpl <= 45) {
@@ -2367,6 +2366,14 @@ function materialFromPerspective(fen: string, color: "w" | "b"): number {
   return color === "w" ? white - black : black - white;
 }
 
+function hasSingleLegalMove(fen: string): boolean {
+  try {
+    return new Chess(fen).moves().length === 1;
+  } catch {
+    return false;
+  }
+}
+
 function formatCp(cp: number): string {
   if (cp >= MATE_CP - 10000) {
     return "+M";
@@ -2391,6 +2398,10 @@ function buildMoveNote(
   evalGain: number,
   brilliantOfferNote?: string,
 ): string {
+  if (category === "forced") {
+    return "Only legal move in the position.";
+  }
+
   if (category === "brilliant") {
     if (brilliantOfferNote) {
       return brilliantOfferNote;
@@ -2400,6 +2411,10 @@ function buildMoveNote(
 
   if (category === "great") {
     return `Best practical punishment after opponent error (${cpl} CPL).`;
+  }
+
+  if (category === "bestmove") {
+    return `Engine top choice (${cpl} CPL).`;
   }
 
   if (category === "blunder") {

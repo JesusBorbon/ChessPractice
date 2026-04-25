@@ -58,6 +58,7 @@ import {
   appendLiveCategoryMarkerContent,
   buildBeforeAfterFenFromMoves,
   classifyLiveMoveQuality,
+  hasSingleLegalMove,
   materialFromPerspective,
   summarizeLiveMove,
   verifyLiveBrilliantOffer,
@@ -65,6 +66,7 @@ import {
 import { createVoiceChatController } from "./live-chat";
 import { boardPointFromClient, getSquareFromPoint, squareCenter } from "./main/board-geometry";
 import { createBoardEffectsController } from "./main/board-effects";
+import { renderMoveBadgeHtml } from "./move-badges";
 import {
   countFenPieces,
   detectCapturedPiece,
@@ -3940,6 +3942,14 @@ function isLabelsOnlyMode(snapshot: RoomSnapshot): boolean {
   return isLiveAnalysisLocked(snapshot) && snapshot.analysis.labelsOnly;
 }
 
+function liveMoveKey(snapshot: RoomSnapshot): string | null {
+  if (!snapshot.lastMove || snapshot.moves.length === 0) {
+    return null;
+  }
+
+  return `${snapshot.moveCount}:${snapshot.lastMove.from}:${snapshot.lastMove.to}:${snapshot.lastMove.san}`;
+}
+
 function isBotBadgesMode(snapshot: RoomSnapshot): boolean {
   return state.gameMode === "bot" && snapshot.analysis.enabled;
 }
@@ -4094,10 +4104,10 @@ function renderMoves(): void {
     const blackGrade = state.liveMoveGrades[blackPly];
     
     const whiteBadge = whiteMove && whiteGrade
-      ? ` <span class="move-quality-tag ${whiteGrade.category}">${whiteGrade.label}</span>`
+      ? ` ${renderMoveBadgeHtml(whiteGrade.category, "move-quality-tag", whiteGrade.label)}`
       : "";
     const blackBadge = blackMove && blackGrade
-      ? ` <span class="move-quality-tag ${blackGrade.category}">${blackGrade.label}</span>`
+      ? ` ${renderMoveBadgeHtml(blackGrade.category, "move-quality-tag", blackGrade.label)}`
       : "";
       
     const moveNumber = Math.floor(index / 2) + 1;
@@ -4212,7 +4222,11 @@ async function maybeRunLiveAnalysis(snapshot: RoomSnapshot): Promise<void> {
     return;
   }
 
-  const moveKey = `${snapshot.moveCount}:${snapshot.lastMove.from}:${snapshot.lastMove.to}:${snapshot.lastMove.san}`;
+  const moveKey = liveMoveKey(snapshot);
+  if (!moveKey) {
+    return;
+  }
+
   if (state.lastAnalyzedMoveKey === moveKey) {
     return;
   }
@@ -4240,7 +4254,7 @@ async function maybeRunLiveAnalysis(snapshot: RoomSnapshot): Promise<void> {
       return;
     }
 
-    if (!state.snapshot) {
+    if (!state.snapshot || liveMoveKey(state.snapshot) !== moveKey) {
       return;
     }
 
@@ -4260,20 +4274,35 @@ async function maybeRunLiveAnalysis(snapshot: RoomSnapshot): Promise<void> {
     const materialDelta = materialAfter - materialBefore;
     const evalGain = Math.round(moverAfter - moverBefore);
     const previousOpponentCategory = state.liveMoveGrades[snapshot.moveCount - 1]?.category;
-    const brilliantOffer = await verifyLiveBrilliantOffer({
-      engine: liveAnalyzer,
-      move: snapshot.lastMove,
-      beforeFen: fenPair.beforeFen,
-      afterFen: fenPair.afterFen,
-      beforeMoverCp: moverBefore,
-      afterMoverCp: moverAfter,
-      cpl,
-      matchesBestMove,
-      materialDelta,
-    });
+    const isForcedMove = Boolean(before.forced) || hasSingleLegalMove(fenPair.beforeFen);
+    const brilliantOffer = isForcedMove
+      ? false
+      : await verifyLiveBrilliantOffer({
+          engine: liveAnalyzer,
+          move: snapshot.lastMove,
+          beforeFen: fenPair.beforeFen,
+          afterFen: fenPair.afterFen,
+          beforeMoverCp: moverBefore,
+          afterMoverCp: moverAfter,
+          cpl,
+          matchesBestMove,
+          materialDelta,
+        });
+
+    if (token !== liveAnalysisToken || !state.snapshot || liveMoveKey(state.snapshot) !== moveKey) {
+      return;
+    }
+
+    const stillAnalysisEnabled = state.snapshot.analysis.enabled;
+    const stillLabelsOnlyAfterVerify = isLabelsOnlyMode(state.snapshot);
+    if (!stillAnalysisEnabled && !stillLabelsOnlyAfterVerify) {
+      return;
+    }
+
     const quality = classifyLiveMoveQuality({
       cpl,
       matchesBestMove,
+      isForcedMove,
       materialDelta,
       evalGain,
       isCapture: snapshot.lastMove.san.includes("x"),
@@ -4302,8 +4331,8 @@ async function maybeRunLiveAnalysis(snapshot: RoomSnapshot): Promise<void> {
 async function maybeRunLiveAnalysisForMove(
   previousMoves: MoveSummary[],
   move: Move,
-  _expectedMoveCount: number,
-  _expectedMoveKey: string,
+  expectedMoveCount: number,
+  expectedMoveKey: string,
 ): Promise<void> {
   if (!liveAnalyzer) {
     try {
@@ -4343,20 +4372,33 @@ async function maybeRunLiveAnalysisForMove(
     const materialDelta = materialAfter - materialBefore;
     const evalGain = Math.round(moverAfter - moverBefore);
     const previousOpponentCategory = state.liveMoveGrades[(state.snapshot?.moveCount ?? 0) - 1]?.category;
-    const brilliantOffer = await verifyLiveBrilliantOffer({
-      engine: liveAnalyzer,
-      move: moveResult,
-      beforeFen,
-      afterFen,
-      beforeMoverCp: moverBefore,
-      afterMoverCp: moverAfter,
-      cpl,
-      matchesBestMove,
-      materialDelta,
-    });
+    const isForcedMove = Boolean(before.forced) || hasSingleLegalMove(beforeFen);
+    const brilliantOffer = isForcedMove
+      ? false
+      : await verifyLiveBrilliantOffer({
+          engine: liveAnalyzer,
+          move: moveResult,
+          beforeFen,
+          afterFen,
+          beforeMoverCp: moverBefore,
+          afterMoverCp: moverAfter,
+          cpl,
+          matchesBestMove,
+          materialDelta,
+        });
+
+    if (
+      !state.snapshot
+      || state.snapshot.moveCount !== expectedMoveCount
+      || liveMoveKey(state.snapshot) !== expectedMoveKey
+    ) {
+      return;
+    }
+
     const quality = classifyLiveMoveQuality({
       cpl,
       matchesBestMove,
+      isForcedMove,
       materialDelta,
       evalGain,
       isCapture: Boolean(moveResult.captured),

@@ -1,6 +1,7 @@
 import { Chess, PieceSymbol, Square } from "chess.js";
 
 import type { MoveCategory, MoveSummary, QualityResult } from "../main/main-types";
+import { MOVE_BADGE_LABELS, appendMoveBadgeMarkerContent } from "../move-badges";
 import { StockfishBridge } from "../stockfish-bridge";
 
 const PIECE_VALUES: Record<string, number> = {
@@ -10,29 +11,6 @@ const PIECE_VALUES: Record<string, number> = {
   r: 500,
   q: 900,
   k: 0,
-};
-
-const LIVE_CATEGORY_LABELS: Record<MoveCategory, string> = {
-  brilliant: "Brilliant",
-  great: "Great",
-  excellent: "Excellent",
-  good: "Good",
-  inaccuracy: "Inaccuracy",
-  mistake: "Mistake",
-  blunder: "Blunder",
-};
-
-const LIVE_CATEGORY_TEXT_SYMBOLS: Partial<Record<MoveCategory, string>> = {
-  brilliant: "!!",
-};
-
-const LIVE_CATEGORY_BADGE_ICON_PATHS: Partial<Record<MoveCategory, string>> = {
-  great: "/assets/labelBadges/great.png",
-  excellent: "/assets/labelBadges/excellent.png",
-  good: "/assets/labelBadges/good.png",
-  inaccuracy: "/assets/labelBadges/unaccuracy.png",
-  mistake: "/assets/labelBadges/mistake.png",
-  blunder: "/assets/labelBadges/blunder.png",
 };
 
 const LIVE_BRILLIANT_VERIFICATION_DEPTH = 16;
@@ -58,9 +36,18 @@ export function materialFromPerspective(fen: string, color: "w" | "b"): number {
   return color === "w" ? white - black : black - white;
 }
 
+export function hasSingleLegalMove(fen: string): boolean {
+  try {
+    return new Chess(fen).moves().length === 1;
+  } catch {
+    return false;
+  }
+}
+
 export function classifyLiveMoveQuality(input: {
   cpl: number;
   matchesBestMove: boolean;
+  isForcedMove: boolean;
   materialDelta: number;
   evalGain: number;
   isCapture: boolean;
@@ -70,6 +57,7 @@ export function classifyLiveMoveQuality(input: {
   const {
     cpl,
     matchesBestMove,
+    isForcedMove,
     materialDelta,
     evalGain,
     isCapture,
@@ -85,31 +73,39 @@ export function classifyLiveMoveQuality(input: {
     && opponentBlundered
     && (isCapture || materialDelta >= 100 || evalGain >= 110);
 
+  if (isForcedMove) {
+    return { category: "forced", label: MOVE_BADGE_LABELS.forced };
+  }
+
   if (brilliantSacrifice || brilliantOffer) {
-    return { category: "brilliant", label: LIVE_CATEGORY_LABELS.brilliant };
+    return { category: "brilliant", label: MOVE_BADGE_LABELS.brilliant };
   }
 
   if (greatPunish) {
-    return { category: "great", label: LIVE_CATEGORY_LABELS.great };
+    return { category: "great", label: MOVE_BADGE_LABELS.great };
+  }
+
+  if (matchesBestMove) {
+    return { category: "bestmove", label: MOVE_BADGE_LABELS.bestmove };
   }
 
   if (cpl <= 45) {
-    return { category: "excellent", label: LIVE_CATEGORY_LABELS.excellent };
+    return { category: "excellent", label: MOVE_BADGE_LABELS.excellent };
   }
 
   if (cpl <= 90) {
-    return { category: "good", label: LIVE_CATEGORY_LABELS.good };
+    return { category: "good", label: MOVE_BADGE_LABELS.good };
   }
 
   if (cpl <= 160) {
-    return { category: "inaccuracy", label: LIVE_CATEGORY_LABELS.inaccuracy };
+    return { category: "inaccuracy", label: MOVE_BADGE_LABELS.inaccuracy };
   }
 
   if (cpl <= 280) {
-    return { category: "mistake", label: LIVE_CATEGORY_LABELS.mistake };
+    return { category: "mistake", label: MOVE_BADGE_LABELS.mistake };
   }
 
-  return { category: "blunder", label: LIVE_CATEGORY_LABELS.blunder };
+  return { category: "blunder", label: MOVE_BADGE_LABELS.blunder };
 }
 
 export async function verifyLiveBrilliantOffer(input: {
@@ -170,23 +166,8 @@ export async function verifyLiveBrilliantOffer(input: {
   return worstReplyScore >= Math.max(150, beforeMoverCp - 90);
 }
 
-function symbolForLiveCategory(category: MoveCategory): string {
-  return LIVE_CATEGORY_TEXT_SYMBOLS[category] ?? LIVE_CATEGORY_LABELS[category];
-}
-
 export function appendLiveCategoryMarkerContent(marker: HTMLElement, category: MoveCategory): void {
-  const iconPath = LIVE_CATEGORY_BADGE_ICON_PATHS[category];
-  if (iconPath) {
-    const icon = document.createElement("img");
-    icon.className = "piece-quality-marker-icon";
-    icon.src = iconPath;
-    icon.alt = `${LIVE_CATEGORY_LABELS[category]} move`;
-    icon.draggable = false;
-    marker.append(icon);
-    return;
-  }
-
-  marker.textContent = symbolForLiveCategory(category);
+  appendMoveBadgeMarkerContent(marker, category);
 }
 
 export function summarizeLiveMove(label: string, cpl: number, san: string): string {
