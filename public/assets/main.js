@@ -34229,6 +34229,62 @@ var require_main_runtime = __commonJS({
       void marker.offsetWidth;
       marker.classList.add("marker-reveal");
     }
+    function buildGameOverOverlayKey(snapshot, gameMode) {
+      const winner = snapshot.winner ?? "none";
+      return `${gameMode}:${snapshot.moveCount}:${winner}:${snapshot.checkmate ? 1 : 0}:${snapshot.draw ? 1 : 0}:${snapshot.status}`;
+    }
+    function removeGameOverOverlay() {
+      if (!boardWrap) return;
+      boardWrap.querySelector(".game-over-overlay")?.remove();
+    }
+    function syncGameOverOverlay(snapshot, gameMode) {
+      if (!boardWrap) return;
+      const overlayKey = buildGameOverOverlayKey(snapshot, gameMode);
+      const existingOverlay = boardWrap.querySelector(".game-over-overlay");
+      if (existingOverlay?.dataset.overlayKey === overlayKey) {
+        return;
+      }
+      existingOverlay?.remove();
+      const overlay = document.createElement("div");
+      overlay.className = "game-over-overlay";
+      overlay.dataset.overlayKey = overlayKey;
+      const banner = document.createElement("div");
+      banner.className = "game-over-banner";
+      const title = document.createElement("h2");
+      title.className = "game-over-title";
+      if (snapshot.checkmate) title.textContent = snapshot.winner === "w" ? "White Wins!" : "Black Wins!";
+      else if (snapshot.draw) title.textContent = "Draw";
+      else if (snapshot.winner) title.textContent = snapshot.winner === "w" ? "White Wins" : "Black Wins";
+      const reason = document.createElement("p");
+      reason.className = "game-over-reason";
+      reason.textContent = snapshot.status;
+      const actionContainer = document.createElement("div");
+      actionContainer.className = "game-over-actions";
+      const overlayRematchBtn = document.createElement("button");
+      overlayRematchBtn.className = "action cta-turquoise";
+      overlayRematchBtn.textContent = gameMode === "bot" ? "Play Again" : "Request Rematch";
+      overlayRematchBtn.onclick = () => {
+        if (gameMode === "bot") startBotGame();
+        else socket.emit("game:rematch");
+      };
+      const overlayAnalyzeBtn = document.createElement("a");
+      overlayAnalyzeBtn.className = "action cta-rainbow";
+      overlayAnalyzeBtn.style.textDecoration = "none";
+      overlayAnalyzeBtn.onclick = () => {
+        openAnalyzeInIsolatedTab({
+          postGameMeta: {
+            whiteName: snapshot.players.whiteName,
+            blackName: snapshot.players.blackName
+          },
+          postGameMoves: snapshot.moves.map((move) => move.san)
+        });
+      };
+      overlayAnalyzeBtn.textContent = "Analyze Game";
+      actionContainer.append(overlayRematchBtn, overlayAnalyzeBtn);
+      banner.append(title, reason, actionContainer);
+      overlay.append(banner);
+      boardWrap.append(overlay);
+    }
     var soundEffectsPlayer = createSoundEffectsPlayer();
     function getPieceSpritePath(color, piece) {
       return resolvePieceSpritePath(state.pieceTheme, color, piece);
@@ -36713,8 +36769,7 @@ var require_main_runtime = __commonJS({
         liveAnalysisText.textContent = "Live analysis disabled.";
       }
       if (!gameEnded) {
-        const existingOverlay = document.querySelector(".game-over-overlay");
-        if (existingOverlay) existingOverlay.remove();
+        removeGameOverOverlay();
       }
       updateFocusHud();
     }
@@ -36786,6 +36841,21 @@ var require_main_runtime = __commonJS({
           }
         }
       }
+      let checkmatedKingSquare = null;
+      let winningKingSquare = null;
+      if (!isHistoryView && state.snapshot?.checkmate) {
+        const matedColor = displayBoard.turn();
+        const winnerColor = matedColor === "w" ? "b" : "w";
+        for (const sqName of squares) {
+          const p = displayBoard.get(sqName);
+          if (!p || p.type !== "k") continue;
+          if (p.color === matedColor) {
+            checkmatedKingSquare = sqName;
+          } else if (p.color === winnerColor) {
+            winningKingSquare = sqName;
+          }
+        }
+      }
       const liveGrade = state.snapshot && (state.snapshot.analysis.enabled || state.snapshot.analysis.labelsOnly) && state.snapshot.lastMove ? state.liveMoveGrades[state.snapshot.moveCount] : void 0;
       const liveMarkerSquare = !isHistoryView && liveGrade && state.snapshot?.lastMove ? state.snapshot.lastMove.to : null;
       const showQualityCallout = !isHistoryView && liveGrade && liveMarkerSquare && (liveGrade.category === "great" || liveGrade.category === "brilliant");
@@ -36800,6 +36870,8 @@ var require_main_runtime = __commonJS({
         button.dataset.square = squareName;
         if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
         if (checkedKingSquare === squareName) button.classList.add("in-check");
+        if (checkmatedKingSquare === squareName) button.classList.add("checkmate-loser-king");
+        if (winningKingSquare === squareName) button.classList.add("checkmate-winner-king");
         if (squareAnnotations.has(squareName)) button.classList.add("highlight-red");
         if (liveGrade?.category === "great" && liveMarkerSquare === squareName) button.classList.add("great-move-highlight");
         if (liveGrade?.category === "brilliant" && liveMarkerSquare === squareName) button.classList.add("brilliant-move-highlight");
@@ -36892,45 +36964,10 @@ var require_main_runtime = __commonJS({
       renderArrows();
       const snapshot = state.snapshot;
       const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
-      if (gameEnded && snapshot && !isHistoryView) {
-        const overlay = document.createElement("div");
-        overlay.className = "game-over-overlay";
-        const banner = document.createElement("div");
-        banner.className = "game-over-banner";
-        const title = document.createElement("h2");
-        title.className = "game-over-title";
-        if (snapshot.checkmate) title.textContent = snapshot.winner === "w" ? "White Wins!" : "Black Wins!";
-        else if (snapshot.draw) title.textContent = "Draw";
-        else if (snapshot.winner) title.textContent = snapshot.winner === "w" ? "White Wins" : "Black Wins";
-        const reason = document.createElement("p");
-        reason.className = "game-over-reason";
-        reason.textContent = snapshot.status;
-        const actionContainer = document.createElement("div");
-        actionContainer.className = "game-over-actions";
-        const overlayRematchBtn = document.createElement("button");
-        overlayRematchBtn.className = "action cta-turquoise";
-        overlayRematchBtn.textContent = state.gameMode === "bot" ? "Play Again" : "Request Rematch";
-        overlayRematchBtn.onclick = () => {
-          if (state.gameMode === "bot") startBotGame();
-          else socket.emit("game:rematch");
-        };
-        const overlayAnalyzeBtn = document.createElement("a");
-        overlayAnalyzeBtn.className = "action cta-rainbow";
-        overlayAnalyzeBtn.style.textDecoration = "none";
-        overlayAnalyzeBtn.onclick = () => {
-          openAnalyzeInIsolatedTab({
-            postGameMeta: {
-              whiteName: snapshot.players.whiteName,
-              blackName: snapshot.players.blackName
-            },
-            postGameMoves: snapshot.moves.map((move) => move.san)
-          });
-        };
-        overlayAnalyzeBtn.textContent = "Analyze Game";
-        actionContainer.append(overlayRematchBtn, overlayAnalyzeBtn);
-        banner.append(title, reason, actionContainer);
-        overlay.append(banner);
-        board.append(overlay);
+      if (!snapshot || isHistoryView || !gameEnded) {
+        removeGameOverOverlay();
+      } else {
+        syncGameOverOverlay(snapshot, state.gameMode);
       }
     }
     function toggleArrow(from, to) {

@@ -381,6 +381,76 @@ function triggerGameOverScreen(title: string, subtitle: string) {
   boardWrap.appendChild(overlay);
 }
 
+function buildGameOverOverlayKey(snapshot: RoomSnapshot, gameMode: AppState["gameMode"]): string {
+  const winner = snapshot.winner ?? "none";
+  return `${gameMode}:${snapshot.moveCount}:${winner}:${snapshot.checkmate ? 1 : 0}:${snapshot.draw ? 1 : 0}:${snapshot.status}`;
+}
+
+function removeGameOverOverlay(): void {
+  if (!boardWrap) return;
+  boardWrap.querySelector(".game-over-overlay")?.remove();
+}
+
+function syncGameOverOverlay(snapshot: RoomSnapshot, gameMode: AppState["gameMode"]): void {
+  if (!boardWrap) return;
+
+  const overlayKey = buildGameOverOverlayKey(snapshot, gameMode);
+  const existingOverlay = boardWrap.querySelector<HTMLDivElement>(".game-over-overlay");
+  if (existingOverlay?.dataset.overlayKey === overlayKey) {
+    return;
+  }
+
+  existingOverlay?.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "game-over-overlay";
+  overlay.dataset.overlayKey = overlayKey;
+
+  const banner = document.createElement("div");
+  banner.className = "game-over-banner";
+
+  const title = document.createElement("h2");
+  title.className = "game-over-title";
+
+  if (snapshot.checkmate) title.textContent = snapshot.winner === "w" ? "White Wins!" : "Black Wins!";
+  else if (snapshot.draw) title.textContent = "Draw";
+  else if (snapshot.winner) title.textContent = snapshot.winner === "w" ? "White Wins" : "Black Wins";
+
+  const reason = document.createElement("p");
+  reason.className = "game-over-reason";
+  reason.textContent = snapshot.status;
+
+  const actionContainer = document.createElement("div");
+  actionContainer.className = "game-over-actions";
+
+  const overlayRematchBtn = document.createElement("button");
+  overlayRematchBtn.className = "action cta-turquoise";
+  overlayRematchBtn.textContent = gameMode === "bot" ? "Play Again" : "Request Rematch";
+  overlayRematchBtn.onclick = () => {
+    if (gameMode === "bot") startBotGame();
+    else socket.emit("game:rematch");
+  };
+
+  const overlayAnalyzeBtn = document.createElement("a");
+  overlayAnalyzeBtn.className = "action cta-rainbow";
+  overlayAnalyzeBtn.style.textDecoration = "none";
+  overlayAnalyzeBtn.onclick = () => {
+    openAnalyzeInIsolatedTab({
+      postGameMeta: {
+        whiteName: snapshot.players.whiteName,
+        blackName: snapshot.players.blackName,
+      },
+      postGameMoves: snapshot.moves.map((move) => move.san),
+    });
+  };
+  overlayAnalyzeBtn.textContent = "Analyze Game";
+
+  actionContainer.append(overlayRematchBtn, overlayAnalyzeBtn);
+  banner.append(title, reason, actionContainer);
+  overlay.append(banner);
+  boardWrap.append(overlay);
+}
+
 // â”€â”€ Sound â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const soundEffectsPlayer = createSoundEffectsPlayer();
 
@@ -3528,8 +3598,7 @@ function renderSession(): void {
 
   // 9. Wipe the old banner if the game restarts
   if (!gameEnded) {
-    const existingOverlay = document.querySelector('.game-over-overlay');
-    if (existingOverlay) existingOverlay.remove();
+    removeGameOverOverlay();
   }
 
   updateFocusHud();
@@ -3622,6 +3691,22 @@ function renderBoard(): void {
     }
   }
 
+  let checkmatedKingSquare: string | null = null;
+  let winningKingSquare: string | null = null;
+  if (!isHistoryView && state.snapshot?.checkmate) {
+    const matedColor = displayBoard.turn();
+    const winnerColor = matedColor === "w" ? "b" : "w";
+    for (const sqName of squares) {
+      const p = displayBoard.get(sqName as Square);
+      if (!p || p.type !== "k") continue;
+      if (p.color === matedColor) {
+        checkmatedKingSquare = sqName;
+      } else if (p.color === winnerColor) {
+        winningKingSquare = sqName;
+      }
+    }
+  }
+
   const liveGrade = state.snapshot
     && (state.snapshot.analysis.enabled || state.snapshot.analysis.labelsOnly)
     && state.snapshot.lastMove
@@ -3649,6 +3734,8 @@ function renderBoard(): void {
 
     if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
     if (checkedKingSquare === squareName) button.classList.add("in-check");
+    if (checkmatedKingSquare === squareName) button.classList.add("checkmate-loser-king");
+    if (winningKingSquare === squareName) button.classList.add("checkmate-winner-king");
     if (squareAnnotations.has(squareName)) button.classList.add("highlight-red"); // NEW
     if (liveGrade?.category === "great" && liveMarkerSquare === squareName) button.classList.add("great-move-highlight");
     if (liveGrade?.category === "brilliant" && liveMarkerSquare === squareName) button.classList.add("brilliant-move-highlight");
@@ -3768,56 +3855,10 @@ function renderBoard(): void {
 
   const snapshot = state.snapshot;
   const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
-
-  if (gameEnded && snapshot && !isHistoryView) {
-    const overlay = document.createElement("div");
-    overlay.className = "game-over-overlay";
-
-    // The new cinematic wrapper
-    const banner = document.createElement("div");
-    banner.className = "game-over-banner";
-
-    const title = document.createElement("h2");
-    title.className = "game-over-title";
-
-    if (snapshot.checkmate) title.textContent = snapshot.winner === "w" ? "White Wins!" : "Black Wins!";
-    else if (snapshot.draw) title.textContent = "Draw";
-    else if (snapshot.winner) title.textContent = snapshot.winner === "w" ? "White Wins" : "Black Wins";
-
-    const reason = document.createElement("p");
-    reason.className = "game-over-reason";
-    reason.textContent = snapshot.status;
-
-    // A container to keep the buttons neatly side-by-side
-    const actionContainer = document.createElement("div");
-    actionContainer.className = "game-over-actions";
-
-    const overlayRematchBtn = document.createElement("button");
-    overlayRematchBtn.className = "action cta-turquoise";
-    overlayRematchBtn.textContent = state.gameMode === "bot" ? "Play Again" : "Request Rematch";
-    overlayRematchBtn.onclick = () => {
-      if (state.gameMode === "bot") startBotGame();
-      else socket.emit("game:rematch");
-    };
-
-    const overlayAnalyzeBtn = document.createElement("a");
-    overlayAnalyzeBtn.className = "action cta-rainbow";
-    overlayAnalyzeBtn.style.textDecoration = "none";
-    overlayAnalyzeBtn.onclick = () => {
-      openAnalyzeInIsolatedTab({
-        postGameMeta: {
-          whiteName: snapshot.players.whiteName,
-          blackName: snapshot.players.blackName,
-        },
-        postGameMoves: snapshot.moves.map((move) => move.san),
-      });
-    };
-    overlayAnalyzeBtn.textContent = "Analyze Game";
-
-    actionContainer.append(overlayRematchBtn, overlayAnalyzeBtn);
-    banner.append(title, reason, actionContainer);
-    overlay.append(banner);
-    board.append(overlay);
+  if (!snapshot || isHistoryView || !gameEnded) {
+    removeGameOverOverlay();
+  } else {
+    syncGameOverOverlay(snapshot, state.gameMode);
   }
 }
 
