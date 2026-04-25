@@ -1029,6 +1029,21 @@ body.focus-mode.focus-analyze .analyze-move-list {
 [data-theme=slate] .nav-row button:hover {
   background: rgba(129, 157, 183, 0.3);
 }
+[data-theme=slate] .analyze-status {
+  border-color: rgba(170, 196, 218, 0.32);
+  background: rgba(20, 30, 40, 0.88);
+  color: #eaf2f9;
+}
+[data-theme=slate] .analyze-status.check {
+  border-color: rgba(214, 165, 71, 0.82);
+  background: rgba(86, 62, 17, 0.66);
+  color: #ffe8be;
+}
+[data-theme=slate] .analyze-status.gameover {
+  border-color: rgba(217, 108, 108, 0.82);
+  background: rgba(94, 29, 33, 0.74);
+  color: #ffe1e1;
+}
 [data-theme=slate] .analyze-move-row {
   background: rgba(70, 96, 122, 0.24);
 }
