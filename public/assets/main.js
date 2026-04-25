@@ -35354,6 +35354,10 @@ var require_main_runtime = __commonJS({
       void toggleFocusMode();
     });
     board.addEventListener("click", (event) => {
+      if (lastPremoveTouchCancelAtMs > 0 && performance.now() - lastPremoveTouchCancelAtMs < 350) {
+        event.preventDefault();
+        return;
+      }
       const squareButton = event.target.closest(".square");
       const square = squareButton?.dataset.square;
       if (!square) {
@@ -35392,6 +35396,8 @@ var require_main_runtime = __commonJS({
     var lastDragCommitAtMs = 0;
     var lastPointerTapSquare = null;
     var lastPointerTapAtMs = 0;
+    var premoveCancelPointerId = null;
+    var lastPremoveTouchCancelAtMs = 0;
     var arrowDragFrom = null;
     var arrowDragTo = null;
     var arrowDragPointer = null;
@@ -35421,12 +35427,26 @@ var require_main_runtime = __commonJS({
       requestBoardRefresh(true);
       updateCaption();
     }
+    function cancelPremovesFromTouch() {
+      state.premoves = [];
+      clearSelection();
+      requestBoardRefresh(true);
+      updateCaption();
+    }
     board.addEventListener("pointerdown", (event) => {
       if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
         clearArrows();
       }
       const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
       if (gameEnded) return;
+      if (event.button === 0 && event.pointerType !== "mouse" && state.premoves.length > 0 && state.role && state.role !== "spectator" && promotionDialog.hidden) {
+        cancelPremovesFromTouch();
+        premoveCancelPointerId = event.pointerId;
+        lastPremoveTouchCancelAtMs = performance.now();
+        board.setPointerCapture(event.pointerId);
+        event.preventDefault();
+        return;
+      }
       if (event.button === 2) {
         if (ptrDragFrom || ptrDragNode || ptrDragMoved) {
           cancelCurrentDrag();
@@ -35574,6 +35594,11 @@ var require_main_runtime = __commonJS({
       renderArrows();
     }
     board.addEventListener("pointerup", (event) => {
+      if (event.button === 0 && premoveCancelPointerId === event.pointerId) {
+        premoveCancelPointerId = null;
+        event.preventDefault();
+        return;
+      }
       if (arrowDragFrom) {
         endArrowDrag(event, event.button === 2);
       } else if (event.button === 2) {
@@ -35584,10 +35609,14 @@ var require_main_runtime = __commonJS({
       }
     });
     board.addEventListener("pointercancel", (event) => {
+      if (premoveCancelPointerId === event.pointerId) {
+        premoveCancelPointerId = null;
+      }
       endArrowDrag(event, false);
       endPointerDrag(event, false);
     });
     board.addEventListener("lostpointercapture", () => {
+      premoveCancelPointerId = null;
       cancelActivePointerInteractions();
     });
     window.addEventListener("blur", () => {
@@ -37505,14 +37534,13 @@ var require_main_runtime = __commonJS({
         updateCaption();
         return;
       }
-      if (state.legalTargets.includes(square)) {
-        const from = state.selectedSquare;
+      const selectedFrom = state.selectedSquare;
+      if (selectedFrom && isLegalMoveTarget(selectedFrom, square)) {
+        const from = selectedFrom;
         clearSelection();
         requestBoardRefresh(true);
-        if (from) {
-          suppressAnimationForMove = null;
-          tryMoveFromTo(from, square);
-        }
+        suppressAnimationForMove = null;
+        tryMoveFromTo(from, square);
         updateCaption();
         return;
       }
@@ -37540,6 +37568,9 @@ var require_main_runtime = __commonJS({
     function legalTargetsFor(square) {
       return chess.moves({ square, verbose: true }).map((move) => move.to);
     }
+    function isLegalMoveTarget(from, to) {
+      return chess.moves({ square: from, verbose: true }).some((move) => move.to === to);
+    }
     function canStartMoveFrom(square) {
       if (state.viewCursor !== null) return false;
       if (!state.snapshot || !state.role || state.role === "spectator") return false;
@@ -37558,8 +37589,7 @@ var require_main_runtime = __commonJS({
       }
       const selectedPiece = chess.get(from);
       if (selectedPiece?.type === "p" && reachesPromotionRank(to, state.role)) {
-        const isLegal = chess.moves({ verbose: true }).some((m) => m.from === from && m.to === to);
-        if (!isLegal) return;
+        if (!isLegalMoveTarget(from, to)) return;
         state.pendingPromotion = { from, to };
         promotionDialog.hidden = false;
         return;

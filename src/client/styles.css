@@ -1909,6 +1909,8 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   display: grid;
   place-items: center;
   padding: 20px;
+  z-index: 13000;
+  isolation: isolate;
 }
 
 .promotion-dialog[hidden] {
@@ -1916,11 +1918,16 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
 }
 
 .promotion-card {
+  position: relative;
+  z-index: 1;
   width: min(420px, 100%);
   padding: 24px;
   border-radius: var(--radius-xl);
   background: #fffaf1;
   box-shadow: var(--shadow);
+  opacity: 1;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .promotion-grid {

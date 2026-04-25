@@ -1871,6 +1871,11 @@ window.addEventListener("keydown", (event) => {
 });
 
 board.addEventListener("click", (event) => {
+  if (lastPremoveTouchCancelAtMs > 0 && performance.now() - lastPremoveTouchCancelAtMs < 350) {
+    event.preventDefault();
+    return;
+  }
+
   const squareButton = (event.target as HTMLElement).closest<HTMLButtonElement>(".square");
   const square = squareButton?.dataset.square as Square | undefined;
   if (!square) {
@@ -1925,6 +1930,8 @@ let lastDragCommitSquare: Square | null = null;
 let lastDragCommitAtMs = 0;
 let lastPointerTapSquare: Square | null = null;
 let lastPointerTapAtMs = 0;
+let premoveCancelPointerId: number | null = null;
+let lastPremoveTouchCancelAtMs = 0;
 let arrowDragFrom: Square | null = null;
 let arrowDragTo: Square | null = null;
 let arrowDragPointer: { x: number; y: number } | null = null;
@@ -1962,6 +1969,13 @@ function cancelActivePointerInteractions(): void {
   updateCaption();
 }
 
+function cancelPremovesFromTouch(): void {
+  state.premoves = [];
+  clearSelection();
+  requestBoardRefresh(true);
+  updateCaption();
+}
+
 board.addEventListener("pointerdown", (event) => {
 
 if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
@@ -1969,6 +1983,22 @@ if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size >
   }
   const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
   if (gameEnded) return;
+
+  if (
+    event.button === 0
+    && event.pointerType !== "mouse"
+    && state.premoves.length > 0
+    && state.role
+    && state.role !== "spectator"
+    && promotionDialog.hidden
+  ) {
+    cancelPremovesFromTouch();
+    premoveCancelPointerId = event.pointerId;
+    lastPremoveTouchCancelAtMs = performance.now();
+    board.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    return;
+  }
 
   if (event.button === 2) {
     if (ptrDragFrom || ptrDragNode || ptrDragMoved) {
@@ -2153,6 +2183,12 @@ function endArrowDrag(event: PointerEvent, commit: boolean): void {
 }
 
 board.addEventListener("pointerup", (event) => {
+  if (event.button === 0 && premoveCancelPointerId === event.pointerId) {
+    premoveCancelPointerId = null;
+    event.preventDefault();
+    return;
+  }
+
   if (arrowDragFrom) {
     endArrowDrag(event, event.button === 2);
   } else if (event.button === 2) {
@@ -2165,11 +2201,15 @@ board.addEventListener("pointerup", (event) => {
 });
 
 board.addEventListener("pointercancel", (event) => {
+  if (premoveCancelPointerId === event.pointerId) {
+    premoveCancelPointerId = null;
+  }
   endArrowDrag(event, false);
   endPointerDrag(event, false);
 });
 
 board.addEventListener("lostpointercapture", () => {
+  premoveCancelPointerId = null;
   cancelActivePointerInteractions();
 });
 
@@ -4697,15 +4737,14 @@ function onSquarePressed(square: Square): void {
     return;
   }
 
-  if (state.legalTargets.includes(square)) {
-    const from = state.selectedSquare;
+  const selectedFrom = state.selectedSquare;
+  if (selectedFrom && isLegalMoveTarget(selectedFrom, square)) {
+    const from = selectedFrom;
     clearSelection();
     requestBoardRefresh(true);
     
-    if (from) {
-      suppressAnimationForMove = null; 
-      tryMoveFromTo(from, square);
-    }
+    suppressAnimationForMove = null; 
+    tryMoveFromTo(from, square);
     
     updateCaption();
     return;
@@ -4739,6 +4778,10 @@ function clearSelection(): void {
 
 function legalTargetsFor(square: Square): Square[] {
   return chess.moves({ square, verbose: true }).map((move) => move.to);
+}
+
+function isLegalMoveTarget(from: Square, to: Square): boolean {
+  return chess.moves({ square: from, verbose: true }).some((move) => move.to === to);
 }
 
 function legalTargetsForRole(square: Square, role: PlayerRole): Square[] {
@@ -4778,9 +4821,7 @@ function tryMoveFromTo(from: Square, to: Square): void {
   // Handle Promotion Branch
   const selectedPiece = chess.get(from);
   if (selectedPiece?.type === "p" && reachesPromotionRank(to, state.role)) {
-    // FIX: Verify the promotion move is actually legal before showing the dialog
-    const isLegal = chess.moves({ verbose: true }).some(m => m.from === from && m.to === to);
-    if (!isLegal) return; 
+    if (!isLegalMoveTarget(from, to)) return; 
 
     state.pendingPromotion = { from, to };
     promotionDialog.hidden = false;
