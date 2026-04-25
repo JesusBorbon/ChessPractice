@@ -33699,6 +33699,7 @@ function mountThemeSwitcher() {
           <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
           <button class="theme-btn" data-theme="base" title="Base" aria-label="Base wood theme"></button>
           <button class="theme-btn" data-theme="slate" title="Soft Slate" aria-label="Soft Slate theme"></button>
+          <button class="theme-btn" data-theme="crimson" title="Rosewood Light" aria-label="Rosewood Light theme"></button>
         </div>
       </div>
       <div class="theme-switcher-row">
@@ -33819,7 +33820,7 @@ var init_theme = __esm({
     ANIMATION_STORAGE_KEY = "chess-animation-style";
     BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
     LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
-    THEME_OPTIONS = ["forest", "purple", "walnut", "refined", "base", "slate"];
+    THEME_OPTIONS = ["forest", "purple", "walnut", "refined", "base", "slate", "crimson"];
   }
 });
 
@@ -34127,8 +34128,6 @@ var require_main_runtime = __commonJS({
     var profileIdentitySyncedForAutoJoin = false;
     var shouldCleanUiBeforeAutoJoin = initialRejoinRequested || Boolean(storedRoomReturnContext);
     var lowTimeWarningShownByColor = { w: false, b: false };
-    var woodTextureOffsetsBySquare = /* @__PURE__ */ new Map();
-    var woodTextureSeed = Math.random() * 4294967295 >>> 0;
     var SMOOTH_MOVE_DURATION_MS = 580;
     var FAST_MOVE_DURATION_MS = 244;
     var EPIC_MOVE_DURATION_MS = {
@@ -34145,67 +34144,6 @@ var require_main_runtime = __commonJS({
     var BOT_SESSION_SCHEMA_VERSION = 1;
     var BOT_SESSION_PERSIST_INTERVAL_MS = 1e3;
     var BOT_CLOUD_SYNC_INTERVAL_MS = 5e3;
-    function createSeededRandom(seed) {
-      let state2 = seed >>> 0;
-      if (state2 === 0) {
-        state2 = 2654435769;
-      }
-      return () => {
-        state2 = Math.imul(1664525, state2) + 1013904223 >>> 0;
-        return state2 / 4294967296;
-      };
-    }
-    function randomIntInclusive(rand2, min, max) {
-      return Math.floor(rand2() * (max - min + 1)) + min;
-    }
-    function randomFloat(rand2, min, max) {
-      return min + rand2() * (max - min);
-    }
-    function regenerateWoodTextureOffsets(seed = Math.random() * 4294967295 >>> 0) {
-      woodTextureSeed = seed >>> 0;
-      const rand2 = createSeededRandom(woodTextureSeed ^ 2781027625);
-      woodTextureOffsetsBySquare.clear();
-      for (const squareName of buildSquareList("w")) {
-        const square = squareName;
-        woodTextureOffsetsBySquare.set(square, {
-          fileShift: randomIntInclusive(rand2, -10, 10),
-          fileShift2: randomIntInclusive(rand2, -10, 10),
-          rankShift: randomIntInclusive(rand2, -10, 10),
-          rankShift2: randomIntInclusive(rand2, -10, 10),
-          grainGap1: randomIntInclusive(rand2, 8, 18),
-          grainGap2: randomIntInclusive(rand2, 10, 24),
-          grainRepeat2: randomIntInclusive(rand2, 18, 46),
-          grainGap3: randomIntInclusive(rand2, 14, 38),
-          grainRepeat3: randomIntInclusive(rand2, 24, 68),
-          grainAngle2: randomIntInclusive(rand2, 94, 116),
-          grainAngle3: randomIntInclusive(rand2, 6, 30),
-          grainAlpha1: randomFloat(rand2, 0.045, 0.12),
-          grainAlpha2: randomFloat(rand2, 0.035, 0.1),
-          grainAlpha3: randomFloat(rand2, 0.025, 0.085)
-        });
-      }
-    }
-    function applyWoodTextureOffsets(button, square) {
-      const offsets = woodTextureOffsetsBySquare.get(square);
-      if (!offsets) {
-        return;
-      }
-      button.style.setProperty("--base-file-shift", `${offsets.fileShift}px`);
-      button.style.setProperty("--base-file-shift-2", `${offsets.fileShift2}px`);
-      button.style.setProperty("--base-rank-shift", `${offsets.rankShift}px`);
-      button.style.setProperty("--base-rank-shift-2", `${offsets.rankShift2}px`);
-      button.style.setProperty("--base-grain-gap-1", `${offsets.grainGap1}px`);
-      button.style.setProperty("--base-grain-gap-2", `${offsets.grainGap2}px`);
-      button.style.setProperty("--base-grain-repeat-2", `${offsets.grainRepeat2}px`);
-      button.style.setProperty("--base-grain-gap-3", `${offsets.grainGap3}px`);
-      button.style.setProperty("--base-grain-repeat-3", `${offsets.grainRepeat3}px`);
-      button.style.setProperty("--base-grain-angle-2", `${offsets.grainAngle2}deg`);
-      button.style.setProperty("--base-grain-angle-3", `${offsets.grainAngle3}deg`);
-      button.style.setProperty("--base-grain-alpha-1", offsets.grainAlpha1.toFixed(3));
-      button.style.setProperty("--base-grain-alpha-2", offsets.grainAlpha2.toFixed(3));
-      button.style.setProperty("--base-grain-alpha-3", offsets.grainAlpha3.toFixed(3));
-    }
-    regenerateWoodTextureOffsets();
     function resolveSmoothMoveDurationMs(style) {
       return style === "fast" ? FAST_MOVE_DURATION_MS : SMOOTH_MOVE_DURATION_MS;
     }
@@ -34654,7 +34592,6 @@ var require_main_runtime = __commonJS({
       animatingToSquare = null;
       _lastPlayedMoveCount = -1;
       roomInput.value = "";
-      regenerateWoodTextureOffsets();
       voiceChatController.syncSession({
         roomId: null,
         role: null,
@@ -34879,7 +34816,6 @@ var require_main_runtime = __commonJS({
       localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
       syncUrl(null);
       accountSidebarController.setFriendPresenceActivity("playing-bot");
-      regenerateWoodTextureOffsets();
       clearArrows();
       resetLowTimeWarningState();
       lastRoomStateReceivedAtMs = Date.now();
@@ -35337,6 +35273,7 @@ var require_main_runtime = __commonJS({
         } else if (state.snapshot) {
           state.snapshot.winner = state.role === "w" ? "b" : "w";
           state.snapshot.status = "Resigned";
+          playSound("gameEndOrCheckmate");
           persistBotSession(true);
           render();
         }
@@ -36208,7 +36145,6 @@ var require_main_runtime = __commonJS({
         suppressAnimationForMove = null;
         lastAnimatedMoveKey = null;
         _lastPlayedMoveCount = -1;
-        regenerateWoodTextureOffsets();
         clearArrows();
         chess.reset();
         resetLowTimeWarningState();
@@ -36274,11 +36210,11 @@ var require_main_runtime = __commonJS({
       const previousSelectedSquare = state.selectedSquare;
       const previousLegalTargetsKey = state.legalTargets.join(",");
       const previousFen = chess.fen();
+      const previousGameOver = Boolean(previousSnapshot && (previousSnapshot.checkmate || previousSnapshot.draw || previousSnapshot.winner !== null));
       let boardRefreshForcedByArrowClear = false;
       let boardRefreshForcedByPremoveQueueChange = false;
       if (!snapshot.checkmate && !snapshot.draw && snapshot.winner === null && snapshot.moveCount === 0 && previousMoveCount > 0) {
         resetLowTimeWarningState();
-        regenerateWoodTextureOffsets();
       }
       state.snapshot = snapshot;
       chess.load(snapshot.fen);
@@ -36287,6 +36223,10 @@ var require_main_runtime = __commonJS({
       if (isActuallyNewMove) {
         playSoundForSnapshot(snapshot);
         if (snapshot.check) boardEffects.triggerCheckFlash();
+      }
+      const gameOverNow = snapshot.checkmate || snapshot.draw || snapshot.winner !== null;
+      if (!isActuallyNewMove && gameOverNow && !previousGameOver) {
+        playSound("gameEndOrCheckmate");
       }
       const capturedByCount = countFenPieces(snapshot.fen) < countFenPieces(previousFen);
       if (state.bloodFxEnabled && isActuallyNewMove && capturedByCount && snapshot.lastMove) {
@@ -36788,7 +36728,6 @@ var require_main_runtime = __commonJS({
         button.tabIndex = -1;
         button.className = `square ${isLightSquare(squareName) ? "light" : "dark"}`;
         button.dataset.square = squareName;
-        applyWoodTextureOffsets(button, square);
         if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
         if (checkedKingSquare === squareName) button.classList.add("in-check");
         if (squareAnnotations.has(squareName)) button.classList.add("highlight-red");
@@ -37701,7 +37640,6 @@ var require_main_runtime = __commonJS({
       state.legalTargets = [];
       state.viewCursor = null;
       accountSidebarController.setFriendPresenceActivity("playing-bot");
-      regenerateWoodTextureOffsets();
       chess.reset();
       state.snapshot = {
         roomId: "LOCAL",

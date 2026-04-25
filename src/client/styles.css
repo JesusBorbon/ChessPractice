@@ -2362,6 +2362,7 @@ square.legal:has(.piece-quality-marker)::after {
       gap: 6px;
       max-width: calc(100vw - 16px);
       overflow: hidden;
+      z-index: 1700;
     }
 
     .theme-switcher.is-collapsed {

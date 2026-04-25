@@ -4095,6 +4095,7 @@ function mountThemeSwitcher() {
           <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
           <button class="theme-btn" data-theme="base" title="Base" aria-label="Base wood theme"></button>
           <button class="theme-btn" data-theme="slate" title="Soft Slate" aria-label="Soft Slate theme"></button>
+          <button class="theme-btn" data-theme="crimson" title="Rosewood Light" aria-label="Rosewood Light theme"></button>
         </div>
       </div>
       <div class="theme-switcher-row">
@@ -4215,7 +4216,7 @@ var init_theme = __esm({
     ANIMATION_STORAGE_KEY = "chess-animation-style";
     BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
     LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
-    THEME_OPTIONS = ["forest", "purple", "walnut", "refined", "base", "slate"];
+    THEME_OPTIONS = ["forest", "purple", "walnut", "refined", "base", "slate", "crimson"];
   }
 });
 

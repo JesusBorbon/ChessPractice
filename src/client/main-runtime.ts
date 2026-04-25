@@ -107,23 +107,6 @@ type IncomingRoomJoinRequest = {
   roomId: string;
 };
 
-type WoodTextureOffsets = {
-  fileShift: number;
-  fileShift2: number;
-  rankShift: number;
-  rankShift2: number;
-  grainGap1: number;
-  grainGap2: number;
-  grainRepeat2: number;
-  grainGap3: number;
-  grainRepeat3: number;
-  grainAngle2: number;
-  grainAngle3: number;
-  grainAlpha1: number;
-  grainAlpha2: number;
-  grainAlpha3: number;
-};
-
 function computeBotResponseTiming(preset: BotDifficultyPreset, playerMove: Move | null): BotResponseTiming {
   const legalReplies = chess.moves({ verbose: true }).length;
   const moveCount = state.snapshot?.moveCount ?? 0;
@@ -304,7 +287,7 @@ let botAnalyzer: StockfishBridge | null = null;
 let liveAnalysisToken = 0;
 let bestMoveArrowToken = 0;
 let currentModalAction: "leave" | "resign" | "bot" | "settings" | null = null;
-let animationFinished = true; 
+let animationFinished = true;
 let animatingToSquare: Square | null = null;
 let lastRoomStateReceivedAtMs = Date.now();
 let lastLiveQualityCalloutKey: string | null = null;
@@ -323,8 +306,6 @@ let lowTimeWarningTimer: number | null = null;
 let profileIdentitySyncedForAutoJoin = false;
 let shouldCleanUiBeforeAutoJoin = initialRejoinRequested || Boolean(storedRoomReturnContext);
 const lowTimeWarningShownByColor: Record<PlayerRole, boolean> = { w: false, b: false };
-const woodTextureOffsetsBySquare = new Map<Square, WoodTextureOffsets>();
-let woodTextureSeed = (Math.random() * 0xffffffff) >>> 0;
 
 const SMOOTH_MOVE_DURATION_MS = 580;
 const FAST_MOVE_DURATION_MS = 244;
@@ -360,76 +341,6 @@ type PersistedBotSession = {
   snapshot: RoomSnapshot;
 };
 
-function createSeededRandom(seed: number): () => number {
-  let state = seed >>> 0;
-  if (state === 0) {
-    state = 0x9e3779b9;
-  }
-
-  return () => {
-    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
-    return state / 0x100000000;
-  };
-}
-
-function randomIntInclusive(rand: () => number, min: number, max: number): number {
-  return Math.floor(rand() * (max - min + 1)) + min;
-}
-
-function randomFloat(rand: () => number, min: number, max: number): number {
-  return min + rand() * (max - min);
-}
-
-function regenerateWoodTextureOffsets(seed = (Math.random() * 0xffffffff) >>> 0): void {
-  woodTextureSeed = seed >>> 0;
-  const rand = createSeededRandom(woodTextureSeed ^ 0xa5c31d29);
-  woodTextureOffsetsBySquare.clear();
-
-  for (const squareName of buildSquareList("w")) {
-    const square = squareName as Square;
-    woodTextureOffsetsBySquare.set(square, {
-      fileShift: randomIntInclusive(rand, -10, 10),
-      fileShift2: randomIntInclusive(rand, -10, 10),
-      rankShift: randomIntInclusive(rand, -10, 10),
-      rankShift2: randomIntInclusive(rand, -10, 10),
-      grainGap1: randomIntInclusive(rand, 8, 18),
-      grainGap2: randomIntInclusive(rand, 10, 24),
-      grainRepeat2: randomIntInclusive(rand, 18, 46),
-      grainGap3: randomIntInclusive(rand, 14, 38),
-      grainRepeat3: randomIntInclusive(rand, 24, 68),
-      grainAngle2: randomIntInclusive(rand, 94, 116),
-      grainAngle3: randomIntInclusive(rand, 6, 30),
-      grainAlpha1: randomFloat(rand, 0.045, 0.12),
-      grainAlpha2: randomFloat(rand, 0.035, 0.1),
-      grainAlpha3: randomFloat(rand, 0.025, 0.085),
-    });
-  }
-}
-
-function applyWoodTextureOffsets(button: HTMLButtonElement, square: Square): void {
-  const offsets = woodTextureOffsetsBySquare.get(square);
-  if (!offsets) {
-    return;
-  }
-
-  button.style.setProperty("--base-file-shift", `${offsets.fileShift}px`);
-  button.style.setProperty("--base-file-shift-2", `${offsets.fileShift2}px`);
-  button.style.setProperty("--base-rank-shift", `${offsets.rankShift}px`);
-  button.style.setProperty("--base-rank-shift-2", `${offsets.rankShift2}px`);
-  button.style.setProperty("--base-grain-gap-1", `${offsets.grainGap1}px`);
-  button.style.setProperty("--base-grain-gap-2", `${offsets.grainGap2}px`);
-  button.style.setProperty("--base-grain-repeat-2", `${offsets.grainRepeat2}px`);
-  button.style.setProperty("--base-grain-gap-3", `${offsets.grainGap3}px`);
-  button.style.setProperty("--base-grain-repeat-3", `${offsets.grainRepeat3}px`);
-  button.style.setProperty("--base-grain-angle-2", `${offsets.grainAngle2}deg`);
-  button.style.setProperty("--base-grain-angle-3", `${offsets.grainAngle3}deg`);
-  button.style.setProperty("--base-grain-alpha-1", offsets.grainAlpha1.toFixed(3));
-  button.style.setProperty("--base-grain-alpha-2", offsets.grainAlpha2.toFixed(3));
-  button.style.setProperty("--base-grain-alpha-3", offsets.grainAlpha3.toFixed(3));
-}
-
-regenerateWoodTextureOffsets();
-
 function resolveSmoothMoveDurationMs(style: AnimationStyle): number {
   return style === "fast" ? FAST_MOVE_DURATION_MS : SMOOTH_MOVE_DURATION_MS;
 }
@@ -464,9 +375,9 @@ function triggerGameOverScreen(title: string, subtitle: string) {
       <div class="endgame-subtitle">${subtitle}</div>
     </div>
   `;
-  
+
   // Ensure the wrapper is positioned relatively so the absolute overlay fits perfectly inside it
-  boardWrap.style.position = "relative"; 
+  boardWrap.style.position = "relative";
   boardWrap.appendChild(overlay);
 }
 
@@ -716,7 +627,7 @@ window.addEventListener("bloodfxchange", (event: Event) => {
   state.bloodFxEnabled = customEvent.detail.enabled;
 });
 
-window.addEventListener("legalmoveschange" , (event: Event) => {
+window.addEventListener("legalmoveschange", (event: Event) => {
   const customEvent = event as CustomEvent<{ enabled: boolean }>;
   state.legalMovesEnabled = customEvent.detail.enabled;
   requestBoardRefresh(true);
@@ -757,7 +668,7 @@ const liveNavLast = must<HTMLButtonElement>("#liveNavLast");
 const gameNavRow = must<HTMLDivElement>("#gameNavRow");
 
 const arrowAnnotations = new Set<string>();
-const squareAnnotations = new Set<string>(); 
+const squareAnnotations = new Set<string>();
 
 const accountSidebarController = createAccountSidebarController({
   socket,
@@ -961,7 +872,6 @@ function resetTransientRoomUiBeforeControlledRejoin(): void {
   animatingToSquare = null;
   _lastPlayedMoveCount = -1;
   roomInput.value = "";
-  regenerateWoodTextureOffsets();
   voiceChatController.syncSession({
     roomId: null,
     role: null,
@@ -1251,7 +1161,6 @@ function hydratePersistedBotSession(
   syncUrl(null);
 
   accountSidebarController.setFriendPresenceActivity("playing-bot");
-  regenerateWoodTextureOffsets();
   clearArrows();
   resetLowTimeWarningState();
   lastRoomStateReceivedAtMs = Date.now();
@@ -1359,10 +1268,10 @@ async function maybePersistFinishedGame(snapshot: RoomSnapshot | null): Promise<
     snapshot.draw
       ? "1/2-1/2"
       : snapshot.winner === "w"
-      ? "1-0"
-      : snapshot.winner === "b"
-      ? "0-1"
-      : "*";
+        ? "1-0"
+        : snapshot.winner === "b"
+          ? "0-1"
+          : "*";
   const pgn = buildPgnFromMoves(snapshot.moves, {
     whiteName: snapshot.players.whiteName,
     blackName: snapshot.players.blackName,
@@ -1659,7 +1568,7 @@ leaveRoomButton.addEventListener("click", () => {
 resignButton.addEventListener("click", () => {
   const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
   if (gameEnded) return;
-  
+
   toggleConfirmModal(true, "resign");
 });
 
@@ -1751,7 +1660,7 @@ const toggleConfirmModal = (show: boolean, type?: "leave" | "resign" | "bot" | "
   if (show && type) {
     currentModalAction = type;
     document.body.classList.add("modal-open");
-    
+
     // Set dynamic text for the Bot transition
     if (type === "bot") {
       modalTitle.textContent = "Switch to Bot?";
@@ -1772,7 +1681,7 @@ const toggleConfirmModal = (show: boolean, type?: "leave" | "resign" | "bot" | "
   confirmDialog.hidden = !show;
 };
 
-backToMenuButton.addEventListener("click", () => {  
+backToMenuButton.addEventListener("click", () => {
   const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
   if (gameEnded) {
     socket.emit("room:leave");
@@ -1808,10 +1717,10 @@ confirmYesBtn.addEventListener("click", () => {
   if (action === "bot") {
     // 1. Tell server we are leaving
     socket.emit("room:leave");
-    
+
     // 2. Clear the multiplayer UI/State locally right now
-    clearLocalRoomState();  
-    
+    clearLocalRoomState();
+
     // 3. Start the bot game immediately (Direct transition)
     startBotGame();
   } else if (action === "resign") {
@@ -1820,6 +1729,7 @@ confirmYesBtn.addEventListener("click", () => {
     } else if (state.snapshot) {
       state.snapshot.winner = (state.role === "w" ? "b" : "w") as any;
       state.snapshot.status = "Resigned";
+      playSound("gameEndOrCheckmate");
       persistBotSession(true);
       render();
     }
@@ -1911,7 +1821,7 @@ board.addEventListener("click", (event) => {
 });
 
 board.addEventListener("contextmenu", (event) => {
-  event.preventDefault(); 
+  event.preventDefault();
   if (state.premoves.length > 0) {
     state.premoves = [];
     // showToast("Premoves canceled.");
@@ -1980,7 +1890,7 @@ function cancelPremovesFromTouch(): void {
 
 board.addEventListener("pointerdown", (event) => {
 
-if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
+  if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
     clearArrows();
   }
   const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
@@ -2054,10 +1964,10 @@ board.addEventListener("pointermove", (event) => {
   if (!ptrDragMoved) {
     ptrDragMoved = true;
     state.selectedSquare = ptrDragFrom;
-    
+
     const vBoard = getVirtualBoard(chess.fen(), state.premoves, state.role as PlayerRole);
     const virtualPiece = vBoard.get(ptrDragFrom);
-    
+
     state.legalTargets = vBoard.moves({ square: ptrDragFrom, verbose: true }).map(m => m.to);
     syncBoardInteractionState();
     updateCaption();
@@ -2065,19 +1975,19 @@ board.addEventListener("pointermove", (event) => {
     const btn = board.querySelector<HTMLButtonElement>(`[data-square="${ptrDragFrom}"]`);
     if (btn && virtualPiece) {
       const spritePath = getPieceSpritePath(virtualPiece.color as PlayerRole, virtualPiece.type);
-      
+
       ptrDragNode = document.createElement("img");
       ptrDragNode.src = spritePath;
       Object.assign(ptrDragNode.style, {
         position: "fixed",
         pointerEvents: "none",
         zIndex: "12000",
-        width: `${btn.offsetWidth}px`, 
+        width: `${btn.offsetWidth}px`,
         height: `${btn.offsetHeight}px`,
         transform: "translate(-50%, -50%)",
-        opacity: "1" 
+        opacity: "1"
       });
-      
+
       document.body.append(ptrDragNode);
       btn.classList.add("dragging");
     }
@@ -2089,8 +1999,8 @@ board.addEventListener("pointermove", (event) => {
 
   if (ptrDragNode) {
     ptrDragNode.style.left = `${event.clientX}px`;
-    ptrDragNode.style.top  = `${event.clientY}px`;
-  
+    ptrDragNode.style.top = `${event.clientY}px`;
+
   }
 });
 function endPointerDrag(event: PointerEvent, commit: boolean): void {
@@ -2103,7 +2013,7 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
     if (commit && targetSquare && !ptrDragMoved) {
       lastPointerTapSquare = targetSquare;
       lastPointerTapAtMs = performance.now();
-      
+
       onSquarePressed(targetSquare);
     }
     return;
@@ -2451,7 +2361,7 @@ async function triggerBotResponse(engineMoveTimeMs?: number) {
       break;
     }
   }
-  
+
   if (botMove && state.snapshot) {
     updateManualSnapshot(botMove);
     finalizeBotClockAfterMove(botRole);
@@ -2504,7 +2414,7 @@ promotionDialog.addEventListener("click", (event) => {
     if (moveResult) {
       updateManualSnapshot(moveResult);
       finalizeBotClockAfterMove(playerRole);
-      suppressAnimationForMove = { from, to }; 
+      suppressAnimationForMove = { from, to };
       render();
       playSoundForSnapshot(state.snapshot!);
 
@@ -2954,7 +2864,6 @@ socket.on("session:joined", (payload: { roomId: string; role: RoomRole; shareUrl
     suppressAnimationForMove = null;
     lastAnimatedMoveKey = null;
     _lastPlayedMoveCount = -1;
-    regenerateWoodTextureOffsets();
     clearArrows();
     chess.reset();
     resetLowTimeWarningState();
@@ -3032,9 +2941,10 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
   const previousSelectedSquare = state.selectedSquare;
   const previousLegalTargetsKey = state.legalTargets.join(",");
   const previousFen = chess.fen();
+  const previousGameOver = Boolean(previousSnapshot && (previousSnapshot.checkmate || previousSnapshot.draw || previousSnapshot.winner !== null));
   let boardRefreshForcedByArrowClear = false;
   let boardRefreshForcedByPremoveQueueChange = false;
-  
+
   if (
     !snapshot.checkmate
     && !snapshot.draw
@@ -3043,20 +2953,24 @@ socket.on("room:state", (snapshot: RoomSnapshot) => {
     && previousMoveCount > 0
   ) {
     resetLowTimeWarningState();
-    regenerateWoodTextureOffsets();
   }
 
   state.snapshot = snapshot;
-  
+
   chess.load(snapshot.fen);
 
   // Sound & Visual Effects
   const isActuallyNewMove = _lastPlayedMoveCount !== -1 && snapshot.moveCount > _lastPlayedMoveCount;
   _lastPlayedMoveCount = snapshot.moveCount;
-  
+
   if (isActuallyNewMove) {
     playSoundForSnapshot(snapshot);
     if (snapshot.check) boardEffects.triggerCheckFlash();
+  }
+
+  const gameOverNow = snapshot.checkmate || snapshot.draw || snapshot.winner !== null;
+  if (!isActuallyNewMove && gameOverNow && !previousGameOver) {
+    playSound("gameEndOrCheckmate");
   }
 
   const capturedByCount = countFenPieces(snapshot.fen) < countFenPieces(previousFen);
@@ -3218,7 +3132,7 @@ function startTrailSpawning(): void {
   if (!state.trailFxEnabled) return;
 
   let lastSpawnTime = 0;
-  const spawnRateMs = 12; 
+  const spawnRateMs = 12;
 
   function spawn() {
     // FIX: Look for whichever piece is currently moving (Dragged OR Animating)
@@ -3244,10 +3158,10 @@ function startTrailSpawning(): void {
 
 function createTrailParticle(sourceNode: HTMLElement): void {
   const rect = sourceNode.getBoundingClientRect();
-  
+
   const particle = document.createElement("div");
   particle.className = "piece-trail-particle";
-  
+
   const img = sourceNode.querySelector("img");
   if (img) {
     const imgEl = document.createElement("img");
@@ -3262,9 +3176,9 @@ function createTrailParticle(sourceNode: HTMLElement): void {
   particle.style.height = `${rect.height}px`;
 
   document.body.appendChild(particle);
-  
+
   // Clean up instantly when the subtle CSS fade finishes
-  setTimeout(() => particle.remove(), 250); 
+  setTimeout(() => particle.remove(), 250);
 }
 
 function renderSession(): void {
@@ -3272,7 +3186,7 @@ function renderSession(): void {
   const hasRoom = Boolean(state.roomId);
   const isCreator = Boolean(snapshot?.ownerId && socket.id && snapshot.ownerId === socket.id);
   refreshBotDifficultyUi();
-  
+
   // 1. Core State Calculations
   const isMultiplayer = state.gameMode === "multiplayer";
   const bothConnected = Boolean(snapshot?.players.whiteConnected && snapshot?.players.blackConnected);
@@ -3280,9 +3194,9 @@ function renderSession(): void {
   const canPlayOnlineMultiplayer = accountSidebarController.canPlayOnlineMultiplayer();
   const canSendRoomInvites = hasRoom && isMultiplayer && accountSidebarController.canSendRoomInvites();
   const hasPlayerInviteLink = Boolean(state.shareUrl && state.role && state.role !== "spectator");
-  
+
   const isGameActive = Boolean(
-    isStartedMultiplayerGame || 
+    isStartedMultiplayerGame ||
     (state.gameMode === "bot" && snapshot !== null)
   );
 
@@ -3296,7 +3210,7 @@ function renderSession(): void {
   if (isGameActive && state.botPickerOpen) {
     closeBotDifficultyPicker();
   }
-  
+
   const canVote = state.role === "w" || state.role === "b";
   const isSeatedPlayer = state.role === "w" || state.role === "b";
   const gameEnded = Boolean(snapshot && (snapshot.checkmate || snapshot.draw || snapshot.winner !== null));
@@ -3333,7 +3247,7 @@ function renderSession(): void {
   flipBoardButton.hidden = !isGameActive;
   focusModeButton.hidden = !isGameActive;
   gameNav.hidden = !isGameActive;
-  
+
   seatCard.hidden = !hasRoom;
   summaryCard.hidden = !isGameActive;
   movesCard.hidden = !isGameActive;
@@ -3350,7 +3264,7 @@ function renderSession(): void {
     state.focusMode = false;
     applyFocusMode();
   }
-  
+
   // 3. Early Exit if No Snapshot (Lobby State)
   if (!snapshot) {
     clearLowTimeWarningEffect();
@@ -3379,58 +3293,58 @@ function renderSession(): void {
     updateFocusHud();
     return;
   }
-  
+
   // 4. Pregame Selection Menu Logic (Consolidated!)
   pregamePlaceholder.hidden = isGameActive;
 
   if (isMultiplayer && !isGameActive) {
-     const canConfigurePregame = state.role === "w" || state.role === "b";
-     pregameSelection.hidden = !canConfigurePregame;
-     pregameWaiting.hidden = canConfigurePregame;
+    const canConfigurePregame = state.role === "w" || state.role === "b";
+    pregameSelection.hidden = !canConfigurePregame;
+    pregameWaiting.hidden = canConfigurePregame;
 
-     if (canConfigurePregame) {
-       const isWhiteSeat = state.role === "w";
-       const myChoice = isWhiteSeat ? snapshot.pregame.p1Choice : snapshot.pregame.p2Choice;
-       const opChoice = isWhiteSeat ? snapshot.pregame.p2Choice : snapshot.pregame.p1Choice;
-       const myReady = isWhiteSeat ? snapshot.pregame.p1Ready : snapshot.pregame.p2Ready;
-       const opReady = isWhiteSeat ? snapshot.pregame.p2Ready : snapshot.pregame.p1Ready;
-       const opponentConnected = isWhiteSeat ? snapshot.players.blackConnected : snapshot.players.whiteConnected;
+    if (canConfigurePregame) {
+      const isWhiteSeat = state.role === "w";
+      const myChoice = isWhiteSeat ? snapshot.pregame.p1Choice : snapshot.pregame.p2Choice;
+      const opChoice = isWhiteSeat ? snapshot.pregame.p2Choice : snapshot.pregame.p1Choice;
+      const myReady = isWhiteSeat ? snapshot.pregame.p1Ready : snapshot.pregame.p2Ready;
+      const opReady = isWhiteSeat ? snapshot.pregame.p2Ready : snapshot.pregame.p1Ready;
+      const opponentConnected = isWhiteSeat ? snapshot.players.blackConnected : snapshot.players.whiteConnected;
 
       const selectedMode = snapshot.timeControl.id;
       multiplayerTimeControlSelect.value = selectedMode;
       multiplayerTimeControlSelect.disabled = !isCreator;
 
-       if (isCreator) {
-         modeHint.textContent = `You are the room creator. Current mode: ${snapshot.timeControl.label}.`;
-       } else {
-         modeHint.textContent = `Room creator controls mode. Current mode: ${snapshot.timeControl.label}.`;
-       }
+      if (isCreator) {
+        modeHint.textContent = `You are the room creator. Current mode: ${snapshot.timeControl.label}.`;
+      } else {
+        modeHint.textContent = `Room creator controls mode. Current mode: ${snapshot.timeControl.label}.`;
+      }
 
-       myPickWhite.classList.toggle("selected", myChoice === "w");
-       myPickBlack.classList.toggle("selected", myChoice === "b");
-       opPickWhite.classList.toggle("selected", opChoice === "w");
-       opPickBlack.classList.toggle("selected", opChoice === "b");
-       opPickWhite.classList.toggle("disabled", !opponentConnected);
-       opPickBlack.classList.toggle("disabled", !opponentConnected);
+      myPickWhite.classList.toggle("selected", myChoice === "w");
+      myPickBlack.classList.toggle("selected", myChoice === "b");
+      opPickWhite.classList.toggle("selected", opChoice === "w");
+      opPickBlack.classList.toggle("selected", opChoice === "b");
+      opPickWhite.classList.toggle("disabled", !opponentConnected);
+      opPickBlack.classList.toggle("disabled", !opponentConnected);
 
-       myReadyBadge.classList.toggle("is-ready", myReady);
-       opReadyBadge.classList.toggle("is-ready", opReady);
+      myReadyBadge.classList.toggle("is-ready", myReady);
+      opReadyBadge.classList.toggle("is-ready", opReady);
 
-       const hasConflict = myChoice !== null && opChoice !== null && myChoice === opChoice;
-       pregameConflictWarning.textContent = PREGAME_COLOR_CONFLICT_ERROR;
-       pregameConflictWarning.hidden = !hasConflict;
+      const hasConflict = myChoice !== null && opChoice !== null && myChoice === opChoice;
+      pregameConflictWarning.textContent = PREGAME_COLOR_CONFLICT_ERROR;
+      pregameConflictWarning.hidden = !hasConflict;
 
-       pregameReadyBtn.hidden = false;
-       pregameReadyBtn.disabled = !myReady && myChoice === null;
-       if (myReady) {
-         pregameReadyBtn.textContent = "Unready";
-       } else if (!bothConnected) {
-         pregameReadyBtn.textContent = "Ready (Waiting Opponent)";
-       } else {
-         pregameReadyBtn.textContent = "Ready to Play";
-       }
+      pregameReadyBtn.hidden = false;
+      pregameReadyBtn.disabled = !myReady && myChoice === null;
+      if (myReady) {
+        pregameReadyBtn.textContent = "Unready";
+      } else if (!bothConnected) {
+        pregameReadyBtn.textContent = "Ready (Waiting Opponent)";
+      } else {
+        pregameReadyBtn.textContent = "Ready to Play";
+      }
     } else {
-       pregameReadyBtn.hidden = true;
+      pregameReadyBtn.hidden = true;
     }
   } else {
     multiplayerTimeControlSelect.disabled = true;
@@ -3481,8 +3395,8 @@ function renderSession(): void {
   const activeClockMs = snapshot.clock.active === "w"
     ? whiteMs
     : snapshot.clock.active === "b"
-    ? blackMs
-    : null;
+      ? blackMs
+      : null;
   const activeClockColor = snapshot.clock.active;
   const showLowTimeWarning = Boolean(
     isGameActive
@@ -3548,13 +3462,13 @@ function renderSession(): void {
   const roleDescription = state.role === "spectator"
     ? "Spectating."
     : state.role ? `Playing ${state.role === "w" ? "White" : "Black"}.` : "Not seated.";
-      
+
   const lastMoveDescription = snapshot.lastMove
     ? ` Last move: ${snapshot.lastMove.san} (${snapshot.lastMove.from} to ${snapshot.lastMove.to}).`
     : "";
-    
+
   const rematchDescription = (state.gameMode === "multiplayer" && snapshot.rematchVotes > 0)
-    ? ` Rematch votes: ${snapshot.rematchVotes}/2.` 
+    ? ` Rematch votes: ${snapshot.rematchVotes}/2.`
     : "";
 
   const undoDescription = snapshot.undo.pending
@@ -3629,20 +3543,20 @@ function cancelCurrentDrag(): void {
     ptrDragNode.remove();
     ptrDragNode = null;
   }
-  
+
   if (ptrDragFrom) {
     const draggedSquareEl = board.querySelector<HTMLElement>(`[data-square="${ptrDragFrom}"]`);
     draggedSquareEl?.classList.remove("dragging");
     draggedSquareEl?.classList.remove("drag-origin");
     ptrDragFrom = null;
   }
-  
+
   dragHoverSquare = null;
   syncBoardInteractionState();
   ptrDragMoved = false;
   board.classList.remove("drag-hover-active");
   syncBoardInteractionState();
-  
+
   // Clear the internal selection state to prevent "ghost" highlight rings
   state.selectedSquare = null;
   state.legalTargets = [];
@@ -3679,10 +3593,10 @@ function renderBoard(): void {
 
   const fragment = document.createDocumentFragment();
   const squares = buildSquareList(state.orientation);
-  
+
   const isHistoryView = state.viewCursor !== null;
   const displayBoard = getDisplayBoard();
-  
+
   let lastMove = state.snapshot?.lastMove ?? null;
   if (isHistoryView && state.snapshot && state.viewCursor !== null && state.viewCursor > 0) {
     lastMove = state.snapshot.moves[state.viewCursor - 1] ?? null;
@@ -3713,9 +3627,9 @@ function renderBoard(): void {
     && state.snapshot.lastMove
     ? state.liveMoveGrades[state.snapshot.moveCount]
     : undefined;
-    
-  const liveMarkerSquare = (!isHistoryView && liveGrade && state.snapshot?.lastMove) 
-    ? state.snapshot.lastMove.to 
+
+  const liveMarkerSquare = (!isHistoryView && liveGrade && state.snapshot?.lastMove)
+    ? state.snapshot.lastMove.to
     : null;
   const showQualityCallout = !isHistoryView && liveGrade && liveMarkerSquare
     && (liveGrade.category === "great" || liveGrade.category === "brilliant");
@@ -3726,35 +3640,34 @@ function renderBoard(): void {
   for (const squareName of squares) {
     const square = squareName as Square;
     const piece = displayBoard.get(square);
-    
+
     const button = document.createElement("button");
     button.type = "button";
     button.tabIndex = -1;
     button.className = `square ${isLightSquare(squareName) ? "light" : "dark"}`;
     button.dataset.square = squareName;
-    applyWoodTextureOffsets(button, square);
 
-  if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
-  if (checkedKingSquare === squareName) button.classList.add("in-check");
-  if (squareAnnotations.has(squareName)) button.classList.add("highlight-red"); // NEW
-  if (liveGrade?.category === "great" && liveMarkerSquare === squareName) button.classList.add("great-move-highlight");
-  if (liveGrade?.category === "brilliant" && liveMarkerSquare === squareName) button.classList.add("brilliant-move-highlight");
-  
-  // Also inside renderBoard(), anywhere outside the loop:
-  if (!gameNavRow.hidden) {
-    const isHistoryView = state.viewCursor !== null;
-    const maxMoves = state.snapshot?.moves.length ?? 0;
-    const currentPos = isHistoryView ? state.viewCursor! : maxMoves;
+    if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
+    if (checkedKingSquare === squareName) button.classList.add("in-check");
+    if (squareAnnotations.has(squareName)) button.classList.add("highlight-red"); // NEW
+    if (liveGrade?.category === "great" && liveMarkerSquare === squareName) button.classList.add("great-move-highlight");
+    if (liveGrade?.category === "brilliant" && liveMarkerSquare === squareName) button.classList.add("brilliant-move-highlight");
 
-    liveNavFirst.disabled = currentPos === 0;
-    liveNavPrev.disabled = currentPos === 0;
-    liveNavNext.disabled = currentPos === maxMoves;
-    liveNavLast.disabled = currentPos === maxMoves;
-  }
+    // Also inside renderBoard(), anywhere outside the loop:
+    if (!gameNavRow.hidden) {
+      const isHistoryView = state.viewCursor !== null;
+      const maxMoves = state.snapshot?.moves.length ?? 0;
+      const currentPos = isHistoryView ? state.viewCursor! : maxMoves;
+
+      liveNavFirst.disabled = currentPos === 0;
+      liveNavPrev.disabled = currentPos === 0;
+      liveNavNext.disabled = currentPos === maxMoves;
+      liveNavLast.disabled = currentPos === maxMoves;
+    }
 
     if (!isHistoryView && state.selectedSquare === square) button.classList.add("selected");
     if (!isHistoryView && state.legalMovesEnabled && state.legalTargets.includes(square)) button.classList.add("legal");
-    
+
     if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
     if (checkedKingSquare === squareName) button.classList.add("in-check");
 
@@ -3780,7 +3693,7 @@ function renderBoard(): void {
       const spritePath = getPieceSpritePath(piece.color as PlayerRole, piece.type);
       const pieceElement = document.createElement("span");
       pieceElement.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
-      
+
       const isMyPremove = suppressAnimationForMove && square === suppressAnimationForMove.to;
       const isTargetOfActiveAnimation = square === animatingToSquare && !animationFinished;
       const isBeingDragged = square === ptrDragFrom;
@@ -3792,7 +3705,7 @@ function renderBoard(): void {
         pieceElement.style.visibility = "hidden";
         pieceElement.style.pointerEvents = "none";
       } else {
-      
+
         pieceElement.style.opacity = "1";
         pieceElement.style.visibility = "";
         pieceElement.style.pointerEvents = "";
@@ -3826,14 +3739,14 @@ function renderBoard(): void {
   }
 
   if (!isHistoryView) {
-    const isPremoveExecution = suppressAnimationForMove && 
-                               lastMove && 
-                               lastMove.from === suppressAnimationForMove.from && 
-                               lastMove.to === suppressAnimationForMove.to;
+    const isPremoveExecution = suppressAnimationForMove &&
+      lastMove &&
+      lastMove.from === suppressAnimationForMove.from &&
+      lastMove.to === suppressAnimationForMove.to;
 
     if (isPremoveExecution) {
       lastAnimatedMoveKey = `${state.snapshot!.moveCount}:${lastMove!.from}:${lastMove!.to}:${lastMove!.san}`;
-      suppressAnimationForMove = null; 
+      suppressAnimationForMove = null;
       animationFinished = true;
       requestAnimationFrame(() => renderBoard());
     } else if (lastMove) {
@@ -3846,7 +3759,7 @@ function renderBoard(): void {
   } else {
     if (activeGhostAnimation) {
       const tempAnim = activeGhostAnimation;
-      activeGhostAnimation = null; 
+      activeGhostAnimation = null;
       tempAnim.cancel();
     }
   }
@@ -3866,7 +3779,7 @@ function renderBoard(): void {
 
     const title = document.createElement("h2");
     title.className = "game-over-title";
-    
+
     if (snapshot.checkmate) title.textContent = snapshot.winner === "w" ? "White Wins!" : "Black Wins!";
     else if (snapshot.draw) title.textContent = "Draw";
     else if (snapshot.winner) title.textContent = snapshot.winner === "w" ? "White Wins" : "Black Wins";
@@ -4042,7 +3955,7 @@ function syncBoardInteractionState(): void {
     }
 
     squareButton.classList.toggle("selected", state.selectedSquare === square);
-    squareButton.classList.toggle("legal", state.legalMovesEnabled && state.legalTargets.includes(square));    
+    squareButton.classList.toggle("legal", state.legalMovesEnabled && state.legalTargets.includes(square));
     squareButton.classList.toggle("dragging", square === ptrDragFrom);
     squareButton.classList.toggle("drag-origin", ptrDragMoved && square === ptrDragFrom);
     squareButton.classList.toggle(
@@ -4096,20 +4009,20 @@ function renderMoves(): void {
   for (let index = 0; index < snapshot.moves.length; index += 2) {
     const whiteMove = snapshot.moves[index] as MoveSummary | undefined;
     const blackMove = snapshot.moves[index + 1] as MoveSummary | undefined;
-    
+
     const whitePly = index + 1;
     const blackPly = index + 2;
-    
+
     const whiteGrade = state.liveMoveGrades[whitePly];
     const blackGrade = state.liveMoveGrades[blackPly];
-    
+
     const whiteBadge = whiteMove && whiteGrade
       ? ` ${renderMoveBadgeHtml(whiteGrade.category, "move-quality-tag", whiteGrade.label)}`
       : "";
     const blackBadge = blackMove && blackGrade
       ? ` ${renderMoveBadgeHtml(blackGrade.category, "move-quality-tag", blackGrade.label)}`
       : "";
-      
+
     const moveNumber = Math.floor(index / 2) + 1;
 
     // Apply a highlight if the user is currently viewing this specific move in history
@@ -4135,13 +4048,13 @@ function renderMoves(): void {
 moveList.addEventListener("click", (e) => {
   const target = (e.target as HTMLElement).closest<HTMLSpanElement>(".move-clickable");
   if (!target || !state.snapshot) return;
-  
+
   const index = parseInt(target.dataset.index!, 10);
   navigateToHistoryPosition(index);
 });
 function updateCaption(): void {
   const snapshot = state.snapshot;
-  
+
   if (!snapshot || !state.role || state.role === "spectator") {
     boardCaption.textContent = snapshot ? `Spectating room ${snapshot.roomId}` : "";
     return;
@@ -4149,11 +4062,11 @@ function updateCaption(): void {
 
   const myColor = state.role as PlayerRole;
   const opColor = myColor === "w" ? "b" : "w";
-  
+
   // FIX: Replay the server's authoritative move list on a temporary board.
   // This completely sidesteps the "FEN wiping history" bug.
-  const movesToReplay = state.viewCursor !== null 
-    ? snapshot.moves.slice(0, state.viewCursor) 
+  const movesToReplay = state.viewCursor !== null
+    ? snapshot.moves.slice(0, state.viewCursor)
     : snapshot.moves;
 
   const replayBoard = new Chess();
@@ -4278,16 +4191,16 @@ async function maybeRunLiveAnalysis(snapshot: RoomSnapshot): Promise<void> {
     const brilliantOffer = isForcedMove
       ? false
       : await verifyLiveBrilliantOffer({
-          engine: liveAnalyzer,
-          move: snapshot.lastMove,
-          beforeFen: fenPair.beforeFen,
-          afterFen: fenPair.afterFen,
-          beforeMoverCp: moverBefore,
-          afterMoverCp: moverAfter,
-          cpl,
-          matchesBestMove,
-          materialDelta,
-        });
+        engine: liveAnalyzer,
+        move: snapshot.lastMove,
+        beforeFen: fenPair.beforeFen,
+        afterFen: fenPair.afterFen,
+        beforeMoverCp: moverBefore,
+        afterMoverCp: moverAfter,
+        cpl,
+        matchesBestMove,
+        materialDelta,
+      });
 
     if (token !== liveAnalysisToken || !state.snapshot || liveMoveKey(state.snapshot) !== moveKey) {
       return;
@@ -4376,16 +4289,16 @@ async function maybeRunLiveAnalysisForMove(
     const brilliantOffer = isForcedMove
       ? false
       : await verifyLiveBrilliantOffer({
-          engine: liveAnalyzer,
-          move: moveResult,
-          beforeFen,
-          afterFen,
-          beforeMoverCp: moverBefore,
-          afterMoverCp: moverAfter,
-          cpl,
-          matchesBestMove,
-          materialDelta,
-        });
+        engine: liveAnalyzer,
+        move: moveResult,
+        beforeFen,
+        afterFen,
+        beforeMoverCp: moverBefore,
+        afterMoverCp: moverAfter,
+        cpl,
+        matchesBestMove,
+        materialDelta,
+      });
 
     if (
       !state.snapshot
@@ -4444,12 +4357,12 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   // 1. Reset all flags if a premove or manual drag is happening
   if (state.premoves.length > 0 || suppressAnimationForMove) {
     lastAnimatedMoveKey = moveKey;
-    suppressAnimationForMove = null; 
+    suppressAnimationForMove = null;
     if (activeGhostAnimation) activeGhostAnimation.cancel();
     activeGhostAnimation = null;
     animationFinished = true;
     animatingToSquare = null;
-    return; 
+    return;
   }
 
   lastAnimatedMoveKey = moveKey;
@@ -4468,9 +4381,9 @@ function animateLastMove(lastMove: MoveSummary | null): void {
   }
 
   const fromSquareButton = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.from}"]`);
-  const toSquareButton   = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.to}"]`);
+  const toSquareButton = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.to}"]`);
   const destinationPiece = toSquareButton?.querySelector<HTMLElement>(".piece");
-  
+
   if (!fromSquareButton || !toSquareButton || !destinationPiece) {
     animationFinished = true;
     animatingToSquare = null;
@@ -4491,7 +4404,7 @@ function animateLastMove(lastMove: MoveSummary | null): void {
     destinationMarker.style.visibility = "hidden";
   }
   const pieceRect = destinationPiece.getBoundingClientRect();
-  
+
   Object.assign(ghostPiece.style, {
     position: "absolute",
     left: `${toRect.left + toRect.width / 2 + window.scrollX}px`,
@@ -4523,29 +4436,29 @@ function animateLastMove(lastMove: MoveSummary | null): void {
 
   let finalized = false;
   const onEnd = () => {
-  if (finalized) return;
-  finalized = true;
-  ghostPiece.remove();
-  destinationPiece.style.visibility = "";
-  destinationPiece.style.opacity = "1";
-  revealDestinationMarker(destinationMarker);
+    if (finalized) return;
+    finalized = true;
+    ghostPiece.remove();
+    destinationPiece.style.visibility = "";
+    destinationPiece.style.opacity = "1";
+    revealDestinationMarker(destinationMarker);
 
-  animationFinished = true;
-  animatingToSquare = null;
+    animationFinished = true;
+    animatingToSquare = null;
 
-  if (activeGhostAnimation === animation) {
-    activeGhostAnimation = null;
-    activeGhostNode = null;
-    activeGhostDestinationPiece = null;
-    
-    // If a server update arrived while we were animating, 
-    // run the render now that the path is clear.
-    if (pendingBoardRefresh) {
-      pendingBoardRefresh = false;
-      renderBoard();
+    if (activeGhostAnimation === animation) {
+      activeGhostAnimation = null;
+      activeGhostNode = null;
+      activeGhostDestinationPiece = null;
+
+      // If a server update arrived while we were animating, 
+      // run the render now that the path is clear.
+      if (pendingBoardRefresh) {
+        pendingBoardRefresh = false;
+        renderBoard();
+      }
     }
-  }
-};
+  };
 
   animation.addEventListener("finish", onEnd);
   animation.addEventListener("cancel", onEnd);
@@ -4554,7 +4467,7 @@ function animateLastMove(lastMove: MoveSummary | null): void {
 function requestBoardRefresh(force = false): void {
   if (force && activeGhostAnimation) {
     const tempAnim = activeGhostAnimation;
-    activeGhostAnimation = null; 
+    activeGhostAnimation = null;
 
     // 1. Physical Cleanup: Remove the moving ghost image
     if (activeGhostNode) {
@@ -4565,19 +4478,19 @@ function requestBoardRefresh(force = false): void {
     // 2. Visibility Restore: Instantly show the "real" piece again
     if (activeGhostDestinationPiece) {
       activeGhostDestinationPiece.style.visibility = "";
-      activeGhostDestinationPiece.style.opacity = "1"; 
+      activeGhostDestinationPiece.style.opacity = "1";
       activeGhostDestinationPiece = null;
     }
 
     // 3. State Reset: Tell the renderer the animation is officially OVER
     animationFinished = true;
     animatingToSquare = null;
-    
+
     // FIX: DO NOT clear lastAnimatedMoveKey here! 
     // Clearing it caused the renderer to think the move had never been animated, 
     // resulting in the piece "re-animating" if you clicked during the movement.
 
-    tempAnim.cancel(); 
+    tempAnim.cancel();
   }
 
   // If a move is still animating and we aren't forcing, queue it up
@@ -4601,12 +4514,12 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
 
   if (state.premoves.length > 0 || suppressAnimationForMove) {
     lastAnimatedMoveKey = moveKey;
-    suppressAnimationForMove = null; 
+    suppressAnimationForMove = null;
     if (activeGhostAnimation) activeGhostAnimation.cancel();
     activeGhostAnimation = null;
     animationFinished = true;
     animatingToSquare = null;
-    return; 
+    return;
   }
 
   lastAnimatedMoveKey = moveKey;
@@ -4624,7 +4537,7 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   }
 
   const fromSquareButton = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.from}"]`);
-  const toSquareButton   = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.to}"]`);
+  const toSquareButton = board.querySelector<HTMLButtonElement>(`[data-square="${lastMove.to}"]`);
   const destinationPiece = toSquareButton?.querySelector<HTMLElement>(".piece");
   if (!fromSquareButton || !toSquareButton || !destinationPiece) {
     animationFinished = true;
@@ -4648,7 +4561,7 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
     destinationMarker.classList.remove("marker-reveal");
     destinationMarker.style.visibility = "hidden";
   }
-  
+
   Object.assign(ghostPiece.style, {
     position: "absolute",
     left: `${endX}px`,
@@ -4682,32 +4595,32 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
     const jump = 90 + Math.random() * 40;
     const scale = 1.25 + Math.random() * 0.15;
     const spin = (Math.random() * 15 + 10) * (Math.random() > 0.5 ? 1 : -1);
-    
+
     keyframes = [
       { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) scale(1)`, filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 0 },
       { transform: `translate3d(calc(-50% + ${deltaX * 0.15}px), calc(-50% + ${-jump}px), 0) rotateZ(${spin}deg) scale(${scale})`, filter: `brightness(1.4) drop-shadow(0 40px 25px rgba(0,0,0,0.45)) ${aura}`, offset: 0.65 },
       { transform: `translate3d(-50%, calc(-50% + 8px), 0) rotateZ(${-(spin * 0.5)}deg) scale(0.92)`, filter: `brightness(1.05) drop-shadow(0 2px 4px rgba(0,0,0,0.7)) ${aura}`, offset: 0.92 },
       { transform: "translate3d(-50%, -50%, 0) rotateZ(0deg) scale(1)", filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 1 }
     ];
-  } 
+  }
   else if (profile === "spin") {
     // 2. THE SPIN (360 Kickflip)
     duration = EPIC_MOVE_DURATION_MS.spin;
     const jump = 40 + Math.random() * 20;
     const spinDir = Math.random() > 0.5 ? 360 : -360;
-    
+
     keyframes = [
       { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg)`, filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 0 },
       { transform: `translate3d(calc(-50% + ${deltaX * 0.4}px), calc(-50% + ${-jump}px), 0) rotateZ(${spinDir * 0.6}deg)`, filter: `brightness(1.2) drop-shadow(0 15px 15px rgba(0,0,0,0.3)) ${aura}`, offset: 0.5 },
       { transform: `translate3d(-50%, -50%, 0) rotateZ(${spinDir}deg)`, filter: `brightness(1) drop-shadow(0 0 0 rgba(0,0,0,0)) ${aura}`, offset: 1 }
     ];
-  } 
+  }
   else {
     // 3. THE SLIDE (Fast, Low, Aggressive Tilt)
     duration = EPIC_MOVE_DURATION_MS.slide;
     // Calculate tilt direction based on movement (deltaX is inverted: negative means moving right)
-    const tilt = deltaX < 0 ? 18 : (deltaX > 0 ? -18 : 0); 
-    
+    const tilt = deltaX < 0 ? 18 : (deltaX > 0 ? -18 : 0);
+
     keyframes = [
       { transform: `translate3d(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px), 0) rotateZ(0deg) scale(1)`, filter: `brightness(1) ${aura}`, offset: 0 },
       { transform: `translate3d(calc(-50% + ${deltaX * 0.4}px), calc(-50% + ${deltaY * 0.4 - 10}px), 0) rotateZ(${tilt}deg) scale(1.05)`, filter: `brightness(1.1) drop-shadow(0 8px 10px rgba(0,0,0,0.25)) ${aura}`, offset: 0.4 },
@@ -4722,34 +4635,34 @@ function animateLastMoveEpic(lastMove: MoveSummary | null): void {
   });
 
   activeGhostAnimation = animation;
-  
+
   startTrailSpawning();
 
- let finalized = false;
- const onEnd = () => {
-  if (finalized) return;
-  finalized = true;
-  ghostPiece.remove();
-  destinationPiece.style.visibility = "";
-  destinationPiece.style.opacity = "1";
-  revealDestinationMarker(destinationMarker);
+  let finalized = false;
+  const onEnd = () => {
+    if (finalized) return;
+    finalized = true;
+    ghostPiece.remove();
+    destinationPiece.style.visibility = "";
+    destinationPiece.style.opacity = "1";
+    revealDestinationMarker(destinationMarker);
 
-  animationFinished = true;
-  animatingToSquare = null;
+    animationFinished = true;
+    animatingToSquare = null;
 
-  if (activeGhostAnimation === animation) {
-    activeGhostAnimation = null;
-    activeGhostNode = null;
-    activeGhostDestinationPiece = null;
-    
-    // If a server update arrived while we were animating, 
-    // run the render now that the path is clear.
-    if (pendingBoardRefresh) {
-      pendingBoardRefresh = false;
-      renderBoard();
+    if (activeGhostAnimation === animation) {
+      activeGhostAnimation = null;
+      activeGhostNode = null;
+      activeGhostDestinationPiece = null;
+
+      // If a server update arrived while we were animating, 
+      // run the render now that the path is clear.
+      if (pendingBoardRefresh) {
+        pendingBoardRefresh = false;
+        renderBoard();
+      }
     }
-  }
-};
+  };
 
   animation.addEventListener("finish", onEnd);
   animation.addEventListener("cancel", onEnd);
@@ -4761,7 +4674,7 @@ function onSquarePressed(square: Square): void {
     render();
     return;
   }
-  
+
   const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
   if (gameEnded) return;
 
@@ -4784,17 +4697,17 @@ function onSquarePressed(square: Square): void {
     const from = selectedFrom;
     clearSelection();
     requestBoardRefresh(true);
-    
-    suppressAnimationForMove = null; 
+
+    suppressAnimationForMove = null;
     tryMoveFromTo(from, square);
-    
+
     updateCaption();
     return;
   }
 
   const clickedPiece = chess.get(square);
   if (clickedPiece && isOwnPiece(clickedPiece.color)) {
-    selectSquare(square); 
+    selectSquare(square);
     return;
   }
 
@@ -4845,11 +4758,11 @@ function canStartMoveFrom(square: Square): boolean {
   if (!piece || piece.color !== state.role) return false;
 
   // Si es tu turno real o si la pieza tiene movimientos teÃ³ricos/legales
-  return true; 
+  return true;
 }
 
 function tryMoveFromTo(from: Square, to: Square): void {
- const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
+  const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
   if (gameEnded) return;
 
   if (!state.snapshot || !state.role || state.role === "spectator") return;
@@ -4863,7 +4776,7 @@ function tryMoveFromTo(from: Square, to: Square): void {
   // Handle Promotion Branch
   const selectedPiece = chess.get(from);
   if (selectedPiece?.type === "p" && reachesPromotionRank(to, state.role)) {
-    if (!isLegalMoveTarget(from, to)) return; 
+    if (!isLegalMoveTarget(from, to)) return;
 
     state.pendingPromotion = { from, to };
     promotionDialog.hidden = false;
@@ -4891,8 +4804,8 @@ function tryMoveFromTo(from: Square, to: Square): void {
 
     updateManualSnapshot(playerMoveResult);
     finalizeBotClockAfterMove(playerRole);
-   
-    render(true); 
+
+    render(true);
     playSoundForSnapshot(state.snapshot);
 
     // Trigger Bot Response after a short delay
@@ -4905,12 +4818,12 @@ function tryMoveFromTo(from: Square, to: Square): void {
   if (state.snapshot?.analysis.enabled && playerMoveResult) {
     state.liveAnalysisSummary = "Analyzing move...";
     renderSession();
-    
+
     const moveKey = `${state.snapshot.moveCount}:${from}:${to}:${playerMoveResult.san}`;
     void maybeRunLiveAnalysisForMove(
-      state.snapshot.moves.slice(0, -1), 
-      playerMoveResult, 
-      state.snapshot.moveCount, 
+      state.snapshot.moves.slice(0, -1),
+      playerMoveResult,
+      state.snapshot.moveCount,
       moveKey
     );
   }
@@ -4943,10 +4856,9 @@ function startBotGame(playerSide: PlayerRole = state.botPlayerSide) {
   state.legalTargets = [];
   state.viewCursor = null;
   accountSidebarController.setFriendPresenceActivity("playing-bot");
-  regenerateWoodTextureOffsets();
-  
+
   chess.reset();
-  
+
   // Initialize snapshot manually to bypass server socket
   state.snapshot = {
     roomId: "LOCAL",
@@ -5024,7 +4936,7 @@ function updateManualSnapshot(move: Move): void {
   state.snapshot.moves.push(newSummary);
 
   clearArrows();
-  
+
   // blood logic
   const currentPieceCount = countPieces(state.snapshot.fen);
   if (state.bloodFxEnabled && currentPieceCount < previousPieceCount) {
@@ -5034,7 +4946,7 @@ function updateManualSnapshot(move: Move): void {
   state.snapshot.check = chess.inCheck();
   state.snapshot.checkmate = chess.isCheckmate();
   state.snapshot.draw = chess.isDraw();
-  
+
   if (state.snapshot.checkmate) {
     state.snapshot.winner = move.color as PlayerRole;
   }
@@ -5070,7 +4982,7 @@ function queuePremove(from: Square, to: Square): void {
 function onPremoveSquarePressed(square: Square): void {
   if (!state.role || state.role === "spectator") return;
 
-  const vBoard = getVirtualBoard(chess.fen(), state.premoves, state.role); 
+  const vBoard = getVirtualBoard(chess.fen(), state.premoves, state.role);
   const clickedPiece = vBoard.get(square);
 
   if (!state.selectedSquare) {
@@ -5102,7 +5014,7 @@ function onPremoveSquarePressed(square: Square): void {
     } else {
       clearSelection();
     }
-    requestBoardRefresh(true); 
+    requestBoardRefresh(true);
   }
 
   updateCaption();
@@ -5135,7 +5047,7 @@ function isOwnPiece(color: PlayerRole): boolean {
   return state.role === color;
 }
 
-function clearLocalRoomState(options: { preserveRoomReturnContext?: boolean } = {}): void {  
+function clearLocalRoomState(options: { preserveRoomReturnContext?: boolean } = {}): void {
   setRoomCreatePending(false);
   clearRoomCreateTransitionClass();
   clearScheduledBotResponse();
@@ -5187,7 +5099,7 @@ function clearLocalRoomState(options: { preserveRoomReturnContext?: boolean } = 
   state.viewCursor = null;
   state.focusMode = false;
 
-  state.gameMode = "multiplayer"; 
+  state.gameMode = "multiplayer";
   accountSidebarController.setFriendPresenceActivity(null);
 
   state.liveAnalysisSummary = "Live analysis disabled.";
@@ -5206,17 +5118,17 @@ function clearLocalRoomState(options: { preserveRoomReturnContext?: boolean } = 
 
   liveAnalysisToken += 1;
   lastRoomStateReceivedAtMs = Date.now();
-  
+
   localStorage.removeItem("chess_roomId");
   localStorage.removeItem("chess_roomInviteToken");
   clearPersistedBotSession();
   if (!options.preserveRoomReturnContext) {
     localStorage.removeItem(ROOM_RETURN_CONTEXT_STORAGE_KEY);
   }
-  
+
   // NEW: Ensure any active drag is killed when leaving or resetting
   cancelCurrentDrag();
-  
+
   clearArrows();
   chess.reset();
   resetLowTimeWarningState();
@@ -5297,10 +5209,10 @@ function updateFocusHud(): void {
   if (snapshot && state.role && state.role !== "spectator") {
     const myColor = state.role as PlayerRole;
     const opColor = myColor === "w" ? "b" : "w";
-    
+
     // FIX: Apply the same robust replay logic to the Focus HUD
-    const movesToReplay = state.viewCursor !== null 
-      ? snapshot.moves.slice(0, state.viewCursor) 
+    const movesToReplay = state.viewCursor !== null
+      ? snapshot.moves.slice(0, state.viewCursor)
       : snapshot.moves;
 
     const replayBoard = new Chess();

@@ -1,4 +1,4 @@
-export type Theme = "forest" | "purple" | "walnut" | "refined" | "base" | "slate";
+export type Theme = "forest" | "purple" | "walnut" | "refined" | "base" | "slate" | "crimson";
 export type PieceThemeChoice = "original" | "chesscom" | "chesscomocean";
 export type SoundThemeChoice = "original" | "chesscom";
 
@@ -12,7 +12,7 @@ export type AnimationStyle = "smooth" | "fast" | "epic";
 const ANIMATION_STORAGE_KEY = "chess-animation-style";
 const BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
 const LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves"; // NEW
-const THEME_OPTIONS: readonly Theme[] = ["forest", "purple", "walnut", "refined", "base", "slate"];
+const THEME_OPTIONS: readonly Theme[] = ["forest", "purple", "walnut", "refined", "base", "slate", "crimson"];
 
 export function normalizeAnimationStyle(value: string | null): AnimationStyle {
   if (value === "epic") return "epic";
@@ -117,13 +117,13 @@ export function mountThemeSwitcher(): void {
   const savedAnimationStyle = normalizeAnimationStyle(localStorage.getItem(ANIMATION_STORAGE_KEY));
   const savedPieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
   const savedSoundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
-  
+
   const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
   const bloodFxEnabled = bloodFxRaw === "on";
 
   // NEW: Read legal moves state (defaults to true if not set)
   const legalMovesRaw = localStorage.getItem(LEGAL_MOVES_STORAGE_KEY);
-  const legalMovesEnabled = legalMovesRaw !== "off"; 
+  const legalMovesEnabled = legalMovesRaw !== "off";
 
   const collapsedRaw = localStorage.getItem(THEME_PANEL_COLLAPSED_KEY);
   const defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
@@ -135,7 +135,7 @@ export function mountThemeSwitcher(): void {
   widget.className = "theme-switcher";
   widget.setAttribute("role", "group");
   widget.setAttribute("aria-label", "Theme, piece, sound and animation options");
-  
+
   // NEW: Added the "Watch Legal Moves" row
   widget.innerHTML = `
     <button class="theme-toggle-btn" type="button" aria-label="Toggle theme selector" aria-expanded="true">▶</button>
@@ -149,6 +149,7 @@ export function mountThemeSwitcher(): void {
           <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
           <button class="theme-btn" data-theme="base" title="Base" aria-label="Base wood theme"></button>
           <button class="theme-btn" data-theme="slate" title="Soft Slate" aria-label="Soft Slate theme"></button>
+          <button class="theme-btn" data-theme="crimson" title="Rosewood Light" aria-label="Rosewood Light theme"></button>
         </div>
       </div>
       <div class="theme-switcher-row">
