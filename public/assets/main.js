@@ -33597,21 +33597,56 @@ function normalizePieceTheme2(value2) {
 function normalizeSoundTheme2(value2) {
   return value2 === "chesscom" ? "chesscom" : "original";
 }
-function normalizeTheme(value2) {
-  if (value2 && THEME_OPTIONS.includes(value2)) {
+function normalizeLegacyTheme(value2) {
+  if (value2 && BOARD_THEME_OPTIONS.includes(value2)) {
     return value2;
   }
   return "forest";
 }
-function setTheme(theme) {
-  if (theme === "forest") {
-    document.documentElement.removeAttribute("data-theme");
-  } else {
-    document.documentElement.setAttribute("data-theme", theme);
+function normalizeUiTheme(value2) {
+  if (value2 && UI_THEME_OPTIONS.includes(value2)) {
+    return value2;
   }
-  localStorage.setItem(THEME_STORAGE_KEY, theme);
-  document.querySelectorAll(".theme-btn").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.theme === theme);
+  return null;
+}
+function normalizeBoardTheme(value2) {
+  if (value2 && BOARD_THEME_OPTIONS.includes(value2)) {
+    return value2;
+  }
+  return null;
+}
+function mapLegacyToUiTheme(theme) {
+  if (theme === "purple") return "purple";
+  if (theme === "slate" || theme === "refined") return "slate";
+  return "walnut";
+}
+function resolveInitialUiTheme() {
+  const savedUiTheme = normalizeUiTheme(localStorage.getItem(UI_THEME_STORAGE_KEY));
+  if (savedUiTheme) return savedUiTheme;
+  return mapLegacyToUiTheme(normalizeLegacyTheme(localStorage.getItem(LEGACY_THEME_STORAGE_KEY)));
+}
+function resolveInitialBoardTheme() {
+  const savedBoardTheme = normalizeBoardTheme(localStorage.getItem(BOARD_THEME_STORAGE_KEY));
+  if (savedBoardTheme) return savedBoardTheme;
+  return normalizeLegacyTheme(localStorage.getItem(LEGACY_THEME_STORAGE_KEY));
+}
+function setUiTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem(UI_THEME_STORAGE_KEY, theme);
+  localStorage.setItem(LEGACY_THEME_STORAGE_KEY, theme);
+  document.querySelectorAll(".ui-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.uiTheme === theme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+}
+function setBoardTheme(theme) {
+  document.documentElement.setAttribute("data-board-theme", theme);
+  localStorage.setItem(BOARD_THEME_STORAGE_KEY, theme);
+  document.querySelectorAll(".board-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.boardTheme === theme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
   });
 }
 function setAnimationStyle(style) {
@@ -33671,7 +33706,8 @@ function setPanelCollapsed(widget, toggleBtn, collapsed) {
   localStorage.setItem(THEME_PANEL_COLLAPSED_KEY, collapsed ? "1" : "0");
 }
 function mountThemeSwitcher() {
-  const savedTheme = normalizeTheme(localStorage.getItem(THEME_STORAGE_KEY));
+  const savedUiTheme = resolveInitialUiTheme();
+  const savedBoardTheme = resolveInitialBoardTheme();
   const savedAnimationStyle = normalizeAnimationStyle(localStorage.getItem(ANIMATION_STORAGE_KEY));
   const savedPieceTheme = normalizePieceTheme2(localStorage.getItem(PIECE_THEME_STORAGE_KEY2));
   const savedSoundTheme = normalizeSoundTheme2(localStorage.getItem(SOUND_THEME_STORAGE_KEY2));
@@ -33682,24 +33718,33 @@ function mountThemeSwitcher() {
   const collapsedRaw = localStorage.getItem(THEME_PANEL_COLLAPSED_KEY);
   const defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
   const initialCollapsed = collapsedRaw === null ? defaultCollapsed : collapsedRaw === "1";
-  setTheme(savedTheme);
+  setUiTheme(savedUiTheme);
+  setBoardTheme(savedBoardTheme);
   const widget = document.createElement("div");
   widget.className = "theme-switcher";
   widget.setAttribute("role", "group");
-  widget.setAttribute("aria-label", "Theme, piece, sound and animation options");
+  widget.setAttribute("aria-label", "Interface, board, piece, sound and animation options");
   widget.innerHTML = `
     <button class="theme-toggle-btn" type="button" aria-label="Toggle theme selector" aria-expanded="true">\u25B6</button>
     <div class="theme-switcher-content">
       <div class="theme-switcher-row">
-        <span class="theme-switcher-label">Theme</span>
-        <div class="theme-switcher-options">
-          <button class="theme-btn" data-theme="forest" title="Classic Forest" aria-label="Classic Forest theme"></button>
-          <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
-          <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
-          <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
-          <button class="theme-btn" data-theme="base" title="Base" aria-label="Base wood theme"></button>
-          <button class="theme-btn" data-theme="slate" title="Soft Slate" aria-label="Soft Slate theme"></button>
-          <button class="theme-btn" data-theme="crimson" title="Rosewood Light" aria-label="Rosewood Light theme"></button>
+        <span class="theme-switcher-label">Interface Theme</span>
+        <div class="theme-switcher-options" role="radiogroup" aria-label="Interface theme">
+          <button class="theme-btn ui-theme-btn" data-ui-theme="purple" title="Cosmic Purple" role="radio" aria-label="Cosmic Purple interface"></button>
+          <button class="theme-btn ui-theme-btn" data-ui-theme="slate" title="Soft Slate" role="radio" aria-label="Soft Slate interface"></button>
+          <button class="theme-btn ui-theme-btn" data-ui-theme="walnut" title="Walnut and Cream" role="radio" aria-label="Walnut and Cream interface"></button>
+        </div>
+      </div>
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Board Style</span>
+        <div class="theme-switcher-options board-theme-options" role="radiogroup" aria-label="Board theme">
+          <button class="theme-btn board-theme-btn" data-board-theme="walnut" title="Walnut board" role="radio" aria-label="Walnut board"></button>
+          <button class="theme-btn board-theme-btn" data-board-theme="purple" title="Cosmic Purple board" role="radio" aria-label="Cosmic Purple board"></button>
+          <button class="theme-btn board-theme-btn" data-board-theme="slate" title="Soft Slate board" role="radio" aria-label="Soft Slate board"></button>
+          <button class="theme-btn board-theme-btn" data-board-theme="crimson" title="Red Light board" role="radio" aria-label="Red Light board"></button>
+          <button class="theme-btn board-theme-btn" data-board-theme="forest" title="Classic Forest board" role="radio" aria-label="Classic Forest board"></button>
+          <button class="theme-btn board-theme-btn" data-board-theme="base" title="Base Amber board" role="radio" aria-label="Base Amber board"></button>
+          <button class="theme-btn board-theme-btn" data-board-theme="refined" title="Refined Blue board" role="radio" aria-label="Refined Blue board"></button>
         </div>
       </div>
       <div class="theme-switcher-row">
@@ -33761,8 +33806,16 @@ function mountThemeSwitcher() {
       setPanelCollapsed(widget, toggleButton, collapsed);
       return;
     }
-    const btn = e.target.closest(".theme-btn");
-    if (btn?.dataset.theme) setTheme(btn.dataset.theme);
+    const uiThemeBtn = e.target.closest(".ui-theme-btn");
+    if (uiThemeBtn?.dataset.uiTheme) {
+      setUiTheme(uiThemeBtn.dataset.uiTheme);
+      return;
+    }
+    const boardThemeBtn = e.target.closest(".board-theme-btn");
+    if (boardThemeBtn?.dataset.boardTheme) {
+      setBoardTheme(boardThemeBtn.dataset.boardTheme);
+      return;
+    }
     const pieceThemeBtn = e.target.closest(".piece-theme-btn");
     if (pieceThemeBtn?.dataset.pieceTheme) {
       setPieceTheme(normalizePieceTheme2(pieceThemeBtn.dataset.pieceTheme));
@@ -33774,7 +33827,10 @@ function mountThemeSwitcher() {
       return;
     }
     const animBtn = e.target.closest(".animation-btn");
-    if (animBtn?.dataset.animation) setAnimationStyle(animBtn.dataset.animation);
+    if (animBtn?.dataset.animation) {
+      setAnimationStyle(animBtn.dataset.animation);
+      return;
+    }
     const targetEl = e.target;
     if (targetEl.closest(".legal-btn")) {
       const legalBtn = targetEl.closest(".legal-btn");
@@ -33784,9 +33840,20 @@ function mountThemeSwitcher() {
       if (fxBtn?.dataset.bloodfx) setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
     }
   });
+  document.querySelectorAll(".ui-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.uiTheme === savedUiTheme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  document.querySelectorAll(".board-theme-btn").forEach((btn) => {
+    const isActive = btn.dataset.boardTheme === savedBoardTheme;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
   document.querySelectorAll(".animation-btn[data-animation]").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
-    btn.setAttribute("aria-checked", String(btn.dataset.animation === savedAnimationStyle));
+    const isActive = btn.dataset.animation === savedAnimationStyle;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
   });
   document.querySelectorAll(".piece-theme-btn").forEach((btn) => {
     const isActive = btn.dataset.pieceTheme === savedPieceTheme;
@@ -33809,18 +33876,21 @@ function mountThemeSwitcher() {
     btn.setAttribute("aria-checked", String(isActive));
   });
 }
-var THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, PIECE_THEME_STORAGE_KEY2, SOUND_THEME_STORAGE_KEY2, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY, LEGAL_MOVES_STORAGE_KEY, THEME_OPTIONS;
+var LEGACY_THEME_STORAGE_KEY, UI_THEME_STORAGE_KEY, BOARD_THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, PIECE_THEME_STORAGE_KEY2, SOUND_THEME_STORAGE_KEY2, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY, LEGAL_MOVES_STORAGE_KEY, UI_THEME_OPTIONS, BOARD_THEME_OPTIONS;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
-    THEME_STORAGE_KEY = "chess-theme";
+    LEGACY_THEME_STORAGE_KEY = "chess-theme";
+    UI_THEME_STORAGE_KEY = "chess-ui-theme";
+    BOARD_THEME_STORAGE_KEY = "chess-board-theme";
     THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
     PIECE_THEME_STORAGE_KEY2 = "chess-piece-theme";
     SOUND_THEME_STORAGE_KEY2 = "chess-sound-theme";
     ANIMATION_STORAGE_KEY = "chess-animation-style";
     BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
     LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
-    THEME_OPTIONS = ["forest", "purple", "walnut", "refined", "base", "slate", "crimson"];
+    UI_THEME_OPTIONS = ["purple", "slate", "walnut"];
+    BOARD_THEME_OPTIONS = ["forest", "purple", "walnut", "refined", "base", "slate", "crimson"];
   }
 });
 

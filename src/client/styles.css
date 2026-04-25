@@ -2194,6 +2194,14 @@ square.legal:has(.piece-quality-marker)::after {
     gap: 8px;
   }
 
+  .board-theme-options {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, max-content));
+    justify-content: start;
+    row-gap: 8px;
+    column-gap: 8px;
+  }
+
   /* Modifica la regla .theme-switcher.is-collapsed */
 .theme-switcher.is-collapsed {
   width: 44px;  /* Forzamos un tamaño de círculo */
@@ -2371,6 +2379,10 @@ square.legal:has(.piece-quality-marker)::after {
 
     .theme-switcher-content {
       max-width: 240px;
+    }
+
+    .board-theme-options {
+      grid-template-columns: repeat(3, minmax(0, max-content));
     }
 
     .animation-segment {

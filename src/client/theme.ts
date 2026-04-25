@@ -1,8 +1,12 @@
-export type Theme = "forest" | "purple" | "walnut" | "refined" | "base" | "slate" | "crimson";
+type LegacyTheme = "forest" | "purple" | "walnut" | "refined" | "base" | "slate" | "crimson";
+export type UiTheme = "purple" | "slate" | "walnut";
+export type BoardTheme = LegacyTheme;
 export type PieceThemeChoice = "original" | "chesscom" | "chesscomocean";
 export type SoundThemeChoice = "original" | "chesscom";
 
-const THEME_STORAGE_KEY = "chess-theme";
+const LEGACY_THEME_STORAGE_KEY = "chess-theme";
+const UI_THEME_STORAGE_KEY = "chess-ui-theme";
+const BOARD_THEME_STORAGE_KEY = "chess-board-theme";
 const THEME_PANEL_COLLAPSED_KEY = "chess-theme-panel-collapsed";
 const PIECE_THEME_STORAGE_KEY = "chess-piece-theme";
 const SOUND_THEME_STORAGE_KEY = "chess-sound-theme";
@@ -11,145 +15,196 @@ export type AnimationStyle = "smooth" | "fast" | "epic";
 
 const ANIMATION_STORAGE_KEY = "chess-animation-style";
 const BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
-const LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves"; // NEW
-const THEME_OPTIONS: readonly Theme[] = ["forest", "purple", "walnut", "refined", "base", "slate", "crimson"];
+const LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
+const UI_THEME_OPTIONS: readonly UiTheme[] = ["purple", "slate", "walnut"];
+const BOARD_THEME_OPTIONS: readonly BoardTheme[] = ["forest", "purple", "walnut", "refined", "base", "slate", "crimson"];
 
 export function normalizeAnimationStyle(value: string | null): AnimationStyle {
-  if (value === "epic") return "epic";
-  if (value === "fast") return "fast";
-  return "smooth";
+    if (value === "epic") return "epic";
+    if (value === "fast") return "fast";
+    return "smooth";
 }
 
 function normalizePieceTheme(value: string | null): PieceThemeChoice {
-  if (value === "chesscom") return "chesscom";
-  if (value === "chesscomocean" || value === "chessComOcean" || value === "chesscom-ocean") return "chesscomocean";
-  return "original";
+    if (value === "chesscom") return "chesscom";
+    if (value === "chesscomocean" || value === "chessComOcean" || value === "chesscom-ocean") return "chesscomocean";
+    return "original";
 }
 
 function normalizeSoundTheme(value: string | null): SoundThemeChoice {
-  return value === "chesscom" ? "chesscom" : "original";
+    return value === "chesscom" ? "chesscom" : "original";
 }
 
-function normalizeTheme(value: string | null): Theme {
-  if (value && THEME_OPTIONS.includes(value as Theme)) {
-    return value as Theme;
-  }
-  return "forest";
+function normalizeLegacyTheme(value: string | null): LegacyTheme {
+    if (value && BOARD_THEME_OPTIONS.includes(value as LegacyTheme)) {
+        return value as LegacyTheme;
+    }
+    return "forest";
 }
 
-function setTheme(theme: Theme): void {
-  if (theme === "forest") {
-    document.documentElement.removeAttribute("data-theme");
-  } else {
+function normalizeUiTheme(value: string | null): UiTheme | null {
+    if (value && UI_THEME_OPTIONS.includes(value as UiTheme)) {
+        return value as UiTheme;
+    }
+    return null;
+}
+
+function normalizeBoardTheme(value: string | null): BoardTheme | null {
+    if (value && BOARD_THEME_OPTIONS.includes(value as BoardTheme)) {
+        return value as BoardTheme;
+    }
+    return null;
+}
+
+function mapLegacyToUiTheme(theme: LegacyTheme): UiTheme {
+    if (theme === "purple") return "purple";
+    if (theme === "slate" || theme === "refined") return "slate";
+    return "walnut";
+}
+
+function resolveInitialUiTheme(): UiTheme {
+    const savedUiTheme = normalizeUiTheme(localStorage.getItem(UI_THEME_STORAGE_KEY));
+    if (savedUiTheme) return savedUiTheme;
+    return mapLegacyToUiTheme(normalizeLegacyTheme(localStorage.getItem(LEGACY_THEME_STORAGE_KEY)));
+}
+
+function resolveInitialBoardTheme(): BoardTheme {
+    const savedBoardTheme = normalizeBoardTheme(localStorage.getItem(BOARD_THEME_STORAGE_KEY));
+    if (savedBoardTheme) return savedBoardTheme;
+    return normalizeLegacyTheme(localStorage.getItem(LEGACY_THEME_STORAGE_KEY));
+}
+
+function setUiTheme(theme: UiTheme): void {
     document.documentElement.setAttribute("data-theme", theme);
-  }
-  localStorage.setItem(THEME_STORAGE_KEY, theme);
-  document.querySelectorAll<HTMLElement>(".theme-btn").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.theme === theme);
-  });
+    localStorage.setItem(UI_THEME_STORAGE_KEY, theme);
+    localStorage.setItem(LEGACY_THEME_STORAGE_KEY, theme);
+
+    document.querySelectorAll<HTMLElement>(".ui-theme-btn").forEach((btn) => {
+        const isActive = btn.dataset.uiTheme === theme;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-checked", String(isActive));
+    });
+}
+
+function setBoardTheme(theme: BoardTheme): void {
+    document.documentElement.setAttribute("data-board-theme", theme);
+    localStorage.setItem(BOARD_THEME_STORAGE_KEY, theme);
+
+    document.querySelectorAll<HTMLElement>(".board-theme-btn").forEach((btn) => {
+        const isActive = btn.dataset.boardTheme === theme;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-checked", String(isActive));
+    });
 }
 
 function setAnimationStyle(style: AnimationStyle): void {
-  localStorage.setItem(ANIMATION_STORAGE_KEY, style);
-  document.querySelectorAll<HTMLElement>(".animation-btn[data-animation]").forEach((btn) => {
-    const isActive = btn.dataset.animation === style;
-    btn.classList.toggle("active", isActive);
-    btn.setAttribute("aria-checked", String(isActive));
-  });
-  const event = new CustomEvent("animationchange", { detail: { style } });
-  window.dispatchEvent(event);
+    localStorage.setItem(ANIMATION_STORAGE_KEY, style);
+    document.querySelectorAll<HTMLElement>(".animation-btn[data-animation]").forEach((btn) => {
+        const isActive = btn.dataset.animation === style;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-checked", String(isActive));
+    });
+    const event = new CustomEvent("animationchange", { detail: { style } });
+    window.dispatchEvent(event);
 }
 
 function setBloodFxEnabled(enabled: boolean): void {
-  localStorage.setItem(BLOOD_FX_STORAGE_KEY, enabled ? "on" : "off");
-  document.querySelectorAll<HTMLElement>(".fx-btn:not(.legal-btn)").forEach((btn) => {
-    const isActive = (btn.dataset.bloodfx === "on") === enabled;
-    btn.classList.toggle("active", isActive);
-    btn.setAttribute("aria-checked", String(isActive));
-  });
-  const event = new CustomEvent("bloodfxchange", { detail: { enabled } });
-  window.dispatchEvent(event);
+    localStorage.setItem(BLOOD_FX_STORAGE_KEY, enabled ? "on" : "off");
+    document.querySelectorAll<HTMLElement>(".fx-btn:not(.legal-btn)").forEach((btn) => {
+        const isActive = (btn.dataset.bloodfx === "on") === enabled;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-checked", String(isActive));
+    });
+    const event = new CustomEvent("bloodfxchange", { detail: { enabled } });
+    window.dispatchEvent(event);
 }
 
-// NEW: Setter for Legal Moves
 function setLegalMovesEnabled(enabled: boolean): void {
-  localStorage.setItem(LEGAL_MOVES_STORAGE_KEY, enabled ? "on" : "off");
-  document.querySelectorAll<HTMLElement>(".legal-btn").forEach((btn) => {
-    const isActive = (btn.dataset.legal === "on") === enabled;
-    btn.classList.toggle("active", isActive);
-    btn.setAttribute("aria-checked", String(isActive));
-  });
-  const event = new CustomEvent("legalmoveschange", { detail: { enabled } });
-  window.dispatchEvent(event);
+    localStorage.setItem(LEGAL_MOVES_STORAGE_KEY, enabled ? "on" : "off");
+    document.querySelectorAll<HTMLElement>(".legal-btn").forEach((btn) => {
+        const isActive = (btn.dataset.legal === "on") === enabled;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-checked", String(isActive));
+    });
+    const event = new CustomEvent("legalmoveschange", { detail: { enabled } });
+    window.dispatchEvent(event);
 }
 
 function setPieceTheme(theme: PieceThemeChoice): void {
-  localStorage.setItem(PIECE_THEME_STORAGE_KEY, theme);
-  document.querySelectorAll<HTMLElement>(".piece-theme-btn").forEach((btn) => {
-    const isActive = btn.dataset.pieceTheme === theme;
-    btn.classList.toggle("active", isActive);
-    btn.setAttribute("aria-checked", String(isActive));
-  });
-  const event = new CustomEvent("piecethemechange", { detail: { theme } });
-  window.dispatchEvent(event);
+    localStorage.setItem(PIECE_THEME_STORAGE_KEY, theme);
+    document.querySelectorAll<HTMLElement>(".piece-theme-btn").forEach((btn) => {
+        const isActive = btn.dataset.pieceTheme === theme;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-checked", String(isActive));
+    });
+    const event = new CustomEvent("piecethemechange", { detail: { theme } });
+    window.dispatchEvent(event);
 }
 
 function setSoundTheme(theme: SoundThemeChoice): void {
-  localStorage.setItem(SOUND_THEME_STORAGE_KEY, theme);
-  document.querySelectorAll<HTMLElement>(".sound-theme-btn").forEach((btn) => {
-    const isActive = btn.dataset.soundTheme === theme;
-    btn.classList.toggle("active", isActive);
-    btn.setAttribute("aria-checked", String(isActive));
-  });
-  const event = new CustomEvent("soundthemechange", { detail: { theme } });
-  window.dispatchEvent(event);
+    localStorage.setItem(SOUND_THEME_STORAGE_KEY, theme);
+    document.querySelectorAll<HTMLElement>(".sound-theme-btn").forEach((btn) => {
+        const isActive = btn.dataset.soundTheme === theme;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-checked", String(isActive));
+    });
+    const event = new CustomEvent("soundthemechange", { detail: { theme } });
+    window.dispatchEvent(event);
 }
 
 function setPanelCollapsed(widget: HTMLElement, toggleBtn: HTMLButtonElement, collapsed: boolean): void {
-  widget.classList.toggle("is-collapsed", collapsed);
-  toggleBtn.setAttribute("aria-expanded", String(!collapsed));
-  toggleBtn.style.transform = collapsed ? "rotate(0deg)" : "rotate(180deg)";
-  localStorage.setItem(THEME_PANEL_COLLAPSED_KEY, collapsed ? "1" : "0");
+    widget.classList.toggle("is-collapsed", collapsed);
+    toggleBtn.setAttribute("aria-expanded", String(!collapsed));
+    toggleBtn.style.transform = collapsed ? "rotate(0deg)" : "rotate(180deg)";
+    localStorage.setItem(THEME_PANEL_COLLAPSED_KEY, collapsed ? "1" : "0");
 }
 
 export function mountThemeSwitcher(): void {
-  const savedTheme = normalizeTheme(localStorage.getItem(THEME_STORAGE_KEY));
-  const savedAnimationStyle = normalizeAnimationStyle(localStorage.getItem(ANIMATION_STORAGE_KEY));
-  const savedPieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
-  const savedSoundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
+    const savedUiTheme = resolveInitialUiTheme();
+    const savedBoardTheme = resolveInitialBoardTheme();
+    const savedAnimationStyle = normalizeAnimationStyle(localStorage.getItem(ANIMATION_STORAGE_KEY));
+    const savedPieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
+    const savedSoundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
 
-  const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
-  const bloodFxEnabled = bloodFxRaw === "on";
+    const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
+    const bloodFxEnabled = bloodFxRaw === "on";
 
-  // NEW: Read legal moves state (defaults to true if not set)
-  const legalMovesRaw = localStorage.getItem(LEGAL_MOVES_STORAGE_KEY);
-  const legalMovesEnabled = legalMovesRaw !== "off";
+    const legalMovesRaw = localStorage.getItem(LEGAL_MOVES_STORAGE_KEY);
+    const legalMovesEnabled = legalMovesRaw !== "off";
 
-  const collapsedRaw = localStorage.getItem(THEME_PANEL_COLLAPSED_KEY);
-  const defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
-  const initialCollapsed = collapsedRaw === null ? defaultCollapsed : collapsedRaw === "1";
+    const collapsedRaw = localStorage.getItem(THEME_PANEL_COLLAPSED_KEY);
+    const defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
+    const initialCollapsed = collapsedRaw === null ? defaultCollapsed : collapsedRaw === "1";
 
-  setTheme(savedTheme);
+    setUiTheme(savedUiTheme);
+    setBoardTheme(savedBoardTheme);
 
-  const widget = document.createElement("div");
-  widget.className = "theme-switcher";
-  widget.setAttribute("role", "group");
-  widget.setAttribute("aria-label", "Theme, piece, sound and animation options");
+    const widget = document.createElement("div");
+    widget.className = "theme-switcher";
+    widget.setAttribute("role", "group");
+    widget.setAttribute("aria-label", "Interface, board, piece, sound and animation options");
 
-  // NEW: Added the "Watch Legal Moves" row
-  widget.innerHTML = `
+    widget.innerHTML = `
     <button class="theme-toggle-btn" type="button" aria-label="Toggle theme selector" aria-expanded="true">▶</button>
     <div class="theme-switcher-content">
       <div class="theme-switcher-row">
-        <span class="theme-switcher-label">Theme</span>
-        <div class="theme-switcher-options">
-          <button class="theme-btn" data-theme="forest" title="Classic Forest" aria-label="Classic Forest theme"></button>
-          <button class="theme-btn" data-theme="purple" title="Cosmic Purple" aria-label="Cosmic Purple theme"></button>
-          <button class="theme-btn" data-theme="walnut" title="Walnut & Cream" aria-label="Walnut & Cream theme"></button>
-          <button class="theme-btn" data-theme="refined" title="Refined" aria-label="Refined theme"></button>
-          <button class="theme-btn" data-theme="base" title="Base" aria-label="Base wood theme"></button>
-          <button class="theme-btn" data-theme="slate" title="Soft Slate" aria-label="Soft Slate theme"></button>
-          <button class="theme-btn" data-theme="crimson" title="Rosewood Light" aria-label="Rosewood Light theme"></button>
+        <span class="theme-switcher-label">Interface Theme</span>
+        <div class="theme-switcher-options" role="radiogroup" aria-label="Interface theme">
+          <button class="theme-btn ui-theme-btn" data-ui-theme="purple" title="Cosmic Purple" role="radio" aria-label="Cosmic Purple interface"></button>
+          <button class="theme-btn ui-theme-btn" data-ui-theme="slate" title="Soft Slate" role="radio" aria-label="Soft Slate interface"></button>
+          <button class="theme-btn ui-theme-btn" data-ui-theme="walnut" title="Walnut and Cream" role="radio" aria-label="Walnut and Cream interface"></button>
+        </div>
+      </div>
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Board Style</span>
+        <div class="theme-switcher-options board-theme-options" role="radiogroup" aria-label="Board theme">
+          <button class="theme-btn board-theme-btn" data-board-theme="walnut" title="Walnut board" role="radio" aria-label="Walnut board"></button>
+          <button class="theme-btn board-theme-btn" data-board-theme="purple" title="Cosmic Purple board" role="radio" aria-label="Cosmic Purple board"></button>
+          <button class="theme-btn board-theme-btn" data-board-theme="slate" title="Soft Slate board" role="radio" aria-label="Soft Slate board"></button>
+          <button class="theme-btn board-theme-btn" data-board-theme="crimson" title="Red Light board" role="radio" aria-label="Red Light board"></button>
+          <button class="theme-btn board-theme-btn" data-board-theme="forest" title="Classic Forest board" role="radio" aria-label="Classic Forest board"></button>
+          <button class="theme-btn board-theme-btn" data-board-theme="base" title="Base Amber board" role="radio" aria-label="Base Amber board"></button>
+          <button class="theme-btn board-theme-btn" data-board-theme="refined" title="Refined Blue board" role="radio" aria-label="Refined Blue board"></button>
         </div>
       </div>
       <div class="theme-switcher-row">
@@ -201,77 +256,100 @@ export function mountThemeSwitcher(): void {
     </div>
   `;
 
-  document.body.appendChild(widget);
+    document.body.appendChild(widget);
 
-  const toggleButton = widget.querySelector<HTMLButtonElement>(".theme-toggle-btn");
-  if (!toggleButton) return;
+    const toggleButton = widget.querySelector<HTMLButtonElement>(".theme-toggle-btn");
+    if (!toggleButton) return;
 
-  setPanelCollapsed(widget, toggleButton, initialCollapsed);
+    setPanelCollapsed(widget, toggleButton, initialCollapsed);
 
-  widget.addEventListener("click", (e) => {
-    const toggle = (e.target as Element).closest<HTMLButtonElement>(".theme-toggle-btn");
-    if (toggle) {
-      const collapsed = !widget.classList.contains("is-collapsed");
-      setPanelCollapsed(widget, toggleButton, collapsed);
-      return;
-    }
+    widget.addEventListener("click", (e) => {
+        const toggle = (e.target as Element).closest<HTMLButtonElement>(".theme-toggle-btn");
+        if (toggle) {
+            const collapsed = !widget.classList.contains("is-collapsed");
+            setPanelCollapsed(widget, toggleButton, collapsed);
+            return;
+        }
 
-    const btn = (e.target as Element).closest<HTMLButtonElement>(".theme-btn");
-    if (btn?.dataset.theme) setTheme(btn.dataset.theme as Theme);
+        const uiThemeBtn = (e.target as Element).closest<HTMLButtonElement>(".ui-theme-btn");
+        if (uiThemeBtn?.dataset.uiTheme) {
+            setUiTheme(uiThemeBtn.dataset.uiTheme as UiTheme);
+            return;
+        }
 
-    const pieceThemeBtn = (e.target as Element).closest<HTMLButtonElement>(".piece-theme-btn");
-    if (pieceThemeBtn?.dataset.pieceTheme) {
-      setPieceTheme(normalizePieceTheme(pieceThemeBtn.dataset.pieceTheme));
-      return;
-    }
+        const boardThemeBtn = (e.target as Element).closest<HTMLButtonElement>(".board-theme-btn");
+        if (boardThemeBtn?.dataset.boardTheme) {
+            setBoardTheme(boardThemeBtn.dataset.boardTheme as BoardTheme);
+            return;
+        }
 
-    const soundThemeBtn = (e.target as Element).closest<HTMLButtonElement>(".sound-theme-btn");
-    if (soundThemeBtn?.dataset.soundTheme) {
-      setSoundTheme(normalizeSoundTheme(soundThemeBtn.dataset.soundTheme));
-      return;
-    }
+        const pieceThemeBtn = (e.target as Element).closest<HTMLButtonElement>(".piece-theme-btn");
+        if (pieceThemeBtn?.dataset.pieceTheme) {
+            setPieceTheme(normalizePieceTheme(pieceThemeBtn.dataset.pieceTheme));
+            return;
+        }
 
-    const animBtn = (e.target as Element).closest<HTMLButtonElement>(".animation-btn");
-    if (animBtn?.dataset.animation) setAnimationStyle(animBtn.dataset.animation as AnimationStyle);
+        const soundThemeBtn = (e.target as Element).closest<HTMLButtonElement>(".sound-theme-btn");
+        if (soundThemeBtn?.dataset.soundTheme) {
+            setSoundTheme(normalizeSoundTheme(soundThemeBtn.dataset.soundTheme));
+            return;
+        }
 
-    // Differentiate between Blood FX and Legal Moves buttons
-    const targetEl = e.target as Element;
-    if (targetEl.closest(".legal-btn")) {
-      const legalBtn = targetEl.closest<HTMLButtonElement>(".legal-btn");
-      if (legalBtn?.dataset.legal) setLegalMovesEnabled(legalBtn.dataset.legal === "on");
-    } else if (targetEl.closest(".fx-btn")) {
-      const fxBtn = targetEl.closest<HTMLButtonElement>(".fx-btn");
-      if (fxBtn?.dataset.bloodfx) setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
-    }
-  });
+        const animBtn = (e.target as Element).closest<HTMLButtonElement>(".animation-btn");
+        if (animBtn?.dataset.animation) {
+            setAnimationStyle(animBtn.dataset.animation as AnimationStyle);
+            return;
+        }
 
-  document.querySelectorAll<HTMLElement>(".animation-btn[data-animation]").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.animation === savedAnimationStyle);
-    btn.setAttribute("aria-checked", String(btn.dataset.animation === savedAnimationStyle));
-  });
+        const targetEl = e.target as Element;
+        if (targetEl.closest(".legal-btn")) {
+            const legalBtn = targetEl.closest<HTMLButtonElement>(".legal-btn");
+            if (legalBtn?.dataset.legal) setLegalMovesEnabled(legalBtn.dataset.legal === "on");
+        } else if (targetEl.closest(".fx-btn")) {
+            const fxBtn = targetEl.closest<HTMLButtonElement>(".fx-btn");
+            if (fxBtn?.dataset.bloodfx) setBloodFxEnabled(fxBtn.dataset.bloodfx === "on");
+        }
+    });
 
-  document.querySelectorAll<HTMLElement>(".piece-theme-btn").forEach((btn) => {
-    const isActive = btn.dataset.pieceTheme === savedPieceTheme;
-    btn.classList.toggle("active", isActive);
-    btn.setAttribute("aria-checked", String(isActive));
-  });
+    document.querySelectorAll<HTMLElement>(".ui-theme-btn").forEach((btn) => {
+        const isActive = btn.dataset.uiTheme === savedUiTheme;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-checked", String(isActive));
+    });
 
-  document.querySelectorAll<HTMLElement>(".sound-theme-btn").forEach((btn) => {
-    const isActive = btn.dataset.soundTheme === savedSoundTheme;
-    btn.classList.toggle("active", isActive);
-    btn.setAttribute("aria-checked", String(isActive));
-  });
+    document.querySelectorAll<HTMLElement>(".board-theme-btn").forEach((btn) => {
+        const isActive = btn.dataset.boardTheme === savedBoardTheme;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-checked", String(isActive));
+    });
 
-  document.querySelectorAll<HTMLElement>(".fx-btn:not(.legal-btn)").forEach((btn) => {
-    const isActive = (btn.dataset.bloodfx === "on") === bloodFxEnabled;
-    btn.classList.toggle("active", isActive);
-    btn.setAttribute("aria-checked", String(isActive));
-  });
+    document.querySelectorAll<HTMLElement>(".animation-btn[data-animation]").forEach((btn) => {
+        const isActive = btn.dataset.animation === savedAnimationStyle;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-checked", String(isActive));
+    });
 
-  // NEW: Initialize Legal Moves buttons
-  document.querySelectorAll<HTMLElement>(".legal-btn").forEach((btn) => {
-    const isActive = (btn.dataset.legal === "on") === legalMovesEnabled;
-    btn.classList.toggle("active", isActive);
-    btn.setAttribute("aria-checked", String(isActive));
-  });
+    document.querySelectorAll<HTMLElement>(".piece-theme-btn").forEach((btn) => {
+        const isActive = btn.dataset.pieceTheme === savedPieceTheme;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-checked", String(isActive));
+    });
+
+    document.querySelectorAll<HTMLElement>(".sound-theme-btn").forEach((btn) => {
+        const isActive = btn.dataset.soundTheme === savedSoundTheme;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-checked", String(isActive));
+    });
+
+    document.querySelectorAll<HTMLElement>(".fx-btn:not(.legal-btn)").forEach((btn) => {
+        const isActive = (btn.dataset.bloodfx === "on") === bloodFxEnabled;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-checked", String(isActive));
+    });
+
+    document.querySelectorAll<HTMLElement>(".legal-btn").forEach((btn) => {
+        const isActive = (btn.dataset.legal === "on") === legalMovesEnabled;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-checked", String(isActive));
+    });
 }
