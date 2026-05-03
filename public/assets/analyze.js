@@ -4356,12 +4356,17 @@ var require_analyze = __commonJS({
     init_theme();
     init_interaction_utils();
     var CATEGORY_LABELS = MOVE_BADGE_LABELS;
-    var SUMMARY_CATEGORY_SYMBOLS = {
-      excellent: "\u2605",
-      great: "!",
-      brilliant: "B",
-      blunder: "??"
-    };
+    var SUMMARY_CATEGORY_ORDER = [
+      "brilliant",
+      "great",
+      "bestmove",
+      "excellent",
+      "good",
+      "inaccuracy",
+      "mistake",
+      "blunder",
+      "forced"
+    ];
     var PIECE_VALUES = {
       p: 100,
       n: 320,
@@ -4857,7 +4862,7 @@ var require_analyze = __commonJS({
         showToast("Invalid FEN \u2014 position was not changed.");
       }
     });
-    bestMovesToggleButton.addEventListener("click", () => {
+    function toggleBestMoves() {
       bestMovesEnabled = !bestMovesEnabled;
       localStorage.setItem("chess-analyze-best-moves", bestMovesEnabled ? "on" : "off");
       if (!bestMovesEnabled) {
@@ -4866,6 +4871,9 @@ var require_analyze = __commonJS({
       updateBestMovesToggleButton();
       void maybeUpdateLiveBestMoveArrow(true);
       renderArrows();
+    }
+    bestMovesToggleButton.addEventListener("click", () => {
+      toggleBestMoves();
     });
     returnGameLineButton.addEventListener("click", () => {
       returnToGameLine();
@@ -4898,6 +4906,15 @@ var require_analyze = __commonJS({
         }
         event.preventDefault();
         goTo(cursor + 1);
+      } else if (event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        toggleBestMoves();
+      } else if (event.key.toLowerCase() === "r") {
+        if (returnGameLineButton.disabled) {
+          return;
+        }
+        event.preventDefault();
+        returnToGameLine();
       } else if (event.key.toLowerCase() === "z") {
         event.preventDefault();
         void toggleFocusMode();
@@ -5487,20 +5504,19 @@ var require_analyze = __commonJS({
     }
     function showAnalysisSummaryOverlay(summary) {
       analysisSummaryAcknowledged = false;
-      const metrics = [
-        { key: "excellent", label: "Excellent", value: summary.totals.excellent },
-        { key: "great", label: "Great", value: summary.totals.great },
-        { key: "brilliant", label: "Brilliant", value: summary.totals.brilliant },
-        { key: "blunder", label: "Blunder", value: summary.totals.blunder }
-      ].filter((metric) => metric.value > 0);
+      const metrics = SUMMARY_CATEGORY_ORDER.map((key) => ({
+        key,
+        label: CATEGORY_LABELS[key],
+        value: summary.totals[key],
+        iconPath: MOVE_BADGE_ICON_PATHS[key]
+      })).filter((metric) => metric.value > 0);
       if (metrics.length === 0) {
-        analysisSummaryCounts.innerHTML = '<p class="analysis-summary-empty">No excellent, great, brilliant, or blunder moves in this game.</p>';
+        analysisSummaryCounts.innerHTML = '<p class="analysis-summary-empty">No move-quality marks in this game.</p>';
       } else {
         analysisSummaryCounts.innerHTML = metrics.map((metric) => `
       <article class="analysis-summary-metric metric-${metric.key}" aria-label="${metric.label} moves: ${metric.value}">
-        <span class="metric-symbol">${SUMMARY_CATEGORY_SYMBOLS[metric.key]}</span>
+        <img class="metric-icon" src="${metric.iconPath}" alt="" aria-hidden="true" draggable="false">
         <span class="metric-count">${metric.value}</span>
-        <span class="metric-label">${metric.label}</span>
       </article>
     `).join("");
       }
@@ -6367,11 +6383,17 @@ var require_analyze = __commonJS({
       }
       const whiteMoves = all.filter((move) => move.ply % 2 !== 0);
       const blackMoves = all.filter((move) => move.ply % 2 === 0);
+      const buildCategoryCounts = (moves) => {
+        const counts = Object.fromEntries(
+          SUMMARY_CATEGORY_ORDER.map((category) => [category, 0])
+        );
+        for (const move of moves) {
+          counts[move.category] += 1;
+        }
+        return counts;
+      };
       const summarizeSide = (moves, name) => {
-        const excellent = moves.filter((move) => move.category === "excellent").length;
-        const great = moves.filter((move) => move.category === "great").length;
-        const brilliant = moves.filter((move) => move.category === "brilliant").length;
-        const blunder = moves.filter((move) => move.category === "blunder").length;
+        const categoryCounts = buildCategoryCounts(moves);
         const averageCpl = moves.length > 0 ? Math.round(moves.reduce((sum, move) => sum + move.cpl, 0) / moves.length) : 0;
         const accuracy = calculateAccuracy(moves);
         return {
@@ -6380,26 +6402,31 @@ var require_analyze = __commonJS({
           accuracy,
           averageCpl,
           estimatedElo: estimatePlayerElo({ accuracy, averageCpl, moves }),
-          categoryCounts: {
-            excellent,
-            great,
-            brilliant,
-            blunder
-          }
+          categoryCounts
         };
       };
       const white = summarizeSide(whiteMoves, analyzedWhiteName);
       const black = summarizeSide(blackMoves, analyzedBlackName);
+      const totals = Object.fromEntries(
+        SUMMARY_CATEGORY_ORDER.map((category) => [
+          category,
+          white.categoryCounts[category] + black.categoryCounts[category]
+        ])
+      );
       return {
         white,
         black,
-        totals: {
-          excellent: white.categoryCounts.excellent + black.categoryCounts.excellent,
-          great: white.categoryCounts.great + black.categoryCounts.great,
-          brilliant: white.categoryCounts.brilliant + black.categoryCounts.brilliant,
-          blunder: white.categoryCounts.blunder + black.categoryCounts.blunder
-        }
+        totals
       };
+    }
+    function renderSummaryMetricStrip(totals) {
+      const metrics = SUMMARY_CATEGORY_ORDER.filter((category) => totals[category] > 0).map((category) => `
+      <span class="analysis-summary-strip-item metric-${category}" title="${CATEGORY_LABELS[category]}" aria-label="${CATEGORY_LABELS[category]} moves: ${totals[category]}">
+        <img class="analysis-summary-strip-icon" src="${MOVE_BADGE_ICON_PATHS[category]}" alt="" aria-hidden="true" draggable="false">
+        <strong>${totals[category]}</strong>
+      </span>
+    `);
+      return metrics.length > 0 ? `<div class="analysis-summary-strip">${metrics.join("")}</div>` : "";
     }
     function renderEngineFeedback() {
       stopAnalyzeBtn.hidden = !fullAnalysisInProgress;
@@ -6435,7 +6462,7 @@ var require_analyze = __commonJS({
           <div style="font-size: 0.8rem; color: var(--muted); text-transform: uppercase;">Black Accuracy</div>
         </div>
       </div>
-      <p class="engine-inline">Excellent: <strong>${summary.totals.excellent}</strong> \xB7 Great: <strong>${summary.totals.great}</strong> \xB7 Brilliant: <strong>${summary.totals.brilliant}</strong> \xB7 Blunders: <strong>${summary.totals.blunder}</strong></p>
+      ${renderSummaryMetricStrip(summary.totals)}
       <p class="engine-inline" style="margin-top: 10px;">Select a move in the list to see detailed feedback.</p>
     `;
         return;

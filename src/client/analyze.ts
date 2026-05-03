@@ -27,6 +27,7 @@ import { createSoundEffectsPlayer } from "./audio/sound-effects-player";
 import { resolveGameParticipants, resolveGameParticipantsFromPgn } from "./game-display";
 import {
   MOVE_BADGE_LABELS,
+  MOVE_BADGE_ICON_PATHS,
   appendMoveBadgeMarkerContent,
   renderMoveBadgeHtml,
   type MoveBadgeCategory,
@@ -67,33 +68,28 @@ type PlayerAnalysisSummary = {
   accuracy: number;
   averageCpl: number;
   estimatedElo: number;
-  categoryCounts: {
-    excellent: number;
-    great: number;
-    brilliant: number;
-    blunder: number;
-  };
+  categoryCounts: Record<MoveBadgeCategory, number>;
 };
 
 type GameAnalysisSummary = {
   white: PlayerAnalysisSummary;
   black: PlayerAnalysisSummary;
-  totals: {
-    excellent: number;
-    great: number;
-    brilliant: number;
-    blunder: number;
-  };
+  totals: Record<MoveBadgeCategory, number>;
 };
 
 const CATEGORY_LABELS = MOVE_BADGE_LABELS;
 
-const SUMMARY_CATEGORY_SYMBOLS = {
-  excellent: "★",
-  great: "!",
-  brilliant: "B",
-  blunder: "??",
-} as const;
+const SUMMARY_CATEGORY_ORDER: MoveBadgeCategory[] = [
+  "brilliant",
+  "great",
+  "bestmove",
+  "excellent",
+  "good",
+  "inaccuracy",
+  "mistake",
+  "blunder",
+  "forced",
+];
 
 const PIECE_VALUES: Record<string, number> = {
   p: 100,
@@ -667,7 +663,7 @@ q<HTMLButtonElement>("#loadFenBtn").addEventListener("click", () => {
   }
 });
 
-bestMovesToggleButton.addEventListener("click", () => {
+function toggleBestMoves(): void {
   bestMovesEnabled = !bestMovesEnabled;
   localStorage.setItem("chess-analyze-best-moves", bestMovesEnabled ? "on" : "off");
 
@@ -678,6 +674,10 @@ bestMovesToggleButton.addEventListener("click", () => {
   updateBestMovesToggleButton();
   void maybeUpdateLiveBestMoveArrow(true);
   renderArrows();
+}
+
+bestMovesToggleButton.addEventListener("click", () => {
+  toggleBestMoves();
 });
 
 returnGameLineButton.addEventListener("click", () => {
@@ -716,6 +716,15 @@ window.addEventListener("keydown", (event) => {
     }
     event.preventDefault();
     goTo(cursor + 1);
+  } else if (event.key.toLowerCase() === "b") {
+    event.preventDefault();
+    toggleBestMoves();
+  } else if (event.key.toLowerCase() === "r") {
+    if (returnGameLineButton.disabled) {
+      return;
+    }
+    event.preventDefault();
+    returnToGameLine();
   } else if (event.key.toLowerCase() === "z") {
     event.preventDefault();
     void toggleFocusMode();
@@ -1458,21 +1467,22 @@ function hideAnalysisSummaryOverlay(acknowledged = false): void {
 function showAnalysisSummaryOverlay(summary: GameAnalysisSummary): void {
   analysisSummaryAcknowledged = false;
 
-  const metrics = [
-    { key: "excellent", label: "Excellent", value: summary.totals.excellent },
-    { key: "great", label: "Great", value: summary.totals.great },
-    { key: "brilliant", label: "Brilliant", value: summary.totals.brilliant },
-    { key: "blunder", label: "Blunder", value: summary.totals.blunder },
-  ].filter((metric) => metric.value > 0);
+  const metrics = SUMMARY_CATEGORY_ORDER
+    .map((key) => ({
+      key,
+      label: CATEGORY_LABELS[key],
+      value: summary.totals[key],
+      iconPath: MOVE_BADGE_ICON_PATHS[key],
+    }))
+    .filter((metric) => metric.value > 0);
 
   if (metrics.length === 0) {
-    analysisSummaryCounts.innerHTML = '<p class="analysis-summary-empty">No excellent, great, brilliant, or blunder moves in this game.</p>';
+    analysisSummaryCounts.innerHTML = '<p class="analysis-summary-empty">No move-quality marks in this game.</p>';
   } else {
     analysisSummaryCounts.innerHTML = metrics.map((metric) => `
       <article class="analysis-summary-metric metric-${metric.key}" aria-label="${metric.label} moves: ${metric.value}">
-        <span class="metric-symbol">${SUMMARY_CATEGORY_SYMBOLS[metric.key as keyof typeof SUMMARY_CATEGORY_SYMBOLS]}</span>
+        <img class="metric-icon" src="${metric.iconPath}" alt="" aria-hidden="true" draggable="false">
         <span class="metric-count">${metric.value}</span>
-        <span class="metric-label">${metric.label}</span>
       </article>
     `).join("");
   }
@@ -2574,12 +2584,20 @@ function buildGameAnalysisSummary(): GameAnalysisSummary | null {
 
   const whiteMoves = all.filter((move) => move.ply % 2 !== 0);
   const blackMoves = all.filter((move) => move.ply % 2 === 0);
+  const buildCategoryCounts = (moves: MoveAnalysis[]): Record<MoveBadgeCategory, number> => {
+    const counts = Object.fromEntries(
+      SUMMARY_CATEGORY_ORDER.map((category) => [category, 0]),
+    ) as Record<MoveBadgeCategory, number>;
+
+    for (const move of moves) {
+      counts[move.category] += 1;
+    }
+
+    return counts;
+  };
 
   const summarizeSide = (moves: MoveAnalysis[], name: string): PlayerAnalysisSummary => {
-    const excellent = moves.filter((move) => move.category === "excellent").length;
-    const great = moves.filter((move) => move.category === "great").length;
-    const brilliant = moves.filter((move) => move.category === "brilliant").length;
-    const blunder = moves.filter((move) => move.category === "blunder").length;
+    const categoryCounts = buildCategoryCounts(moves);
     const averageCpl = moves.length > 0
       ? Math.round(moves.reduce((sum, move) => sum + move.cpl, 0) / moves.length)
       : 0;
@@ -2591,28 +2609,39 @@ function buildGameAnalysisSummary(): GameAnalysisSummary | null {
       accuracy,
       averageCpl,
       estimatedElo: estimatePlayerElo({ accuracy, averageCpl, moves }),
-      categoryCounts: {
-        excellent,
-        great,
-        brilliant,
-        blunder,
-      },
+      categoryCounts,
     };
   };
 
   const white = summarizeSide(whiteMoves, analyzedWhiteName);
   const black = summarizeSide(blackMoves, analyzedBlackName);
+  const totals = Object.fromEntries(
+    SUMMARY_CATEGORY_ORDER.map((category) => [
+      category,
+      white.categoryCounts[category] + black.categoryCounts[category],
+    ]),
+  ) as Record<MoveBadgeCategory, number>;
 
   return {
     white,
     black,
-    totals: {
-      excellent: white.categoryCounts.excellent + black.categoryCounts.excellent,
-      great: white.categoryCounts.great + black.categoryCounts.great,
-      brilliant: white.categoryCounts.brilliant + black.categoryCounts.brilliant,
-      blunder: white.categoryCounts.blunder + black.categoryCounts.blunder,
-    },
+    totals,
   };
+}
+
+function renderSummaryMetricStrip(totals: Record<MoveBadgeCategory, number>): string {
+  const metrics = SUMMARY_CATEGORY_ORDER
+    .filter((category) => totals[category] > 0)
+    .map((category) => `
+      <span class="analysis-summary-strip-item metric-${category}" title="${CATEGORY_LABELS[category]}" aria-label="${CATEGORY_LABELS[category]} moves: ${totals[category]}">
+        <img class="analysis-summary-strip-icon" src="${MOVE_BADGE_ICON_PATHS[category]}" alt="" aria-hidden="true" draggable="false">
+        <strong>${totals[category]}</strong>
+      </span>
+    `);
+
+  return metrics.length > 0
+    ? `<div class="analysis-summary-strip">${metrics.join("")}</div>`
+    : "";
 }
 
 function renderEngineFeedback(): void {
@@ -2655,7 +2684,7 @@ function renderEngineFeedback(): void {
           <div style="font-size: 0.8rem; color: var(--muted); text-transform: uppercase;">Black Accuracy</div>
         </div>
       </div>
-      <p class="engine-inline">Excellent: <strong>${summary.totals.excellent}</strong> · Great: <strong>${summary.totals.great}</strong> · Brilliant: <strong>${summary.totals.brilliant}</strong> · Blunders: <strong>${summary.totals.blunder}</strong></p>
+      ${renderSummaryMetricStrip(summary.totals)}
       <p class="engine-inline" style="margin-top: 10px;">Select a move in the list to see detailed feedback.</p>
     `;
     return;
