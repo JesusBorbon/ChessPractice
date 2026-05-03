@@ -1958,6 +1958,20 @@ function cancelPremovesFromTouch(): void {
   updateCaption();
 }
 
+function shouldCancelPremovesFromTouch(event: PointerEvent): boolean {
+  const square = getSquareFromPoint(event.clientX, event.clientY);
+
+  if (!square) {
+    return true;
+  }
+
+  if (state.selectedSquare) {
+    return false;
+  }
+
+  return !canStartMoveFrom(square);
+}
+
 board.addEventListener("pointerdown", (event) => {
 
   if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
@@ -1973,6 +1987,7 @@ board.addEventListener("pointerdown", (event) => {
     && state.role
     && state.role !== "spectator"
     && promotionDialog.hidden
+    && shouldCancelPremovesFromTouch(event)
   ) {
     cancelPremovesFromTouch();
     premoveCancelPointerId = event.pointerId;

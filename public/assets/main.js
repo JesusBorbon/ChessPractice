@@ -35521,13 +35521,23 @@ var require_main_runtime = __commonJS({
       requestBoardRefresh(true);
       updateCaption();
     }
+    function shouldCancelPremovesFromTouch(event) {
+      const square = getSquareFromPoint(event.clientX, event.clientY);
+      if (!square) {
+        return true;
+      }
+      if (state.selectedSquare) {
+        return false;
+      }
+      return !canStartMoveFrom(square);
+    }
     board.addEventListener("pointerdown", (event) => {
       if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
         clearArrows();
       }
       const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
       if (gameEnded) return;
-      if (event.button === 0 && event.pointerType !== "mouse" && state.premoves.length > 0 && state.role && state.role !== "spectator" && promotionDialog.hidden) {
+      if (event.button === 0 && event.pointerType !== "mouse" && state.premoves.length > 0 && state.role && state.role !== "spectator" && promotionDialog.hidden && shouldCancelPremovesFromTouch(event)) {
         cancelPremovesFromTouch();
         premoveCancelPointerId = event.pointerId;
         lastPremoveTouchCancelAtMs = performance.now();
