@@ -2324,6 +2324,14 @@ function syncBotClockToNow(now = Date.now()): void {
     return;
   }
 
+  // Do not decrement White's clock before they make their first move.
+  if (state.snapshot.moveCount === 0) {
+    clock.serverNowMs = now;
+
+    // In local bot mode, wait until first move to start actual decrements
+    return;
+  }
+
   if (clock.active === "w") {
     clock.whiteMs = Math.max(0, clock.whiteMs - elapsed);
     if (clock.whiteMs === 0) {

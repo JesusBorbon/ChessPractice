@@ -105,7 +105,7 @@ type RoomSnapshot = {
   moveCount: number;
   moves: MoveSummary[];
   lastMove: MoveSummary | null;
-  
+
   players: {
     whiteConnected: boolean;
     blackConnected: boolean;
@@ -157,7 +157,7 @@ type GameRoom = {
   ownerId?: string;
   ownerDisconnectedAt?: number;
   spectators: Set<string>;
-  winner?: PlayerRole | null;      
+  winner?: PlayerRole | null;
   statusOverride?: string;
   whiteDisconnectedAt?: number;
   blackDisconnectedAt?: number;
@@ -687,8 +687,8 @@ function deserializeRoomState(record: PersistedRoomState): GameRoom | null {
     record.ownerUserId && record.ownerUserId === record.whiteUserId
       ? whiteSeatId
       : record.ownerUserId && record.ownerUserId === record.blackUserId
-      ? blackSeatId
-      : undefined;
+        ? blackSeatId
+        : undefined;
   const now = Date.now();
 
   const room: GameRoom = {
@@ -1388,6 +1388,11 @@ function syncActiveClock(room: GameRoom, now = Date.now()): void {
     return;
   }
 
+  // Do not decrement White's clock before they make their first move.
+  if (room.chess.history().length === 0) {
+    return;
+  }
+
   if (room.clockActive === "w") {
     room.clockWhiteMs = Math.max(0, room.clockWhiteMs - elapsed);
     if (room.clockWhiteMs === 0) {
@@ -1500,7 +1505,7 @@ function buildSnapshot(room: GameRoom): RoomSnapshot {
     : room.pendingUndoRequester === room.black
       ? "b"
       : null;
-  
+
   let { status, winner } = buildStatus(room.chess);
 
   if (room.winner) {
@@ -1508,9 +1513,9 @@ function buildSnapshot(room: GameRoom): RoomSnapshot {
     status = room.statusOverride || status;
   }
 
-return {
+  return {
     roomId: room.id,
-  ownerId: room.ownerId ?? null,
+    ownerId: room.ownerId ?? null,
     fen: room.chess.fen(),
     turn: room.chess.turn(),
     status,
@@ -3099,11 +3104,11 @@ io.on("connection", (socket) => {
     const joinAuthorization = enforceSpectatorOnly
       ? null
       : evaluateRoomJoinAuthorization({
-          access: room.access,
-          userId: requesterUserId,
-          inviteToken: joinInviteToken,
-          isAlreadyMember,
-        });
+        access: room.access,
+        userId: requesterUserId,
+        inviteToken: joinInviteToken,
+        isAlreadyMember,
+      });
     roomTrace("join-auth", {
       roomId,
       socketId: socket.id,
@@ -3133,7 +3138,7 @@ io.on("connection", (socket) => {
     removeFromRoom(socket.id, true);
 
     socket.join(roomId);
-    
+
     // Intentar reconectarse si está dentro del grace period y con la misma identidad.
     let role: RoomRole = "spectator";
     if (enforceSpectatorOnly) {
@@ -3509,7 +3514,7 @@ io.on("connection", (socket) => {
         clientState.role = liveRole;
       }
 
-   if (room.chess.isGameOver()) {
+      if (room.chess.isGameOver()) {
         socket.emit("room:error", { message: "This game is already finished. Start a rematch." });
         return;
       }
@@ -3586,7 +3591,7 @@ io.on("connection", (socket) => {
     room.statusOverride = `${role === "w" ? "White" : "Black"} resigned.`;
     room.clockRunning = false;
     room.clockActive = null;
-    
+
     emitRoomState(room);
   });
 
@@ -3811,7 +3816,7 @@ io.on("connection", (socket) => {
     emitRoomState(room);
   });
 
-socket.on("game:rematch", () => {
+  socket.on("game:rematch", () => {
     const clientState = socket.data as ClientState;
     const roomId = clientState.roomId;
     const role = clientState.role;
@@ -3835,8 +3840,8 @@ socket.on("game:rematch", () => {
     room.rematchVotes.add(socket.id);
     const players = getActivePlayerSockets(room);
 
-    
-   if (players.length === 2 && players.every((playerId) => room.rematchVotes.has(playerId))) {
+
+    if (players.length === 2 && players.every((playerId) => room.rematchVotes.has(playerId))) {
       room.chess.reset();
       room.isStarted = true;
       room.rematchVotes.clear();
@@ -3853,7 +3858,7 @@ socket.on("game:rematch", () => {
       startClock(room);
     }
 
-    emitRoomState(room); 
+    emitRoomState(room);
   });
 
   socket.on("disconnect", () => {

@@ -15,7 +15,8 @@ export function formatClockMs(ms: number): string {
 
 export function getDisplayClockMs(snapshot: RoomSnapshot, color: PlayerRole, context: ClockRenderContext): number {
   const baseMs = color === "w" ? snapshot.clock.whiteMs : snapshot.clock.blackMs;
-  if (!snapshot.clock.running || snapshot.clock.active !== color) {
+
+  if (!snapshot.clock.running || snapshot.clock.active !== color || snapshot.moveCount === 0) {
     return baseMs;
   }
 

@@ -33903,7 +33903,7 @@ function formatClockMs(ms) {
 }
 function getDisplayClockMs(snapshot, color, context) {
   const baseMs = color === "w" ? snapshot.clock.whiteMs : snapshot.clock.blackMs;
-  if (!snapshot.clock.running || snapshot.clock.active !== color) {
+  if (!snapshot.clock.running || snapshot.clock.active !== color || snapshot.moveCount === 0) {
     return baseMs;
   }
   const referenceNowMs = context.mode === "bot" ? snapshot.clock.serverNowMs : context.lastRoomStateReceivedAtMs;
@@ -35806,6 +35806,10 @@ var require_main_runtime = __commonJS({
       }
       const elapsed = Math.max(0, now - clock.serverNowMs);
       if (elapsed <= 0) {
+        return;
+      }
+      if (state.snapshot.moveCount === 0) {
+        clock.serverNowMs = now;
         return;
       }
       if (clock.active === "w") {
