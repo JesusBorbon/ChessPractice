@@ -35627,22 +35627,41 @@ var require_main_runtime = __commonJS({
         if (btn && virtualPiece) {
           const spritePath = getPieceSpritePath(virtualPiece.color, virtualPiece.type);
           const useEpicDrag = document.documentElement.dataset.dragEffect === "epic";
-          ptrDragNode = document.createElement("img");
-          ptrDragNode.src = spritePath;
-          Object.assign(ptrDragNode.style, {
-            position: "fixed",
-            pointerEvents: "none",
-            zIndex: "12000",
-            width: `${btn.offsetWidth}px`,
-            height: `${btn.offsetHeight}px`,
-            transform: useEpicDrag ? "none" : "translate(-50%, -50%)",
-            opacity: "1"
-          });
+          if (useEpicDrag) {
+            const wrapper = document.createElement("div");
+            wrapper.classList.add("drag-epic-active");
+            wrapper.style.setProperty("--drag-epic-translate", "translate(-50%, -50%)");
+            Object.assign(wrapper.style, {
+              position: "fixed",
+              pointerEvents: "none",
+              zIndex: "12000",
+              width: `${btn.offsetWidth}px`,
+              height: `${btn.offsetHeight}px`,
+              opacity: "1"
+            });
+            const img = document.createElement("img");
+            img.src = spritePath;
+            img.alt = "";
+            img.draggable = false;
+            wrapper.append(img);
+            ptrDragNode = wrapper;
+          } else {
+            const img = document.createElement("img");
+            img.src = spritePath;
+            Object.assign(img.style, {
+              position: "fixed",
+              pointerEvents: "none",
+              zIndex: "12000",
+              width: `${btn.offsetWidth}px`,
+              height: `${btn.offsetHeight}px`,
+              transform: "translate(-50%, -50%)",
+              opacity: "1"
+            });
+            ptrDragNode = img;
+          }
           document.body.append(ptrDragNode);
           btn.classList.add("dragging");
           if (useEpicDrag) {
-            ptrDragNode.classList.add("drag-epic-active");
-            ptrDragNode.style.setProperty("--drag-epic-translate", "translate(-50%, -50%)");
             btn.classList.add("dragging-epic");
           }
         }

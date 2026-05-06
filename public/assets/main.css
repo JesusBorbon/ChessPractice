@@ -2018,6 +2018,12 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   animation: drag-epic-ring 1050ms ease-in-out infinite;
   pointer-events: none;
 }
+.drag-epic-active img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
 .square.dragging-epic {
   box-shadow: inset 0 0 0 2px rgba(110, 210, 255, 0.7);
 }
