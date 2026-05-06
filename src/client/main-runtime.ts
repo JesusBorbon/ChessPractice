@@ -2060,6 +2060,7 @@ board.addEventListener("pointermove", (event) => {
     const btn = board.querySelector<HTMLButtonElement>(`[data-square="${ptrDragFrom}"]`);
     if (btn && virtualPiece) {
       const spritePath = getPieceSpritePath(virtualPiece.color as PlayerRole, virtualPiece.type);
+      const useEpicDrag = document.documentElement.dataset.dragEffect === "epic";
 
       ptrDragNode = document.createElement("img");
       ptrDragNode.src = spritePath;
@@ -2069,12 +2070,17 @@ board.addEventListener("pointermove", (event) => {
         zIndex: "12000",
         width: `${btn.offsetWidth}px`,
         height: `${btn.offsetHeight}px`,
-        transform: "translate(-50%, -50%)",
+        transform: useEpicDrag ? "none" : "translate(-50%, -50%)",
         opacity: "1"
       });
 
       document.body.append(ptrDragNode);
       btn.classList.add("dragging");
+      if (useEpicDrag) {
+        ptrDragNode.classList.add("drag-epic-active");
+        ptrDragNode.style.setProperty("--drag-epic-translate", "translate(-50%, -50%)");
+        btn.classList.add("dragging-epic");
+      }
     }
   }
 
@@ -2111,7 +2117,9 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
   ptrDragFrom = null;
   dragHoverSquare = null;
   if (ptrDragNode) { ptrDragNode.remove(); ptrDragNode = null; }
-  board.querySelector<HTMLElement>(".square.dragging")?.classList.remove("dragging");
+
+  const squareDragging = board.querySelector<HTMLElement>(".square.dragging");
+  squareDragging?.classList.remove("dragging", "dragging-epic");
   board.querySelector<HTMLElement>(".square.drag-origin")?.classList.remove("drag-origin");
   // Remove hover ring while drag-hover transitions are still disabled.
   syncBoardInteractionState();
@@ -2136,6 +2144,10 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
 
   // SCENARIO 3: Finished a real Drag-and-Drop
   if (commit && targetSquare && targetSquare !== fromSquare) {
+    if (document.documentElement.dataset.dragEffect === "epic" && squareButton) {
+      squareButton.classList.add("drag-drop-flash");
+      window.setTimeout(() => squareButton.classList.remove("drag-drop-flash"), 260);
+    }
     clearSelection();
     suppressAnimationForMove = { from: fromSquare, to: targetSquare };
     tryMoveFromTo(fromSquare, targetSquare);
@@ -3638,7 +3650,7 @@ function cancelCurrentDrag(): void {
 
   if (ptrDragFrom) {
     const draggedSquareEl = board.querySelector<HTMLElement>(`[data-square="${ptrDragFrom}"]`);
-    draggedSquareEl?.classList.remove("dragging");
+    draggedSquareEl?.classList.remove("dragging", "dragging-epic");
     draggedSquareEl?.classList.remove("drag-origin");
     ptrDragFrom = null;
   }

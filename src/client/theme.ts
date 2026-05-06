@@ -14,6 +14,7 @@ const SOUND_THEME_STORAGE_KEY = "chess-sound-theme";
 export type AnimationStyle = "smooth" | "fast" | "epic";
 
 const ANIMATION_STORAGE_KEY = "chess-animation-style";
+const DRAG_EFFECT_STORAGE_KEY = "chess-drag-effect";
 const BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
 const LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
 const UI_THEME_OPTIONS: readonly UiTheme[] = ["purple", "slate", "walnut"];
@@ -169,6 +170,10 @@ export function mountThemeSwitcher(): void {
     const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
     const bloodFxEnabled = bloodFxRaw === "on";
 
+    const dragEffectRaw = localStorage.getItem(DRAG_EFFECT_STORAGE_KEY);
+    const isEpicDrag = dragEffectRaw === "epic";
+    document.documentElement.dataset.dragEffect = isEpicDrag ? "epic" : "smooth";
+
     const legalMovesRaw = localStorage.getItem(LEGAL_MOVES_STORAGE_KEY);
     const legalMovesEnabled = legalMovesRaw !== "off";
 
@@ -213,6 +218,13 @@ export function mountThemeSwitcher(): void {
           <button class="animation-btn" type="button" data-animation="smooth" role="radio" aria-label="Smooth animations">Smooth</button>
           <button class="animation-btn" type="button" data-animation="fast" role="radio" aria-label="Fast animations">Fast</button>
           <button class="animation-btn" type="button" data-animation="epic" role="radio" aria-label="Epic animations">Epic</button>
+        </div>
+      </div>
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Drag Effect</span>
+        <div class="fx-segment drag-effect-segment" role="radiogroup" aria-label="Drag effect">
+          <button class="drag-effect-btn fx-btn" type="button" data-drageffect="smooth" role="radio" aria-label="Smooth drag">Smooth</button>
+          <button class="drag-effect-btn fx-btn" type="button" data-drageffect="epic" role="radio" aria-label="Epic drag">Epic</button>
         </div>
       </div>
       <div class="theme-switcher-row">
@@ -295,14 +307,28 @@ export function mountThemeSwitcher(): void {
             return;
         }
 
-        const animBtn = (e.target as Element).closest<HTMLButtonElement>(".animation-btn");
+        const animBtn = (e.target as Element).closest<HTMLButtonElement>(".animation-btn[data-animation]");
         if (animBtn?.dataset.animation) {
             setAnimationStyle(animBtn.dataset.animation as AnimationStyle);
             return;
         }
 
         const targetEl = e.target as Element;
-        if (targetEl.closest(".legal-btn")) {
+        if (targetEl.closest(".drag-effect-btn")) {
+            const dragBtn = targetEl.closest<HTMLButtonElement>(".drag-effect-btn");
+            if (dragBtn?.dataset.drageffect) {
+                const isEpic = dragBtn.dataset.drageffect === "epic";
+                if (isEpic) document.documentElement.dataset.dragEffect = "epic";
+                else document.documentElement.dataset.dragEffect = "smooth";
+                localStorage.setItem(DRAG_EFFECT_STORAGE_KEY, dragBtn.dataset.drageffect);
+
+                document.querySelectorAll<HTMLElement>(".drag-effect-btn").forEach((b) => {
+                    const isActive = b.dataset.drageffect === dragBtn.dataset.drageffect;
+                    b.classList.toggle("active", isActive);
+                    b.setAttribute("aria-checked", String(isActive));
+                });
+            }
+        } else if (targetEl.closest(".legal-btn")) {
             const legalBtn = targetEl.closest<HTMLButtonElement>(".legal-btn");
             if (legalBtn?.dataset.legal) setLegalMovesEnabled(legalBtn.dataset.legal === "on");
         } else if (targetEl.closest(".fx-btn")) {
@@ -340,8 +366,12 @@ export function mountThemeSwitcher(): void {
         btn.classList.toggle("active", isActive);
         btn.setAttribute("aria-checked", String(isActive));
     });
-
-    document.querySelectorAll<HTMLElement>(".fx-btn:not(.legal-btn)").forEach((btn) => {
+    document.querySelectorAll<HTMLElement>(".drag-effect-btn").forEach((btn) => {
+        const isActive = (btn.dataset.drageffect === "epic") === isEpicDrag;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-checked", String(isActive));
+    });
+    document.querySelectorAll<HTMLElement>(".fx-btn[data-bloodfx]").forEach((btn) => {
         const isActive = (btn.dataset.bloodfx === "on") === bloodFxEnabled;
         btn.classList.toggle("active", isActive);
         btn.setAttribute("aria-checked", String(isActive));

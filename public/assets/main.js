@@ -33713,6 +33713,9 @@ function mountThemeSwitcher() {
   const savedSoundTheme = normalizeSoundTheme2(localStorage.getItem(SOUND_THEME_STORAGE_KEY2));
   const bloodFxRaw = localStorage.getItem(BLOOD_FX_STORAGE_KEY);
   const bloodFxEnabled = bloodFxRaw === "on";
+  const dragEffectRaw = localStorage.getItem(DRAG_EFFECT_STORAGE_KEY);
+  const isEpicDrag = dragEffectRaw === "epic";
+  document.documentElement.dataset.dragEffect = isEpicDrag ? "epic" : "smooth";
   const legalMovesRaw = localStorage.getItem(LEGAL_MOVES_STORAGE_KEY);
   const legalMovesEnabled = legalMovesRaw !== "off";
   const collapsedRaw = localStorage.getItem(THEME_PANEL_COLLAPSED_KEY);
@@ -33753,6 +33756,13 @@ function mountThemeSwitcher() {
           <button class="animation-btn" type="button" data-animation="smooth" role="radio" aria-label="Smooth animations">Smooth</button>
           <button class="animation-btn" type="button" data-animation="fast" role="radio" aria-label="Fast animations">Fast</button>
           <button class="animation-btn" type="button" data-animation="epic" role="radio" aria-label="Epic animations">Epic</button>
+        </div>
+      </div>
+      <div class="theme-switcher-row">
+        <span class="theme-switcher-label">Drag Effect</span>
+        <div class="fx-segment drag-effect-segment" role="radiogroup" aria-label="Drag effect">
+          <button class="drag-effect-btn fx-btn" type="button" data-drageffect="smooth" role="radio" aria-label="Smooth drag">Smooth</button>
+          <button class="drag-effect-btn fx-btn" type="button" data-drageffect="epic" role="radio" aria-label="Epic drag">Epic</button>
         </div>
       </div>
       <div class="theme-switcher-row">
@@ -33826,13 +33836,26 @@ function mountThemeSwitcher() {
       setSoundTheme(normalizeSoundTheme2(soundThemeBtn.dataset.soundTheme));
       return;
     }
-    const animBtn = e.target.closest(".animation-btn");
+    const animBtn = e.target.closest(".animation-btn[data-animation]");
     if (animBtn?.dataset.animation) {
       setAnimationStyle(animBtn.dataset.animation);
       return;
     }
     const targetEl = e.target;
-    if (targetEl.closest(".legal-btn")) {
+    if (targetEl.closest(".drag-effect-btn")) {
+      const dragBtn = targetEl.closest(".drag-effect-btn");
+      if (dragBtn?.dataset.drageffect) {
+        const isEpic = dragBtn.dataset.drageffect === "epic";
+        if (isEpic) document.documentElement.dataset.dragEffect = "epic";
+        else document.documentElement.dataset.dragEffect = "smooth";
+        localStorage.setItem(DRAG_EFFECT_STORAGE_KEY, dragBtn.dataset.drageffect);
+        document.querySelectorAll(".drag-effect-btn").forEach((b2) => {
+          const isActive = b2.dataset.drageffect === dragBtn.dataset.drageffect;
+          b2.classList.toggle("active", isActive);
+          b2.setAttribute("aria-checked", String(isActive));
+        });
+      }
+    } else if (targetEl.closest(".legal-btn")) {
       const legalBtn = targetEl.closest(".legal-btn");
       if (legalBtn?.dataset.legal) setLegalMovesEnabled(legalBtn.dataset.legal === "on");
     } else if (targetEl.closest(".fx-btn")) {
@@ -33865,7 +33888,12 @@ function mountThemeSwitcher() {
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-checked", String(isActive));
   });
-  document.querySelectorAll(".fx-btn:not(.legal-btn)").forEach((btn) => {
+  document.querySelectorAll(".drag-effect-btn").forEach((btn) => {
+    const isActive = btn.dataset.drageffect === "epic" === isEpicDrag;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-checked", String(isActive));
+  });
+  document.querySelectorAll(".fx-btn[data-bloodfx]").forEach((btn) => {
     const isActive = btn.dataset.bloodfx === "on" === bloodFxEnabled;
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-checked", String(isActive));
@@ -33876,7 +33904,7 @@ function mountThemeSwitcher() {
     btn.setAttribute("aria-checked", String(isActive));
   });
 }
-var LEGACY_THEME_STORAGE_KEY, UI_THEME_STORAGE_KEY, BOARD_THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, PIECE_THEME_STORAGE_KEY2, SOUND_THEME_STORAGE_KEY2, ANIMATION_STORAGE_KEY, BLOOD_FX_STORAGE_KEY, LEGAL_MOVES_STORAGE_KEY, UI_THEME_OPTIONS, BOARD_THEME_OPTIONS;
+var LEGACY_THEME_STORAGE_KEY, UI_THEME_STORAGE_KEY, BOARD_THEME_STORAGE_KEY, THEME_PANEL_COLLAPSED_KEY, PIECE_THEME_STORAGE_KEY2, SOUND_THEME_STORAGE_KEY2, ANIMATION_STORAGE_KEY, DRAG_EFFECT_STORAGE_KEY, BLOOD_FX_STORAGE_KEY, LEGAL_MOVES_STORAGE_KEY, UI_THEME_OPTIONS, BOARD_THEME_OPTIONS;
 var init_theme = __esm({
   "src/client/theme.ts"() {
     "use strict";
@@ -33887,6 +33915,7 @@ var init_theme = __esm({
     PIECE_THEME_STORAGE_KEY2 = "chess-piece-theme";
     SOUND_THEME_STORAGE_KEY2 = "chess-sound-theme";
     ANIMATION_STORAGE_KEY = "chess-animation-style";
+    DRAG_EFFECT_STORAGE_KEY = "chess-drag-effect";
     BLOOD_FX_STORAGE_KEY = "chess-blood-fx";
     LEGAL_MOVES_STORAGE_KEY = "chess-legal-moves";
     UI_THEME_OPTIONS = ["purple", "slate", "walnut"];
@@ -35597,6 +35626,7 @@ var require_main_runtime = __commonJS({
         const btn = board.querySelector(`[data-square="${ptrDragFrom}"]`);
         if (btn && virtualPiece) {
           const spritePath = getPieceSpritePath(virtualPiece.color, virtualPiece.type);
+          const useEpicDrag = document.documentElement.dataset.dragEffect === "epic";
           ptrDragNode = document.createElement("img");
           ptrDragNode.src = spritePath;
           Object.assign(ptrDragNode.style, {
@@ -35605,11 +35635,16 @@ var require_main_runtime = __commonJS({
             zIndex: "12000",
             width: `${btn.offsetWidth}px`,
             height: `${btn.offsetHeight}px`,
-            transform: "translate(-50%, -50%)",
+            transform: useEpicDrag ? "none" : "translate(-50%, -50%)",
             opacity: "1"
           });
           document.body.append(ptrDragNode);
           btn.classList.add("dragging");
+          if (useEpicDrag) {
+            ptrDragNode.classList.add("drag-epic-active");
+            ptrDragNode.style.setProperty("--drag-epic-translate", "translate(-50%, -50%)");
+            btn.classList.add("dragging-epic");
+          }
         }
       }
       const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
@@ -35640,7 +35675,8 @@ var require_main_runtime = __commonJS({
         ptrDragNode.remove();
         ptrDragNode = null;
       }
-      board.querySelector(".square.dragging")?.classList.remove("dragging");
+      const squareDragging = board.querySelector(".square.dragging");
+      squareDragging?.classList.remove("dragging", "dragging-epic");
       board.querySelector(".square.drag-origin")?.classList.remove("drag-origin");
       syncBoardInteractionState();
       ptrDragMoved = false;
@@ -35655,6 +35691,10 @@ var require_main_runtime = __commonJS({
         return;
       }
       if (commit && targetSquare && targetSquare !== fromSquare) {
+        if (document.documentElement.dataset.dragEffect === "epic" && squareButton) {
+          squareButton.classList.add("drag-drop-flash");
+          window.setTimeout(() => squareButton.classList.remove("drag-drop-flash"), 260);
+        }
         clearSelection();
         suppressAnimationForMove = { from: fromSquare, to: targetSquare };
         tryMoveFromTo(fromSquare, targetSquare);
@@ -36794,7 +36834,7 @@ var require_main_runtime = __commonJS({
       }
       if (ptrDragFrom) {
         const draggedSquareEl = board.querySelector(`[data-square="${ptrDragFrom}"]`);
-        draggedSquareEl?.classList.remove("dragging");
+        draggedSquareEl?.classList.remove("dragging", "dragging-epic");
         draggedSquareEl?.classList.remove("drag-origin");
         ptrDragFrom = null;
       }

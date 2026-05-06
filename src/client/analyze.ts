@@ -496,30 +496,30 @@ window.addEventListener("soundthemechange", (event: Event) => {
 // ── Element refs ───────────────────────────────────────────────────────────────
 const arrowLayer = q<SVGSVGElement>("#arrowLayer");
 const backToMultiplayerLink = q<HTMLAnchorElement>("#backToMultiplayerLink");
-const boardEl    = q<HTMLDivElement>("#board");
-const boardWrap  = q<HTMLDivElement>(".board-wrap");
-const statusBar  = q<HTMLDivElement>("#statusBar");
+const boardEl = q<HTMLDivElement>("#board");
+const boardWrap = q<HTMLDivElement>(".board-wrap");
+const statusBar = q<HTMLDivElement>("#statusBar");
 const fenDisplay = q<HTMLTextAreaElement>("#fenDisplay");
-const moveList   = q<HTMLDivElement>("#moveList");
+const moveList = q<HTMLDivElement>("#moveList");
 const engineFeedback = q<HTMLDivElement>("#engineFeedback");
-const turnDot    = q<HTMLDivElement>("#turnDot");
-const turnLabel  = q<HTMLSpanElement>("#turnLabel");
+const turnDot = q<HTMLDivElement>("#turnDot");
+const turnLabel = q<HTMLSpanElement>("#turnLabel");
 const whitePlayerRow = q<HTMLDivElement>("#whitePlayerRow");
 const blackPlayerRow = q<HTMLDivElement>("#blackPlayerRow");
 const whitePlayerName = q<HTMLSpanElement>("#whitePlayerName");
 const blackPlayerName = q<HTMLSpanElement>("#blackPlayerName");
-const promoDialog= q<HTMLDivElement>("#promoDialog");
-const toast      = q<HTMLDivElement>("#toast");
+const promoDialog = q<HTMLDivElement>("#promoDialog");
+const toast = q<HTMLDivElement>("#toast");
 const analysisLoadingOverlay = q<HTMLDivElement>("#analysisLoadingOverlay");
 const analysisLoadingStatus = q<HTMLParagraphElement>("#analysisLoadingStatus");
 const analysisLoadingFill = q<HTMLDivElement>("#analysisLoadingFill");
 const analysisSummaryOverlay = q<HTMLDivElement>("#analysisSummaryOverlay");
 const analysisSummaryCounts = q<HTMLDivElement>("#analysisSummaryCounts");
 const analysisSummaryContinue = q<HTMLButtonElement>("#analysisSummaryContinue");
-const navFirst   = q<HTMLButtonElement>("#navFirst");
-const navPrev    = q<HTMLButtonElement>("#navPrev");
-const navNext    = q<HTMLButtonElement>("#navNext");
-const navLast    = q<HTMLButtonElement>("#navLast");
+const navFirst = q<HTMLButtonElement>("#navFirst");
+const navPrev = q<HTMLButtonElement>("#navPrev");
+const navNext = q<HTMLButtonElement>("#navNext");
+const navLast = q<HTMLButtonElement>("#navLast");
 const analyzeBtn = q<HTMLButtonElement>("#analyzeBtn");
 const stopAnalyzeBtn = q<HTMLButtonElement>("#stopAnalyzeBtn");
 const bestMovesToggleButton = q<HTMLButtonElement>("#bestMovesToggleBtn");
@@ -733,9 +733,9 @@ window.addEventListener("keydown", (event) => {
 
 // Navigation
 navFirst.addEventListener("click", () => goTo(0));
-navPrev.addEventListener("click",  () => goTo(cursor - 1));
-navNext.addEventListener("click",  () => goTo(cursor + 1));
-navLast.addEventListener("click",  () => goTo(fenHistory.length - 1));
+navPrev.addEventListener("click", () => goTo(cursor - 1));
+navNext.addEventListener("click", () => goTo(cursor + 1));
+navLast.addEventListener("click", () => goTo(fenHistory.length - 1));
 
 function goTo(index: number): void {
   if (fullAnalysisInProgress) {
@@ -785,7 +785,7 @@ function goTo(index: number): void {
 // Board clicks
 boardEl.addEventListener("click", (e) => {
   const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(".square");
-  const sq  = btn?.dataset.square as Square | undefined;
+  const sq = btn?.dataset.square as Square | undefined;
   if (
     sq &&
     suppressClickSquare === sq &&
@@ -824,7 +824,7 @@ boardEl.addEventListener("pointerdown", (event) => {
   if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
     clearArrows();
   }
-  
+
   if (event.button === 2) {
     const square = getSquareFromPoint(event.clientX, event.clientY);
     if (!square) return;
@@ -876,6 +876,7 @@ boardEl.addEventListener("pointermove", (event) => {
     const btn = boardEl.querySelector<HTMLButtonElement>(`[data-square="${ptrDragFrom}"]`);
     const piece = btn?.querySelector<HTMLElement>(".piece");
     if (piece && btn) {
+      const useEpicDrag = document.documentElement.dataset.dragEffect === "epic";
       const pieceRect = piece.getBoundingClientRect();
       ptrDragNode = piece.cloneNode(true) as HTMLElement;
       Object.assign(ptrDragNode.style, {
@@ -891,12 +892,17 @@ boardEl.addEventListener("pointermove", (event) => {
       });
       document.body.append(ptrDragNode);
       btn.classList.add("dragging");
+      if (useEpicDrag) {
+        ptrDragNode.classList.add("drag-epic-active");
+        ptrDragNode.style.setProperty("--drag-epic-translate", "translate(0, 0)");
+        btn.classList.add("dragging-epic");
+      }
     }
   }
 
   if (ptrDragNode) {
     ptrDragNode.style.left = `${event.clientX - ptrDragNode.offsetWidth / 2}px`;
-    ptrDragNode.style.top  = `${event.clientY - ptrDragNode.offsetHeight / 2}px`;
+    ptrDragNode.style.top = `${event.clientY - ptrDragNode.offsetHeight / 2}px`;
   }
 });
 
@@ -908,7 +914,10 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
   ptrDragMoved = false;
   ptrDragNode?.remove();
   ptrDragNode = null;
-  boardEl.querySelector<HTMLElement>(".square.dragging")?.classList.remove("dragging");
+  const squareDragging = boardEl.querySelector<HTMLElement>(".square.dragging");
+  if (squareDragging) {
+    squareDragging.classList.remove("dragging", "dragging-epic");
+  }
   boardEl.querySelector<HTMLElement>(".square.drag-origin")?.classList.remove("drag-origin");
 
   if (!commit) return;
@@ -928,6 +937,10 @@ function endPointerDrag(event: PointerEvent, commit: boolean): void {
   }
 
   if (targetSquare) {
+    if (document.documentElement.dataset.dragEffect === "epic" && squareButton) {
+      squareButton.classList.add("drag-drop-flash");
+      window.setTimeout(() => squareButton.classList.remove("drag-drop-flash"), 260);
+    }
     suppressClickSquare = targetSquare;
     suppressClickUntil = performance.now() + 250;
     suppressAnimationForMove = { from: fromSquare, to: targetSquare };
@@ -1065,7 +1078,7 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
 
   const shouldBranchFromEarlierMove = cursor < fenHistory.length - 1;
   const shouldBranchPastGameEnd = gameLineLocked && !isVariationMode && cursor >= gameLineFenHistory.length - 1;
-  
+
   if (shouldBranchFromEarlierMove || shouldBranchPastGameEnd) {
     const branchPly = shouldBranchFromEarlierMove
       ? cursor
@@ -1076,17 +1089,17 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
   // Truncate any "future" history if we somehow branched (guard, normally not needed)
   fenHistory = fenHistory.slice(0, cursor + 1);
   moveHistory = moveHistory.slice(0, cursor);
-  
+
   moveHistory.push(move);
   fenHistory.push(chess.fen());
-  
+
   analysisByPly = analysisByPly.slice(0, moveHistory.length);
   cursor = fenHistory.length - 1;
-  
+
   if (!isVariationMode) {
     syncGameLineFromCurrent();
   }
-  
+
   clearArrows();
   clearSelection();
 
@@ -1097,7 +1110,7 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
     playSound("checkMove");
     lastCheckFlashKey = `${cursor}:${chess.fen()}`;
     triggerCheckFlash();
-    
+
     if (move.captured) {
       playSound("capture");
     }
@@ -1112,7 +1125,7 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
   if (bloodFxEnabled && move.captured) {
     spawnBloodSplatter(to, move.captured as PieceSymbol);
   }
-  
+
   render();
   void analyzeLatestMove();
 }
@@ -1196,22 +1209,22 @@ function renderBoard(): void {
   const fragment = document.createDocumentFragment();
 
   for (const squareName of squares) {
-    const sq    = squareName as Square;
+    const sq = squareName as Square;
     const piece = chess.get(sq);
-    const btn   = document.createElement("button");
+    const btn = document.createElement("button");
     btn.type = "button";
     btn.tabIndex = -1;
     btn.className = `square ${isLightSquare(squareName as SquareName) ? "light" : "dark"}`;
     btn.dataset.square = sq;
     btn.setAttribute("aria-label", sq);
 
-    if (selectedSquare === sq)       btn.classList.add("selected");
-    if (legalMovesEnabled && legalTargets.includes(sq))   btn.classList.add("legal");
-    if (lastMoveSquares.has(sq))     btn.classList.add("last-move");
-    if (checkedKingSquare === sq)    btn.classList.add("in-check");
-    if (ptrDragFrom === sq)          btn.classList.add("dragging");
+    if (selectedSquare === sq) btn.classList.add("selected");
+    if (legalMovesEnabled && legalTargets.includes(sq)) btn.classList.add("legal");
+    if (lastMoveSquares.has(sq)) btn.classList.add("last-move");
+    if (checkedKingSquare === sq) btn.classList.add("in-check");
+    if (ptrDragFrom === sq) btn.classList.add("dragging");
     if (ptrDragMoved && ptrDragFrom === sq) btn.classList.add("drag-origin");
-    if (squareAnnotations.has(sq))   btn.classList.add("highlight-red");
+    if (squareAnnotations.has(sq)) btn.classList.add("highlight-red");
     if (selectedMoveEval?.category === "great" && selectedMoveTo === sq) btn.classList.add("great-move-highlight");
     if (selectedMoveEval?.category === "brilliant" && selectedMoveTo === sq) btn.classList.add("brilliant-move-highlight");
 
@@ -1256,7 +1269,7 @@ function renderBoard(): void {
     showQualityMoveCallout(selectedMoveEval.category, selectedMoveTo);
   }
 
-  
+
   renderArrows();
 }
 
@@ -1357,12 +1370,12 @@ function renderMoveList(): void {
 
   const rows: string[] = [];
   for (let i = 0; i < sans.length; i += 2) {
-    const num       = Math.floor(i / 2) + 1;
-    const wIdx      = i + 1;       // fenHistory index after white's move
-    const bIdx      = i + 2;       // fenHistory index after black's move
-    const wActive   = cursor === wIdx ? " active-half" : "";
-    const bActive   = cursor === bIdx ? " active-half" : "";
-    const bSan      = sans[i + 1] ?? "";
+    const num = Math.floor(i / 2) + 1;
+    const wIdx = i + 1;       // fenHistory index after white's move
+    const bIdx = i + 2;       // fenHistory index after black's move
+    const wActive = cursor === wIdx ? " active-half" : "";
+    const bActive = cursor === bIdx ? " active-half" : "";
+    const bSan = sans[i + 1] ?? "";
     const whiteEval = analysisByPly[wIdx];
     const blackEval = analysisByPly[bIdx];
     const whiteBadge = whiteEval
@@ -1406,9 +1419,9 @@ function renderNav(): void {
   }
 
   navFirst.disabled = cursor === 0;
-  navPrev.disabled  = cursor === 0;
-  navNext.disabled  = cursor === fenHistory.length - 1;
-  navLast.disabled  = cursor === fenHistory.length - 1;
+  navPrev.disabled = cursor === 0;
+  navNext.disabled = cursor === fenHistory.length - 1;
+  navLast.disabled = cursor === fenHistory.length - 1;
 }
 
 function updateAnalysisLoadingOverlay(): void {
@@ -2249,16 +2262,16 @@ async function classifyMove(
   const brilliantOffer = isForcedMove
     ? { brilliantOffer: false as const }
     : await verifyBrilliantOffer({
-        engine,
-        move,
-        beforeFen,
-        afterFen,
-        beforeMoverCp,
-        afterMoverCp,
-        cpl,
-        matchesBest,
-        materialDelta,
-      });
+      engine,
+      move,
+      beforeFen,
+      afterFen,
+      beforeMoverCp,
+      afterMoverCp,
+      cpl,
+      matchesBest,
+      materialDelta,
+    });
 
   const quality = classifyMoveQuality({
     cpl,
