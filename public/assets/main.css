@@ -2004,7 +2004,7 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   will-change: transform, filter;
   overflow: visible;
 }
-.drag-epic-active::after {
+.drag-epic-active::before {
   content: "";
   position: absolute;
   left: 50%;
@@ -2013,16 +2013,25 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   height: calc(100% + 14px);
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  border: 2px solid rgba(115, 214, 255, 0.85);
-  box-shadow: 0 0 16px rgba(115, 214, 255, 0.55), inset 0 0 16px rgba(115, 214, 255, 0.4);
-  animation: drag-epic-ring 1050ms ease-in-out infinite;
+  border: 2px solid rgba(115, 214, 255, 0.92);
+  background:
+    radial-gradient(
+      circle,
+      rgba(120, 210, 255, 0.68),
+      rgba(120, 210, 255, 0.42) 55%,
+      rgba(120, 210, 255, 0.18) 80%);
+  box-shadow: 0 0 16px rgba(115, 214, 255, 0.65), inset 0 0 16px rgba(115, 214, 255, 0.48);
+  animation: none;
   pointer-events: none;
+  z-index: 0;
 }
 .drag-epic-active img {
   width: 100%;
   height: 100%;
   object-fit: contain;
   display: block;
+  position: relative;
+  z-index: 1;
 }
 .square.dragging-epic {
   box-shadow: inset 0 0 0 2px rgba(110, 210, 255, 0.7);
@@ -2035,9 +2044,10 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   background:
     radial-gradient(
       circle,
-      rgba(120, 210, 255, 0.45),
-      rgba(120, 210, 255, 0) 70%);
-  animation: drag-drop-fill 260ms ease-out;
+      rgba(120, 210, 255, 0.5),
+      rgba(120, 210, 255, 0.22) 45%,
+      rgba(120, 210, 255, 0) 72%);
+  animation: drag-drop-fill 320ms ease-out;
   pointer-events: none;
   z-index: 4;
 }
@@ -2069,11 +2079,11 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
 @keyframes drag-drop-fill {
   0% {
     opacity: 0.9;
-    transform: scale(0.85);
+    transform: scale(0.8);
   }
   100% {
     opacity: 0;
-    transform: scale(1.15);
+    transform: scale(1.2);
   }
 }
 @media (prefers-reduced-motion: reduce) {
