@@ -228,6 +228,15 @@ function appendCategoryMarkerContent(marker: HTMLElement, category: MoveCategory
 // ── Sound ────────────────────────────────────────────────────────────────────
 const soundEffectsPlayer = createSoundEffectsPlayer();
 function playSound(name: string): void {
+  if (soundsSuppressed) return;
+  if (suppressNextSoundCount > 0) {
+    const movementSounds = new Set(["move-self", "capture", "castle", "checkMove"]);
+    if (movementSounds.has(name as any)) {
+      suppressNextSoundCount -= 1;
+      return;
+    }
+  }
+
   const normalizedName = normalizeSoundEffectName(name);
   if (!normalizedName) {
     return;
@@ -258,6 +267,10 @@ let suppressClickUntil = 0;
 let fenHistory: string[] = [chess.fen()];
 let moveHistory: Move[] = [];
 let cursor = 0; // which FEN we're currently viewing
+let soundsSuppressed = true; // suppress sounds until user first interacts (prevents audio overload after refresh)
+let suppressNextSoundCount = 0; // number of subsequent movement sounds to suppress after first interaction
+let wheelMovedSinceLoad = false; // whether wheel was used before first interaction
+let hasUserInteracted = false; // track first interaction after page load
 let lastWheelAt = 0;
 let wheelAccum = 0;
 let wheelBurstCount = 0;
@@ -265,6 +278,7 @@ let lastWheelEventAt = 0;
 let wheelQueueRunning = false;
 let wheelQueuedSteps = 0;
 let wheelQueuedDir: number | null = null;
+let pointerOverBoard = false;
 const arrowAnnotations = new Set<string>();
 const squareAnnotations = new Set<string>();
 let lastAnimatedMoveKey: string | null = null;
@@ -518,11 +532,21 @@ const blackPlayerName = q<HTMLSpanElement>("#blackPlayerName");
 const promoDialog = q<HTMLDivElement>("#promoDialog");
 const toast = q<HTMLDivElement>("#toast");
 const analysisLoadingOverlay = q<HTMLDivElement>("#analysisLoadingOverlay");
+
+// track whether mouse is over the board so wheel navigation works when hovered
+boardEl.addEventListener("pointerenter", () => {
+  pointerOverBoard = true;
+});
+boardEl.addEventListener("pointerleave", () => {
+  pointerOverBoard = false;
+});
 const analysisLoadingStatus = q<HTMLParagraphElement>("#analysisLoadingStatus");
 const analysisLoadingFill = q<HTMLDivElement>("#analysisLoadingFill");
 const analysisSummaryOverlay = q<HTMLDivElement>("#analysisSummaryOverlay");
 const analysisSummaryCounts = q<HTMLDivElement>("#analysisSummaryCounts");
 const analysisSummaryContinue = q<HTMLButtonElement>("#analysisSummaryContinue");
+import { saveAnalyzeSession, loadAnalyzeSession, clearAnalyzeSession } from "./analyze-persistence";
+
 const navFirst = q<HTMLButtonElement>("#navFirst");
 const navPrev = q<HTMLButtonElement>("#navPrev");
 const navNext = q<HTMLButtonElement>("#navNext");
@@ -628,6 +652,11 @@ function resetBoardStateToStart(): void {
   gameLineLocked = false;
   syncGameLineFromCurrent();
   clearSelection();
+
+  // clear persisted analysis session when resetting
+  try {
+    clearAnalyzeSession();
+  } catch { }
 }
 
 q<HTMLButtonElement>("#resetBtn").addEventListener("click", () => {
@@ -665,6 +694,17 @@ q<HTMLButtonElement>("#loadFenBtn").addEventListener("click", () => {
     clearSelection();
     render();
     showToast("Position loaded.");
+    try {
+      saveAnalyzeSession({
+        fenHistory,
+        moveHistory: moveHistory as any[],
+        analysisByPly: analysisByPly as any[],
+        cursor,
+        orientation,
+        focusMode,
+        timestamp: Date.now(),
+      });
+    } catch { }
   } catch {
     showToast("Invalid FEN — position was not changed.");
   }
@@ -753,12 +793,16 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener(
   "wheel",
   (event: WheelEvent) => {
-    if (!focusMode) return;
+    if (!focusMode && !pointerOverBoard) return;
     if (isTypingTarget(event.target)) return;
     if (fullAnalysisInProgress) return;
     if ("ontouchstart" in window) return;
 
     event.preventDefault();
+    if (!hasUserInteracted) {
+      // record that the user moved the wheel before any real interaction
+      wheelMovedSinceLoad = true;
+    }
     const now = performance.now();
 
     const MAX_DELTA = 80; // cap a single event's delta
@@ -843,6 +887,56 @@ navFirst.addEventListener("click", () => goTo(0));
 navPrev.addEventListener("click", () => goTo(cursor - 1));
 navNext.addEventListener("click", () => goTo(cursor + 1));
 navLast.addEventListener("click", () => goTo(fenHistory.length - 1));
+
+// Load persisted analysis session (if any)
+try {
+  const loaded = loadAnalyzeSession();
+  if (loaded && Array.isArray(loaded.fenHistory) && loaded.fenHistory.length > 0) {
+    fenHistory = loaded.fenHistory;
+    moveHistory = loaded.moveHistory as any[];
+    cursor = Math.max(0, Math.min(loaded.cursor, fenHistory.length - 1));
+    orientation = loaded.orientation || orientation;
+    if (typeof loaded.focusMode === "boolean") {
+      focusMode = loaded.focusMode;
+      applyFocusMode();
+    }
+    chess.load(fenHistory[cursor]!);
+    analysisByPly = Array.isArray(loaded.analysisByPly) ? (loaded.analysisByPly as any[]) : [];
+    render();
+  }
+} catch { }
+
+// Resume audio context on any user interaction to work around browser autoplay policies
+const resumeAudioOnInteraction = async () => {
+  if (!hasUserInteracted) {
+    hasUserInteracted = true;
+    soundsSuppressed = false;
+    // If the user moved the wheel before interacting, suppress a couple
+    // of movement sounds to avoid the accumulated burst after resume.
+    suppressNextSoundCount = wheelMovedSinceLoad ? 2 : 0;
+    wheelMovedSinceLoad = false;
+    soundEffectsPlayer.stopAll();
+    // Clear any queued wheel navigation so it doesn't replay after resume
+    wheelQueuedSteps = 0;
+    wheelQueueRunning = false;
+    wheelQueuedDir = null;
+    lastWheelEventAt = 0;
+  }
+  await soundEffectsPlayer.resume();
+  document.removeEventListener("click", resumeAudioOnInteraction);
+  document.removeEventListener("keydown", resumeAudioOnInteraction);
+  document.removeEventListener("touchstart", resumeAudioOnInteraction);
+};
+document.addEventListener("click", resumeAudioOnInteraction, { capture: true });
+document.addEventListener("keydown", resumeAudioOnInteraction, { capture: true });
+document.addEventListener("touchstart", resumeAudioOnInteraction, { capture: true });
+
+// Save on unload to cover accidental refreshes
+window.addEventListener("beforeunload", () => {
+  try {
+    saveAnalyzeSession({ fenHistory, moveHistory: moveHistory as any[], analysisByPly: analysisByPly as any[], cursor, orientation, focusMode, timestamp: Date.now() });
+  } catch { }
+});
 
 function goTo(index: number): void {
   if (fullAnalysisInProgress) {
@@ -1200,6 +1294,19 @@ function commitMove(from: Square, to: Square, promotion: PromotionPiece): void {
   moveHistory.push(move);
   fenHistory.push(chess.fen());
 
+  // persist analysis session after making a move
+  try {
+    saveAnalyzeSession({
+      fenHistory,
+      moveHistory: moveHistory as any[],
+      analysisByPly: analysisByPly as any[],
+      cursor: fenHistory.length - 1,
+      orientation,
+      focusMode,
+      timestamp: Date.now(),
+    });
+  } catch { }
+
   analysisByPly = analysisByPly.slice(0, moveHistory.length);
   cursor = fenHistory.length - 1;
 
@@ -1304,6 +1411,9 @@ async function toggleFocusMode(force?: boolean): Promise<void> {
 
   focusMode = nextMode;
   applyFocusMode();
+  try {
+    saveAnalyzeSession({ fenHistory, moveHistory: moveHistory as any[], analysisByPly: analysisByPly as any[], cursor, orientation, focusMode, timestamp: Date.now() });
+  } catch { }
 }
 
 function renderBoard(): void {

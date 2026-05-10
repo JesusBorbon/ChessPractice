@@ -20,8 +20,14 @@
 
 .board-arrow-best-move,
 .analyze-arrow-best-move {
-  fill: rgba(51, 197, 115, 0.95);
-  filter: drop-shadow(0 0 6px rgba(51, 197, 115, 0.42));
+  /* Lower fill opacity so badges remain visible, add a wider, softer stroke to
+     make arrows visually thicker while preserving intermediate animations. */
+  fill: rgba(51, 197, 115, 0.28);
+  stroke: rgba(51, 197, 115, 0.55);
+  stroke-width: 6px;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 6px rgba(51, 197, 115, 0.22));
 }
 
 @keyframes arrow-flow {

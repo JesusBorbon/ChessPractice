@@ -3849,9 +3849,19 @@ function createSoundEffectsPlayer() {
       audio.currentTime = 0;
     }
   }
+  async function resumeAudioContext() {
+    const context = ensureAudioContext();
+    if (context && context.state === "suspended") {
+      try {
+        await context.resume();
+      } catch {
+      }
+    }
+  }
   return {
     play: playFromBuffer,
-    stopAll
+    stopAll,
+    resume: resumeAudioContext
   };
 }
 var DEFAULT_SFX_GAIN;
@@ -4366,6 +4376,37 @@ var init_interaction_utils = __esm({
   }
 });
 
+// src/client/analyze-persistence.ts
+function saveAnalyzeSession(session) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+  } catch {
+  }
+}
+function loadAnalyzeSession() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+function clearAnalyzeSession() {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+  }
+}
+var STORAGE_KEY;
+var init_analyze_persistence = __esm({
+  "src/client/analyze-persistence.ts"() {
+    "use strict";
+    STORAGE_KEY = "chess-analyze-session";
+  }
+});
+
 // src/client/analyze.ts
 var require_analyze = __commonJS({
   "src/client/analyze.ts"() {
@@ -4384,6 +4425,7 @@ var require_analyze = __commonJS({
     init_move_badges();
     init_theme();
     init_interaction_utils();
+    init_analyze_persistence();
     var CATEGORY_LABELS = MOVE_BADGE_LABELS;
     var SUMMARY_CATEGORY_ORDER = [
       "brilliant",
@@ -4508,6 +4550,14 @@ var require_analyze = __commonJS({
     }
     var soundEffectsPlayer = createSoundEffectsPlayer();
     function playSound(name) {
+      if (soundsSuppressed) return;
+      if (suppressNextSoundCount > 0) {
+        const movementSounds = /* @__PURE__ */ new Set(["move-self", "capture", "castle", "checkMove"]);
+        if (movementSounds.has(name)) {
+          suppressNextSoundCount -= 1;
+          return;
+        }
+      }
       const normalizedName = normalizeSoundEffectName(name);
       if (!normalizedName) {
         return;
@@ -4531,12 +4581,17 @@ var require_analyze = __commonJS({
     var fenHistory = [chess.fen()];
     var moveHistory = [];
     var cursor = 0;
+    var soundsSuppressed = true;
+    var suppressNextSoundCount = 0;
+    var wheelMovedSinceLoad = false;
+    var hasUserInteracted = false;
     var lastWheelAt = 0;
     var wheelBurstCount = 0;
     var lastWheelEventAt = 0;
     var wheelQueueRunning = false;
     var wheelQueuedSteps = 0;
     var wheelQueuedDir = null;
+    var pointerOverBoard = false;
     var arrowAnnotations = /* @__PURE__ */ new Set();
     var squareAnnotations = /* @__PURE__ */ new Set();
     var lastAnimatedMoveKey = null;
@@ -4769,6 +4824,12 @@ var require_analyze = __commonJS({
     var promoDialog = q("#promoDialog");
     var toast = q("#toast");
     var analysisLoadingOverlay = q("#analysisLoadingOverlay");
+    boardEl.addEventListener("pointerenter", () => {
+      pointerOverBoard = true;
+    });
+    boardEl.addEventListener("pointerleave", () => {
+      pointerOverBoard = false;
+    });
     var analysisLoadingStatus = q("#analysisLoadingStatus");
     var analysisLoadingFill = q("#analysisLoadingFill");
     var analysisSummaryOverlay = q("#analysisSummaryOverlay");
@@ -4860,6 +4921,10 @@ var require_analyze = __commonJS({
       gameLineLocked = false;
       syncGameLineFromCurrent();
       clearSelection();
+      try {
+        clearAnalyzeSession();
+      } catch {
+      }
     }
     q("#resetBtn").addEventListener("click", () => {
       resetBoardStateToStart();
@@ -4893,6 +4958,18 @@ var require_analyze = __commonJS({
         clearSelection();
         render();
         showToast("Position loaded.");
+        try {
+          saveAnalyzeSession({
+            fenHistory,
+            moveHistory,
+            analysisByPly,
+            cursor,
+            orientation,
+            focusMode,
+            timestamp: Date.now()
+          });
+        } catch {
+        }
       } catch {
         showToast("Invalid FEN \u2014 position was not changed.");
       }
@@ -4965,11 +5042,14 @@ var require_analyze = __commonJS({
     window.addEventListener(
       "wheel",
       (event) => {
-        if (!focusMode) return;
+        if (!focusMode && !pointerOverBoard) return;
         if (isTypingTarget(event.target)) return;
         if (fullAnalysisInProgress) return;
         if ("ontouchstart" in window) return;
         event.preventDefault();
+        if (!hasUserInteracted) {
+          wheelMovedSinceLoad = true;
+        }
         const now = performance.now();
         const MAX_DELTA = 80;
         const THRESHOLD = 24;
@@ -5031,6 +5111,49 @@ var require_analyze = __commonJS({
     navPrev.addEventListener("click", () => goTo(cursor - 1));
     navNext.addEventListener("click", () => goTo(cursor + 1));
     navLast.addEventListener("click", () => goTo(fenHistory.length - 1));
+    try {
+      const loaded = loadAnalyzeSession();
+      if (loaded && Array.isArray(loaded.fenHistory) && loaded.fenHistory.length > 0) {
+        fenHistory = loaded.fenHistory;
+        moveHistory = loaded.moveHistory;
+        cursor = Math.max(0, Math.min(loaded.cursor, fenHistory.length - 1));
+        orientation = loaded.orientation || orientation;
+        if (typeof loaded.focusMode === "boolean") {
+          focusMode = loaded.focusMode;
+          applyFocusMode();
+        }
+        chess.load(fenHistory[cursor]);
+        analysisByPly = Array.isArray(loaded.analysisByPly) ? loaded.analysisByPly : [];
+        render();
+      }
+    } catch {
+    }
+    var resumeAudioOnInteraction = async () => {
+      if (!hasUserInteracted) {
+        hasUserInteracted = true;
+        soundsSuppressed = false;
+        suppressNextSoundCount = wheelMovedSinceLoad ? 2 : 0;
+        wheelMovedSinceLoad = false;
+        soundEffectsPlayer.stopAll();
+        wheelQueuedSteps = 0;
+        wheelQueueRunning = false;
+        wheelQueuedDir = null;
+        lastWheelEventAt = 0;
+      }
+      await soundEffectsPlayer.resume();
+      document.removeEventListener("click", resumeAudioOnInteraction);
+      document.removeEventListener("keydown", resumeAudioOnInteraction);
+      document.removeEventListener("touchstart", resumeAudioOnInteraction);
+    };
+    document.addEventListener("click", resumeAudioOnInteraction, { capture: true });
+    document.addEventListener("keydown", resumeAudioOnInteraction, { capture: true });
+    document.addEventListener("touchstart", resumeAudioOnInteraction, { capture: true });
+    window.addEventListener("beforeunload", () => {
+      try {
+        saveAnalyzeSession({ fenHistory, moveHistory, analysisByPly, cursor, orientation, focusMode, timestamp: Date.now() });
+      } catch {
+      }
+    });
     function goTo(index) {
       if (fullAnalysisInProgress) {
         return;
@@ -5310,6 +5433,18 @@ var require_analyze = __commonJS({
       moveHistory = moveHistory.slice(0, cursor);
       moveHistory.push(move);
       fenHistory.push(chess.fen());
+      try {
+        saveAnalyzeSession({
+          fenHistory,
+          moveHistory,
+          analysisByPly,
+          cursor: fenHistory.length - 1,
+          orientation,
+          focusMode,
+          timestamp: Date.now()
+        });
+      } catch {
+      }
       analysisByPly = analysisByPly.slice(0, moveHistory.length);
       cursor = fenHistory.length - 1;
       if (!isVariationMode) {
@@ -5393,6 +5528,10 @@ var require_analyze = __commonJS({
       }
       focusMode = nextMode;
       applyFocusMode();
+      try {
+        saveAnalyzeSession({ fenHistory, moveHistory, analysisByPly, cursor, orientation, focusMode, timestamp: Date.now() });
+      } catch {
+      }
     }
     function renderBoard() {
       const squares = buildSquareList(orientation);

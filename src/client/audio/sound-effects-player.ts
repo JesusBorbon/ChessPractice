@@ -1,6 +1,7 @@
 export type SoundEffectsPlayer = {
   play: (src: string) => void;
   stopAll: () => void;
+  resume: () => Promise<void>;
 };
 
 type WindowWithWebkitAudioContext = Window & {
@@ -59,7 +60,7 @@ export function createSoundEffectsPlayer(): SoundEffectsPlayer {
     }
 
     audio.currentTime = 0;
-    void audio.play().catch(() => {});
+    void audio.play().catch(() => { });
   }
 
   function playFromBuffer(src: string): void {
@@ -71,7 +72,7 @@ export function createSoundEffectsPlayer(): SoundEffectsPlayer {
       return;
     }
 
-    void context.resume().catch(() => {});
+    void context.resume().catch(() => { });
 
     let bufferLoad = decodedBufferLoads.get(src);
     if (!bufferLoad) {
@@ -120,8 +121,20 @@ export function createSoundEffectsPlayer(): SoundEffectsPlayer {
     }
   }
 
+  async function resumeAudioContext(): Promise<void> {
+    const context = ensureAudioContext();
+    if (context && context.state === "suspended") {
+      try {
+        await context.resume();
+      } catch {
+        // Resume may fail if not triggered by user interaction
+      }
+    }
+  }
+
   return {
     play: playFromBuffer,
     stopAll,
+    resume: resumeAudioContext,
   };
 }

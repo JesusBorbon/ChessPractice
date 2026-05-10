@@ -31403,9 +31403,19 @@ function createSoundEffectsPlayer() {
       audio.currentTime = 0;
     }
   }
+  async function resumeAudioContext() {
+    const context = ensureAudioContext();
+    if (context && context.state === "suspended") {
+      try {
+        await context.resume();
+      } catch {
+      }
+    }
+  }
   return {
     play: playFromBuffer,
-    stopAll
+    stopAll,
+    resume: resumeAudioContext
   };
 }
 var DEFAULT_SFX_GAIN;
