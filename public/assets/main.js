@@ -35470,6 +35470,13 @@ var require_main_runtime = __commonJS({
       event.preventDefault();
       void toggleFocusMode();
     });
+    window.addEventListener("keydown", (e) => {
+      if (isTypingTarget(e.target)) return;
+      if (e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        flipBoardButton.click();
+      }
+    });
     board.addEventListener("click", (event) => {
       if (lastPremoveTouchCancelAtMs > 0 && performance.now() - lastPremoveTouchCancelAtMs < 350) {
         event.preventDefault();

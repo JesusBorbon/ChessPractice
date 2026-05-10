@@ -258,6 +258,13 @@ let suppressClickUntil = 0;
 let fenHistory: string[] = [chess.fen()];
 let moveHistory: Move[] = [];
 let cursor = 0; // which FEN we're currently viewing
+let lastWheelAt = 0;
+let wheelAccum = 0;
+let wheelBurstCount = 0;
+let lastWheelEventAt = 0;
+let wheelQueueRunning = false;
+let wheelQueuedSteps = 0;
+let wheelQueuedDir: number | null = null;
 const arrowAnnotations = new Set<string>();
 const squareAnnotations = new Set<string>();
 let lastAnimatedMoveKey: string | null = null;
@@ -728,8 +735,92 @@ window.addEventListener("keydown", (event) => {
   } else if (event.key.toLowerCase() === "z") {
     event.preventDefault();
     void toggleFocusMode();
+  } else if (event.key.toLowerCase() === "f") {
+    event.preventDefault();
+    const fb = document.getElementById("flipBtn") as HTMLButtonElement | null;
+    if (fb) fb.click();
+  } else if (event.key === " " || event.key === "Spacebar" || event.key === "Enter") {
+    // Reset to initial analysis position
+    event.preventDefault();
+    goTo(0);
   }
 });
+
+// Wheel navigation in focus mode (desktop only). Implement a gentle, Lichess-like feel:
+// - cap per-event delta to avoid huge spikes
+// - accumulate deltas for fine control
+// - detect quick repeated events (burst) to accelerate up to a small cap
+window.addEventListener(
+  "wheel",
+  (event: WheelEvent) => {
+    if (!focusMode) return;
+    if (isTypingTarget(event.target)) return;
+    if (fullAnalysisInProgress) return;
+    if ("ontouchstart" in window) return;
+
+    event.preventDefault();
+    const now = performance.now();
+
+    const MAX_DELTA = 80; // cap a single event's delta
+    const THRESHOLD = 24; // amount per move step
+    const COOLDOWN_MS = 40; // minimal ms between applied actions
+    const BURST_WINDOW_MS = 220; // window to consider events part of a burst
+    const MAX_STEPS_PER_TICK = 6; // hard cap so we never jump dozens
+
+    // clamp noisy spikes
+    const delta = Math.max(-MAX_DELTA, Math.min(MAX_DELTA, event.deltaY));
+
+    // burst detection
+    if (now - lastWheelEventAt < BURST_WINDOW_MS) {
+      wheelBurstCount++;
+    } else {
+      wheelBurstCount = 1;
+    }
+    lastWheelEventAt = now;
+
+    // Per-event behavior: default to 1 step per event so slow scrolls stay manual.
+    // If events are part of a rapid burst, allow small acceleration (multiple steps queued).
+    if (now - lastWheelAt < COOLDOWN_MS) return;
+
+    const dir = Math.sign(delta);
+    const isBig = Math.abs(delta) >= THRESHOLD;
+
+    if (!isBig) return;
+
+    // Determine steps: base 1, plus small burst multiplier when events are rapid
+    let burstMultiplier = 1 + Math.floor(wheelBurstCount / 2);
+    burstMultiplier = Math.min(burstMultiplier, 6);
+    let steps = Math.min(1 * burstMultiplier, MAX_STEPS_PER_TICK);
+
+    const toApply = Math.max(1, Math.trunc(steps));
+
+    if (wheelQueueRunning) {
+      if (wheelQueuedDir === dir) {
+        wheelQueuedSteps = Math.min(wheelQueuedSteps + toApply, 200);
+      } else {
+        wheelQueuedSteps = toApply;
+        wheelQueuedDir = dir;
+      }
+    } else {
+      wheelQueuedSteps = toApply;
+      wheelQueuedDir = dir;
+      void (async function runWheelQueue() {
+        wheelQueueRunning = true;
+        const STEP_DELAY = Math.max(FAST_MOVE_DURATION_MS, 220);
+        while (wheelQueuedSteps > 0) {
+          wheelQueuedSteps -= 1;
+          goTo(cursor + (wheelQueuedDir || dir));
+          await new Promise((r) => setTimeout(r, STEP_DELAY));
+        }
+        wheelQueueRunning = false;
+        wheelQueuedDir = null;
+      })();
+    }
+
+    lastWheelAt = now;
+  },
+  { passive: false }
+);
 
 // Navigation
 navFirst.addEventListener("click", () => goTo(0));

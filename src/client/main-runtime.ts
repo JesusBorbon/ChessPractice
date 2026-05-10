@@ -1852,6 +1852,15 @@ window.addEventListener("keydown", (event) => {
   void toggleFocusMode();
 });
 
+// Global 'f' shortcut to flip the board
+window.addEventListener("keydown", (e) => {
+  if (isTypingTarget(e.target)) return;
+  if (e.key.toLowerCase() === "f") {
+    e.preventDefault();
+    flipBoardButton.click();
+  }
+});
+
 board.addEventListener("click", (event) => {
   if (lastPremoveTouchCancelAtMs > 0 && performance.now() - lastPremoveTouchCancelAtMs < 350) {
     event.preventDefault();

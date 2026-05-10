@@ -4531,6 +4531,12 @@ var require_analyze = __commonJS({
     var fenHistory = [chess.fen()];
     var moveHistory = [];
     var cursor = 0;
+    var lastWheelAt = 0;
+    var wheelBurstCount = 0;
+    var lastWheelEventAt = 0;
+    var wheelQueueRunning = false;
+    var wheelQueuedSteps = 0;
+    var wheelQueuedDir = null;
     var arrowAnnotations = /* @__PURE__ */ new Set();
     var squareAnnotations = /* @__PURE__ */ new Set();
     var lastAnimatedMoveKey = null;
@@ -4947,8 +4953,70 @@ var require_analyze = __commonJS({
       } else if (event.key.toLowerCase() === "z") {
         event.preventDefault();
         void toggleFocusMode();
+      } else if (event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        const fb = document.getElementById("flipBtn");
+        if (fb) fb.click();
+      } else if (event.key === " " || event.key === "Spacebar" || event.key === "Enter") {
+        event.preventDefault();
+        goTo(0);
       }
     });
+    window.addEventListener(
+      "wheel",
+      (event) => {
+        if (!focusMode) return;
+        if (isTypingTarget(event.target)) return;
+        if (fullAnalysisInProgress) return;
+        if ("ontouchstart" in window) return;
+        event.preventDefault();
+        const now = performance.now();
+        const MAX_DELTA = 80;
+        const THRESHOLD = 24;
+        const COOLDOWN_MS = 40;
+        const BURST_WINDOW_MS = 220;
+        const MAX_STEPS_PER_TICK = 6;
+        const delta = Math.max(-MAX_DELTA, Math.min(MAX_DELTA, event.deltaY));
+        if (now - lastWheelEventAt < BURST_WINDOW_MS) {
+          wheelBurstCount++;
+        } else {
+          wheelBurstCount = 1;
+        }
+        lastWheelEventAt = now;
+        if (now - lastWheelAt < COOLDOWN_MS) return;
+        const dir = Math.sign(delta);
+        const isBig = Math.abs(delta) >= THRESHOLD;
+        if (!isBig) return;
+        let burstMultiplier = 1 + Math.floor(wheelBurstCount / 2);
+        burstMultiplier = Math.min(burstMultiplier, 6);
+        let steps = Math.min(1 * burstMultiplier, MAX_STEPS_PER_TICK);
+        const toApply = Math.max(1, Math.trunc(steps));
+        if (wheelQueueRunning) {
+          if (wheelQueuedDir === dir) {
+            wheelQueuedSteps = Math.min(wheelQueuedSteps + toApply, 200);
+          } else {
+            wheelQueuedSteps = toApply;
+            wheelQueuedDir = dir;
+          }
+        } else {
+          wheelQueuedSteps = toApply;
+          wheelQueuedDir = dir;
+          void (async function runWheelQueue() {
+            wheelQueueRunning = true;
+            const STEP_DELAY = Math.max(FAST_MOVE_DURATION_MS, 220);
+            while (wheelQueuedSteps > 0) {
+              wheelQueuedSteps -= 1;
+              goTo(cursor + (wheelQueuedDir || dir));
+              await new Promise((r) => setTimeout(r, STEP_DELAY));
+            }
+            wheelQueueRunning = false;
+            wheelQueuedDir = null;
+          })();
+        }
+        lastWheelAt = now;
+      },
+      { passive: false }
+    );
     navFirst.addEventListener("click", () => goTo(0));
     navPrev.addEventListener("click", () => goTo(cursor - 1));
     navNext.addEventListener("click", () => goTo(cursor + 1));
