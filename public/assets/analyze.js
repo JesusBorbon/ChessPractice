@@ -5003,11 +5003,21 @@ var require_analyze = __commonJS({
           wheelQueuedDir = dir;
           void (async function runWheelQueue() {
             wheelQueueRunning = true;
-            const STEP_DELAY = Math.max(FAST_MOVE_DURATION_MS, 220);
+            const MIN_STEP_DELAY_MS = 40;
+            const IDLE_CANCEL_MS = 180;
             while (wheelQueuedSteps > 0) {
+              const nowInner = performance.now();
+              if (nowInner - lastWheelEventAt > IDLE_CANCEL_MS) {
+                wheelQueuedSteps = 0;
+                break;
+              }
               wheelQueuedSteps -= 1;
               goTo(cursor + (wheelQueuedDir || dir));
-              await new Promise((r) => setTimeout(r, STEP_DELAY));
+              const burstFactor = 1 + Math.min(Math.floor(wheelBurstCount / 2), 8);
+              const queueFactor = 1 + Math.min(Math.floor(wheelQueuedSteps / 8), 6);
+              const speedFactor = Math.max(1, burstFactor + queueFactor - 1);
+              const delay = Math.max(MIN_STEP_DELAY_MS, Math.round(FAST_MOVE_DURATION_MS / speedFactor));
+              await new Promise((r) => setTimeout(r, delay));
             }
             wheelQueueRunning = false;
             wheelQueuedDir = null;
