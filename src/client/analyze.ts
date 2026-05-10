@@ -911,9 +911,9 @@ const resumeAudioOnInteraction = async () => {
   if (!hasUserInteracted) {
     hasUserInteracted = true;
     soundsSuppressed = false;
-    // If the user moved the wheel before interacting, suppress a couple
-    // of movement sounds to avoid the accumulated burst after resume.
-    suppressNextSoundCount = wheelMovedSinceLoad ? 2 : 0;
+    // If the user moved the wheel before interacting, suppress one
+    // movement sound to avoid the accumulated burst after resume.
+    suppressNextSoundCount = wheelMovedSinceLoad ? 1 : 0;
     wheelMovedSinceLoad = false;
     soundEffectsPlayer.stopAll();
     // Clear any queued wheel navigation so it doesn't replay after resume

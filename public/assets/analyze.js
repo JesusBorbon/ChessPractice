@@ -5132,7 +5132,7 @@ var require_analyze = __commonJS({
       if (!hasUserInteracted) {
         hasUserInteracted = true;
         soundsSuppressed = false;
-        suppressNextSoundCount = wheelMovedSinceLoad ? 2 : 0;
+        suppressNextSoundCount = wheelMovedSinceLoad ? 1 : 0;
         wheelMovedSinceLoad = false;
         soundEffectsPlayer.stopAll();
         wheelQueuedSteps = 0;
