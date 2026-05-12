@@ -890,13 +890,31 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   transform-origin: center;
   transform: var(--drag-epic-translate, translate(-50%, -50%));
   animation: drag-epic-pulse 350ms ease-in-out infinite alternate;
-  filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.35));
+  filter: none;
   will-change: transform, filter;
   overflow: visible;
 }
 
 .drag-epic-active::before {
   display: none !important;
+}
+
+.drag-epic-active::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 92%;
+  height: 92%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0) 68%);
+  transform: translate(calc(-50% + 12px), calc(-50% + 14px)) scale(1.08);
+  opacity: 0.75;
+  filter: blur(10px);
+  animation: drag-epic-shadow 350ms ease-in-out infinite alternate;
+  pointer-events: none;
+  z-index: 0;
+  will-change: transform, opacity, filter;
 }
 
 .drag-epic-active img {
@@ -929,6 +947,19 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   }
   100% {
     transform: var(--drag-epic-translate, translate(-50%, -50%)) scale(1.1);
+  }
+}
+
+@keyframes drag-epic-shadow {
+  0% {
+    transform: translate(calc(-50% + 12px), calc(-50% + 14px)) scale(1.08);
+    opacity: 0.75;
+    filter: blur(10px);
+  }
+  100% {
+    transform: translate(calc(-50% + 6px), calc(-50% + 8px)) scale(0.92);
+    opacity: 0.92;
+    filter: blur(6px);
   }
 }
 
