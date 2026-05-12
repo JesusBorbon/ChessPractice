@@ -1244,72 +1244,26 @@ body.focus-mode.focus-analyze .analyze-move-list {
 .square.dragging::before {
   display: none !important;
 }
-.drag-epic-active {
-  position: fixed;
-  pointer-events: none;
-  transform-origin: center;
-  transform: var(--drag-epic-translate, translate(-50%, -50%));
-  animation: drag-epic-pulse 900ms ease-in-out infinite;
-  filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.35));
-  will-change: transform, filter;
-  overflow: visible;
-}
-.drag-epic-active::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: calc(100% + 14px);
-  height: calc(100% + 14px);
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  border: 2px solid rgba(115, 214, 255, 0.92);
-  background:
-    radial-gradient(
-      circle,
-      rgba(120, 210, 255, 0.68),
-      rgba(120, 210, 255, 0.42) 55%,
-      rgba(120, 210, 255, 0.18) 80%);
-  box-shadow: 0 0 16px rgba(115, 214, 255, 0.65), inset 0 0 16px rgba(115, 214, 255, 0.48);
-  animation: none;
-  pointer-events: none;
-  z-index: 0;
-}
 .drag-epic-active img {
   width: 100%;
   height: 100%;
   object-fit: contain;
   display: block;
   position: relative;
-  z-index: 1;
+  z-index: 2;
+  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.18)) !important;
+  -webkit-filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.18)) !important;
+  box-shadow: none !important;
 }
-.square.dragging-epic {
-  box-shadow: inset 0 0 0 2px rgba(110, 210, 255, 0.7);
-}
-.square.drag-drop-flash::after {
-  content: "";
-  position: absolute;
-  inset: 8%;
-  border-radius: 12px;
-  background:
-    radial-gradient(
-      circle,
-      rgba(120, 210, 255, 0.5),
-      rgba(120, 210, 255, 0.22) 45%,
-      rgba(120, 210, 255, 0) 72%);
-  animation: drag-drop-fill 320ms ease-out;
-  pointer-events: none;
-  z-index: 4;
+.drag-epic-active::before {
+  display: none !important;
 }
 @keyframes drag-epic-pulse {
   0% {
     transform: var(--drag-epic-translate, translate(-50%, -50%)) scale(1);
   }
-  50% {
-    transform: var(--drag-epic-translate, translate(-50%, -50%)) scale(1.12);
-  }
   100% {
-    transform: var(--drag-epic-translate, translate(-50%, -50%)) scale(1.03);
+    transform: var(--drag-epic-translate, translate(-50%, -50%)) scale(1.06);
   }
 }
 @keyframes drag-epic-ring {

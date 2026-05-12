@@ -889,27 +889,14 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   pointer-events: none;
   transform-origin: center;
   transform: var(--drag-epic-translate, translate(-50%, -50%));
-  animation: drag-epic-pulse 900ms ease-in-out infinite;
+  animation: drag-epic-pulse 350ms ease-in-out infinite alternate;
   filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.35));
   will-change: transform, filter;
   overflow: visible;
 }
 
 .drag-epic-active::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: calc(100% + 14px);
-  height: calc(100% + 14px);
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  border: 2px solid rgba(115, 214, 255, 0.92);
-  background: radial-gradient(circle, rgba(120, 210, 255, 0.68), rgba(120, 210, 255, 0.42) 55%, rgba(120, 210, 255, 0.18) 80%);
-  box-shadow: 0 0 16px rgba(115, 214, 255, 0.65), inset 0 0 16px rgba(115, 214, 255, 0.48);
-  animation: none;
-  pointer-events: none;
-  z-index: 0;
+  display: none !important;
 }
 
 .drag-epic-active img {
@@ -940,11 +927,8 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   0% {
     transform: var(--drag-epic-translate, translate(-50%, -50%)) scale(1);
   }
-  50% {
-    transform: var(--drag-epic-translate, translate(-50%, -50%)) scale(1.12);
-  }
   100% {
-    transform: var(--drag-epic-translate, translate(-50%, -50%)) scale(1.03);
+    transform: var(--drag-epic-translate, translate(-50%, -50%)) scale(1.2);
   }
 }
 
@@ -1270,7 +1254,7 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   box-shadow:
     inset 0 0 0 3px rgba(77, 226, 214, 0.86),
     0 0 16px rgba(77, 226, 214, 0.34);
-  animation: brilliant-square-pulse 1300ms ease-in-out 2;
+  animation: brilliant-square-pulse 1000ms ease-in-out 2;
 }
 
 .square.last-move.great-move-highlight::before {
@@ -1282,7 +1266,7 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
 .square.last-move.brilliant-move-highlight::before {
   background: rgba(74, 219, 205, 0.34) !important;
   box-shadow: inset 0 0 0 2px rgba(77, 226, 214, 0.78), 0 0 14px rgba(77, 226, 214, 0.36) !important;
-  animation: brilliant-square-surface-pulse 1300ms ease-in-out 2;
+  animation: brilliant-square-surface-pulse 1000ms ease-in-out 2;
 }
 
 .move-quality-callout {
