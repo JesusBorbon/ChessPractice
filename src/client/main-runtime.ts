@@ -239,6 +239,9 @@ const savedBotTimeControlId = normalizeBotTimeControlId(localStorage.getItem("ch
 const savedBotPlayerSide: PlayerRole = localStorage.getItem("chess-bot-player-side") === "b" ? "b" : "w";
 const savedPieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
 const savedSoundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
+const FOCUS_MODE_STORAGE_KEY = "chess-focus-mode";
+const savedFocusMode = localStorage.getItem(FOCUS_MODE_STORAGE_KEY) === "on";
+let pendingFocusModeRestore = savedFocusMode;
 
 const state: AppState = {
   connected: false,
@@ -273,6 +276,14 @@ const state: AppState = {
   bestMoveArrow: null,
   bestMoveArrowFen: null,
 };
+
+function persistFocusMode(value: boolean): void {
+  try {
+    localStorage.setItem(FOCUS_MODE_STORAGE_KEY, value ? "on" : "off");
+  } catch {
+    // ignore storage errors
+  }
+}
 
 (window as any).state = state;
 
@@ -929,6 +940,10 @@ function resetTransientRoomUiBeforeControlledRejoin(): void {
   state.legalTargets = [];
   state.viewCursor = null;
   state.focusMode = false;
+  persistFocusMode(false);
+  pendingFocusModeRestore = false;
+  persistFocusMode(false);
+  pendingFocusModeRestore = false;
   state.gameMode = "multiplayer";
   accountSidebarController.setFriendPresenceActivity(null);
   state.liveAnalysisSummary = "Live analysis disabled.";
@@ -1928,6 +1943,91 @@ let arrowDragTo: Square | null = null;
 let arrowDragPointer: { x: number; y: number } | null = null;
 let arrowDragMoved = false;
 
+function ensurePointerDragVisual(fromSquare: Square, btn: HTMLButtonElement): void {
+  if (ptrDragNode) return;
+
+  const pieceEl = btn.querySelector<HTMLElement>(".piece");
+  const useEpicDrag = document.documentElement.dataset.dragEffect === "epic";
+  if (pieceEl) {
+    const pieceRect = pieceEl.getBoundingClientRect();
+    ptrDragNode = pieceEl.cloneNode(true) as HTMLElement;
+    Object.assign(ptrDragNode.style, {
+      position: "fixed",
+      pointerEvents: "none",
+      zIndex: "12000",
+      width: `${pieceRect.width}px`,
+      height: `${pieceRect.height}px`,
+      margin: "0",
+      lineHeight: "1",
+      transformOrigin: "center center",
+      transition: "none",
+      transform: useEpicDrag ? "" : "translate(-50%, -50%)",
+      opacity: "1",
+      visibility: "visible",
+    });
+    ptrDragNode.querySelectorAll<HTMLElement>(".piece, .piece-image").forEach((el) => {
+      el.style.opacity = "1";
+      el.style.visibility = "visible";
+    });
+    if (useEpicDrag) {
+      ptrDragNode.classList.add("drag-epic-active");
+      ptrDragNode.style.setProperty("--drag-epic-translate", "translate(-50%, -50%)");
+    }
+    document.body.append(ptrDragNode);
+    btn.classList.add("dragging");
+    if (useEpicDrag) {
+      btn.classList.add("dragging-epic");
+    }
+    return;
+  }
+
+  const vBoard = getVirtualBoard(chess.fen(), state.premoves, state.role as PlayerRole);
+  const virtualPiece = vBoard.get(fromSquare);
+  if (!virtualPiece) return;
+
+  const spritePath = getPieceSpritePath(virtualPiece.color as PlayerRole, virtualPiece.type);
+
+  if (useEpicDrag) {
+    const wrapper = document.createElement("div");
+    wrapper.classList.add("drag-epic-active");
+    wrapper.style.setProperty("--drag-epic-translate", "translate(-50%, -50%)");
+    Object.assign(wrapper.style, {
+      position: "fixed",
+      pointerEvents: "none",
+      zIndex: "12000",
+      width: `${btn.offsetWidth}px`,
+      height: `${btn.offsetHeight}px`,
+      opacity: "1",
+    });
+
+    const img = document.createElement("img");
+    img.src = spritePath;
+    img.alt = "";
+    img.draggable = false;
+    wrapper.append(img);
+    ptrDragNode = wrapper;
+  } else {
+    const img = document.createElement("img");
+    img.src = spritePath;
+    Object.assign(img.style, {
+      position: "fixed",
+      pointerEvents: "none",
+      zIndex: "12000",
+      width: `${btn.offsetWidth}px`,
+      height: `${btn.offsetHeight}px`,
+      transform: "translate(-50%, -50%)",
+      opacity: "1",
+    });
+    ptrDragNode = img;
+  }
+
+  document.body.append(ptrDragNode);
+  btn.classList.add("dragging");
+  if (useEpicDrag) {
+    btn.classList.add("dragging-epic");
+  }
+}
+
 function cancelArrowDragPreview(): void {
   if (!arrowDragFrom && !arrowDragTo && !arrowDragPointer && !arrowDragMoved) {
     return;
@@ -1982,8 +2082,8 @@ function shouldCancelPremovesFromTouch(event: PointerEvent): boolean {
 }
 
 board.addEventListener("pointerdown", (event) => {
-
-  if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
+  const hadArrowAnnotations = event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0);
+  if (hadArrowAnnotations) {
     clearArrows();
   }
   const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
@@ -2029,15 +2129,24 @@ board.addEventListener("pointerdown", (event) => {
   if (arrowDragFrom || arrowDragTo || arrowDragPointer || arrowDragMoved) {
     cancelArrowDragPreview();
   }
-  const squareButton = (event.target as HTMLElement).closest<HTMLButtonElement>(".square");
-  const square = squareButton?.dataset.square as Square | undefined;
+  const square = getSquareFromPoint(event.clientX, event.clientY);
   if (!square || !canStartMoveFrom(square)) return;
+  const squareButton = board.querySelector<HTMLButtonElement>(`[data-square="${square}"]`);
+  if (!squareButton) return;
 
   ptrDragFrom = square;
   ptrDragMoved = false;
   ptrStartX = event.clientX;
   ptrStartY = event.clientY;
   board.setPointerCapture(event.pointerId);
+
+  if (squareButton) {
+    ensurePointerDragVisual(square, squareButton);
+    if (ptrDragNode) {
+      ptrDragNode.style.left = `${event.clientX}px`;
+      ptrDragNode.style.top = `${event.clientY}px`;
+    }
+  }
 });
 
 board.addEventListener("pointermove", (event) => {
@@ -2053,69 +2162,27 @@ board.addEventListener("pointermove", (event) => {
   }
 
   if (!ptrDragFrom) return;
-  if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 3) return;
+  const dragDistance = Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY);
+  const btn = board.querySelector<HTMLButtonElement>(`[data-square="${ptrDragFrom}"]`);
+  if (btn) {
+    ensurePointerDragVisual(ptrDragFrom, btn);
+  }
 
-  if (!ptrDragMoved) {
+  if (!ptrDragMoved && dragDistance >= 3) {
     ptrDragMoved = true;
     state.selectedSquare = ptrDragFrom;
 
     const vBoard = getVirtualBoard(chess.fen(), state.premoves, state.role as PlayerRole);
-    const virtualPiece = vBoard.get(ptrDragFrom);
-
     state.legalTargets = vBoard.moves({ square: ptrDragFrom, verbose: true }).map(m => m.to);
     syncBoardInteractionState();
     updateCaption();
-
-    const btn = board.querySelector<HTMLButtonElement>(`[data-square="${ptrDragFrom}"]`);
-    if (btn && virtualPiece) {
-      const spritePath = getPieceSpritePath(virtualPiece.color as PlayerRole, virtualPiece.type);
-      const useEpicDrag = document.documentElement.dataset.dragEffect === "epic";
-
-      if (useEpicDrag) {
-        const wrapper = document.createElement("div");
-        wrapper.classList.add("drag-epic-active");
-        wrapper.style.setProperty("--drag-epic-translate", "translate(-50%, -50%)");
-        Object.assign(wrapper.style, {
-          position: "fixed",
-          pointerEvents: "none",
-          zIndex: "12000",
-          width: `${btn.offsetWidth}px`,
-          height: `${btn.offsetHeight}px`,
-          opacity: "1",
-        });
-
-        const img = document.createElement("img");
-        img.src = spritePath;
-        img.alt = "";
-        img.draggable = false;
-        wrapper.append(img);
-        ptrDragNode = wrapper;
-      } else {
-        const img = document.createElement("img");
-        img.src = spritePath;
-        Object.assign(img.style, {
-          position: "fixed",
-          pointerEvents: "none",
-          zIndex: "12000",
-          width: `${btn.offsetWidth}px`,
-          height: `${btn.offsetHeight}px`,
-          transform: "translate(-50%, -50%)",
-          opacity: "1",
-        });
-        ptrDragNode = img;
-      }
-
-      document.body.append(ptrDragNode);
-      btn.classList.add("dragging");
-      if (useEpicDrag) {
-        btn.classList.add("dragging-epic");
-      }
-    }
   }
 
-  const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
-  dragHoverSquare = hoverSquare ?? null;
-  syncBoardInteractionState();
+  if (ptrDragMoved) {
+    const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
+    dragHoverSquare = hoverSquare ?? null;
+    syncBoardInteractionState();
+  }
 
   if (ptrDragNode) {
     ptrDragNode.style.left = `${event.clientX}px`;
@@ -3382,6 +3449,13 @@ function renderSession(): void {
   focusModeButton.hidden = !isGameActive;
   gameNav.hidden = !isGameActive;
 
+  if (isGameActive && pendingFocusModeRestore && !state.focusMode) {
+    state.focusMode = true;
+    applyFocusMode();
+    persistFocusMode(true);
+    pendingFocusModeRestore = false;
+  }
+
   seatCard.hidden = !hasRoom;
   summaryCard.hidden = !isGameActive;
   movesCard.hidden = !isGameActive;
@@ -3397,6 +3471,8 @@ function renderSession(): void {
   if (!isGameActive && state.focusMode) {
     state.focusMode = false;
     applyFocusMode();
+    persistFocusMode(false);
+    pendingFocusModeRestore = false;
   }
 
   // 3. Early Exit if No Snapshot (Lobby State)
@@ -3822,7 +3898,9 @@ function renderBoard(): void {
     if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
     if (checkedKingSquare === squareName) button.classList.add("in-check");
 
-    if (square === ptrDragFrom) button.classList.add("dragging");
+    const isBeingDragged = square === ptrDragFrom;
+    const dragVisualActive = isBeingDragged && Boolean(ptrDragNode || ptrDragMoved);
+    if (dragVisualActive) button.classList.add("dragging");
     if (ptrDragMoved && square === ptrDragFrom) button.classList.add("drag-origin");
     if (ptrDragMoved && dragHoverSquare === square) {
       button.classList.add("drag-hover-legal");
@@ -3847,9 +3925,7 @@ function renderBoard(): void {
 
       const isMyPremove = suppressAnimationForMove && square === suppressAnimationForMove.to;
       const isTargetOfActiveAnimation = square === animatingToSquare && !animationFinished;
-      const isBeingDragged = square === ptrDragFrom;
-
-      const shouldHide = (isTargetOfActiveAnimation && activeGhostNode) || isBeingDragged;
+      const shouldHide = (isTargetOfActiveAnimation && activeGhostNode) || dragVisualActive;
 
       if (shouldHide && !isMyPremove && !isHistoryView) {
         pieceElement.style.opacity = "0";
@@ -4061,7 +4137,8 @@ function syncBoardInteractionState(): void {
 
     squareButton.classList.toggle("selected", state.selectedSquare === square);
     squareButton.classList.toggle("legal", state.legalMovesEnabled && state.legalTargets.includes(square));
-    squareButton.classList.toggle("dragging", square === ptrDragFrom);
+    const dragVisualActive = square === ptrDragFrom && Boolean(ptrDragNode || ptrDragMoved);
+    squareButton.classList.toggle("dragging", dragVisualActive);
     squareButton.classList.toggle("drag-origin", ptrDragMoved && square === ptrDragFrom);
     squareButton.classList.toggle(
       "drag-hover-legal",
@@ -5403,6 +5480,8 @@ async function toggleFocusMode(force?: boolean): Promise<void> {
 
   state.focusMode = nextMode;
   applyFocusMode();
+  persistFocusMode(state.focusMode);
+  pendingFocusModeRestore = false;
 }
 
 let toastTimer = 0;

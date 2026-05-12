@@ -1020,6 +1020,35 @@ let arrowDragTo: Square | null = null;
 let arrowDragPointer: { x: number; y: number } | null = null;
 let arrowDragMoved = false;
 
+function ensurePointerDragVisual(): void {
+  if (!ptrDragFrom || ptrDragNode) return;
+  const btn = boardEl.querySelector<HTMLButtonElement>(`[data-square="${ptrDragFrom}"]`);
+  const piece = btn?.querySelector<HTMLElement>(".piece");
+  if (!piece || !btn) return;
+
+  const useEpicDrag = document.documentElement.dataset.dragEffect === "epic";
+  const pieceRect = piece.getBoundingClientRect();
+  ptrDragNode = piece.cloneNode(true) as HTMLElement;
+  Object.assign(ptrDragNode.style, {
+    position: "fixed",
+    pointerEvents: "none",
+    zIndex: "9999",
+    width: `${pieceRect.width}px`,
+    height: `${pieceRect.height}px`,
+    margin: "0",
+    lineHeight: "1",
+    transformOrigin: "center center",
+    transition: "none",
+  });
+  document.body.append(ptrDragNode);
+  btn.classList.add("dragging");
+  if (useEpicDrag) {
+    ptrDragNode.classList.add("drag-epic-active");
+    ptrDragNode.style.setProperty("--drag-epic-translate", "translate(0, 0)");
+    btn.classList.add("dragging-epic");
+  }
+}
+
 boardEl.addEventListener("pointerdown", (event) => {
 
   if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
@@ -1051,6 +1080,12 @@ boardEl.addEventListener("pointerdown", (event) => {
   ptrStartX = event.clientX;
   ptrStartY = event.clientY;
   boardEl.setPointerCapture(event.pointerId);
+
+  ensurePointerDragVisual();
+  if (ptrDragNode) {
+    ptrDragNode.style.left = `${event.clientX - ptrDragNode.offsetWidth / 2}px`;
+    ptrDragNode.style.top = `${event.clientY - ptrDragNode.offsetHeight / 2}px`;
+  }
 });
 
 boardEl.addEventListener("pointermove", (event) => {
@@ -1066,39 +1101,15 @@ boardEl.addEventListener("pointermove", (event) => {
   }
 
   if (!ptrDragFrom) return;
-  if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 5) return;
 
-  if (!ptrDragMoved) {
+  ensurePointerDragVisual();
+  const dragDistance = Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY);
+
+  if (!ptrDragMoved && dragDistance >= 5) {
     ptrDragMoved = true;
     selectedSquare = ptrDragFrom;
     legalTargets = chess.moves({ square: ptrDragFrom, verbose: true }).map((m) => m.to);
     syncBoardInteractionState();
-
-    const btn = boardEl.querySelector<HTMLButtonElement>(`[data-square="${ptrDragFrom}"]`);
-    const piece = btn?.querySelector<HTMLElement>(".piece");
-    if (piece && btn) {
-      const useEpicDrag = document.documentElement.dataset.dragEffect === "epic";
-      const pieceRect = piece.getBoundingClientRect();
-      ptrDragNode = piece.cloneNode(true) as HTMLElement;
-      Object.assign(ptrDragNode.style, {
-        position: "fixed",
-        pointerEvents: "none",
-        zIndex: "9999",
-        width: `${pieceRect.width}px`,
-        height: `${pieceRect.height}px`,
-        margin: "0",
-        lineHeight: "1",
-        transformOrigin: "center center",
-        transition: "none",
-      });
-      document.body.append(ptrDragNode);
-      btn.classList.add("dragging");
-      if (useEpicDrag) {
-        ptrDragNode.classList.add("drag-epic-active");
-        ptrDragNode.style.setProperty("--drag-epic-translate", "translate(0, 0)");
-        btn.classList.add("dragging-epic");
-      }
-    }
   }
 
   if (ptrDragNode) {
@@ -1439,7 +1450,8 @@ function renderBoard(): void {
     if (legalMovesEnabled && legalTargets.includes(sq)) btn.classList.add("legal");
     if (lastMoveSquares.has(sq)) btn.classList.add("last-move");
     if (checkedKingSquare === sq) btn.classList.add("in-check");
-    if (ptrDragFrom === sq) btn.classList.add("dragging");
+    const dragVisualActive = ptrDragFrom === sq && Boolean(ptrDragNode || ptrDragMoved);
+    if (dragVisualActive) btn.classList.add("dragging");
     if (ptrDragMoved && ptrDragFrom === sq) btn.classList.add("drag-origin");
     if (squareAnnotations.has(sq)) btn.classList.add("highlight-red");
     if (selectedMoveEval?.category === "great" && selectedMoveTo === sq) btn.classList.add("great-move-highlight");
@@ -1525,7 +1537,8 @@ function syncBoardInteractionState(): void {
 
     squareButton.classList.toggle("selected", selectedSquare === square);
     squareButton.classList.toggle("legal", legalTargets.includes(square));
-    squareButton.classList.toggle("dragging", square === ptrDragFrom);
+    const dragVisualActive = square === ptrDragFrom && Boolean(ptrDragNode || ptrDragMoved);
+    squareButton.classList.toggle("dragging", dragVisualActive);
     squareButton.classList.toggle("drag-origin", ptrDragMoved && square === ptrDragFrom);
   }
 }

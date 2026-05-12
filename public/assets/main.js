@@ -34173,6 +34173,9 @@ var require_main_runtime = __commonJS({
     var savedBotPlayerSide = localStorage.getItem("chess-bot-player-side") === "b" ? "b" : "w";
     var savedPieceTheme = normalizePieceTheme(localStorage.getItem(PIECE_THEME_STORAGE_KEY));
     var savedSoundTheme = normalizeSoundTheme(localStorage.getItem(SOUND_THEME_STORAGE_KEY));
+    var FOCUS_MODE_STORAGE_KEY = "chess-focus-mode";
+    var savedFocusMode = localStorage.getItem(FOCUS_MODE_STORAGE_KEY) === "on";
+    var pendingFocusModeRestore = savedFocusMode;
     var state = {
       connected: false,
       roomId: null,
@@ -34206,6 +34209,12 @@ var require_main_runtime = __commonJS({
       bestMoveArrow: null,
       bestMoveArrowFen: null
     };
+    function persistFocusMode(value2) {
+      try {
+        localStorage.setItem(FOCUS_MODE_STORAGE_KEY, value2 ? "on" : "off");
+      } catch {
+      }
+    }
     window.state = state;
     var lastAnimatedMoveKey = null;
     var suppressAnimationForMove = null;
@@ -34744,6 +34753,10 @@ var require_main_runtime = __commonJS({
       state.legalTargets = [];
       state.viewCursor = null;
       state.focusMode = false;
+      persistFocusMode(false);
+      pendingFocusModeRestore = false;
+      persistFocusMode(false);
+      pendingFocusModeRestore = false;
       state.gameMode = "multiplayer";
       accountSidebarController.setFriendPresenceActivity(null);
       state.liveAnalysisSummary = "Live analysis disabled.";
@@ -35536,6 +35549,84 @@ var require_main_runtime = __commonJS({
     var arrowDragTo = null;
     var arrowDragPointer = null;
     var arrowDragMoved = false;
+    function ensurePointerDragVisual(fromSquare, btn) {
+      if (ptrDragNode) return;
+      const pieceEl = btn.querySelector(".piece");
+      const useEpicDrag = document.documentElement.dataset.dragEffect === "epic";
+      if (pieceEl) {
+        const pieceRect = pieceEl.getBoundingClientRect();
+        ptrDragNode = pieceEl.cloneNode(true);
+        Object.assign(ptrDragNode.style, {
+          position: "fixed",
+          pointerEvents: "none",
+          zIndex: "12000",
+          width: `${pieceRect.width}px`,
+          height: `${pieceRect.height}px`,
+          margin: "0",
+          lineHeight: "1",
+          transformOrigin: "center center",
+          transition: "none",
+          transform: useEpicDrag ? "" : "translate(-50%, -50%)",
+          opacity: "1",
+          visibility: "visible"
+        });
+        ptrDragNode.querySelectorAll(".piece, .piece-image").forEach((el) => {
+          el.style.opacity = "1";
+          el.style.visibility = "visible";
+        });
+        if (useEpicDrag) {
+          ptrDragNode.classList.add("drag-epic-active");
+          ptrDragNode.style.setProperty("--drag-epic-translate", "translate(-50%, -50%)");
+        }
+        document.body.append(ptrDragNode);
+        btn.classList.add("dragging");
+        if (useEpicDrag) {
+          btn.classList.add("dragging-epic");
+        }
+        return;
+      }
+      const vBoard = getVirtualBoard(chess.fen(), state.premoves, state.role);
+      const virtualPiece = vBoard.get(fromSquare);
+      if (!virtualPiece) return;
+      const spritePath = getPieceSpritePath(virtualPiece.color, virtualPiece.type);
+      if (useEpicDrag) {
+        const wrapper = document.createElement("div");
+        wrapper.classList.add("drag-epic-active");
+        wrapper.style.setProperty("--drag-epic-translate", "translate(-50%, -50%)");
+        Object.assign(wrapper.style, {
+          position: "fixed",
+          pointerEvents: "none",
+          zIndex: "12000",
+          width: `${btn.offsetWidth}px`,
+          height: `${btn.offsetHeight}px`,
+          opacity: "1"
+        });
+        const img = document.createElement("img");
+        img.src = spritePath;
+        img.alt = "";
+        img.draggable = false;
+        wrapper.append(img);
+        ptrDragNode = wrapper;
+      } else {
+        const img = document.createElement("img");
+        img.src = spritePath;
+        Object.assign(img.style, {
+          position: "fixed",
+          pointerEvents: "none",
+          zIndex: "12000",
+          width: `${btn.offsetWidth}px`,
+          height: `${btn.offsetHeight}px`,
+          transform: "translate(-50%, -50%)",
+          opacity: "1"
+        });
+        ptrDragNode = img;
+      }
+      document.body.append(ptrDragNode);
+      btn.classList.add("dragging");
+      if (useEpicDrag) {
+        btn.classList.add("dragging-epic");
+      }
+    }
     function cancelArrowDragPreview() {
       if (!arrowDragFrom && !arrowDragTo && !arrowDragPointer && !arrowDragMoved) {
         return;
@@ -35578,7 +35669,8 @@ var require_main_runtime = __commonJS({
       return !canStartMoveFrom(square);
     }
     board.addEventListener("pointerdown", (event) => {
-      if (event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0)) {
+      const hadArrowAnnotations = event.button === 0 && (arrowAnnotations.size > 0 || squareAnnotations.size > 0);
+      if (hadArrowAnnotations) {
         clearArrows();
       }
       const gameEnded = Boolean(state.snapshot && (state.snapshot.checkmate || state.snapshot.draw || state.snapshot.winner !== null));
@@ -35611,19 +35703,27 @@ var require_main_runtime = __commonJS({
       if (arrowDragFrom || arrowDragTo || arrowDragPointer || arrowDragMoved) {
         cancelArrowDragPreview();
       }
-      const squareButton = event.target.closest(".square");
-      const square = squareButton?.dataset.square;
+      const square = getSquareFromPoint(event.clientX, event.clientY);
       if (!square || !canStartMoveFrom(square)) return;
+      const squareButton = board.querySelector(`[data-square="${square}"]`);
+      if (!squareButton) return;
       ptrDragFrom = square;
       ptrDragMoved = false;
       ptrStartX = event.clientX;
       ptrStartY = event.clientY;
       board.setPointerCapture(event.pointerId);
+      if (squareButton) {
+        ensurePointerDragVisual(square, squareButton);
+        if (ptrDragNode) {
+          ptrDragNode.style.left = `${event.clientX}px`;
+          ptrDragNode.style.top = `${event.clientY}px`;
+        }
+      }
     });
     board.addEventListener("pointermove", (event) => {
       if (arrowDragFrom) {
-        const hoverSquare2 = getSquareFromPoint(event.clientX, event.clientY);
-        arrowDragTo = hoverSquare2 && hoverSquare2 !== arrowDragFrom ? hoverSquare2 : null;
+        const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
+        arrowDragTo = hoverSquare && hoverSquare !== arrowDragFrom ? hoverSquare : null;
         arrowDragPointer = boardPointFromClient(board, event.clientX, event.clientY);
         renderArrows();
       }
@@ -35631,61 +35731,24 @@ var require_main_runtime = __commonJS({
         arrowDragMoved = true;
       }
       if (!ptrDragFrom) return;
-      if (!ptrDragMoved && Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY) < 3) return;
-      if (!ptrDragMoved) {
+      const dragDistance = Math.hypot(event.clientX - ptrStartX, event.clientY - ptrStartY);
+      const btn = board.querySelector(`[data-square="${ptrDragFrom}"]`);
+      if (btn) {
+        ensurePointerDragVisual(ptrDragFrom, btn);
+      }
+      if (!ptrDragMoved && dragDistance >= 3) {
         ptrDragMoved = true;
         state.selectedSquare = ptrDragFrom;
         const vBoard = getVirtualBoard(chess.fen(), state.premoves, state.role);
-        const virtualPiece = vBoard.get(ptrDragFrom);
         state.legalTargets = vBoard.moves({ square: ptrDragFrom, verbose: true }).map((m) => m.to);
         syncBoardInteractionState();
         updateCaption();
-        const btn = board.querySelector(`[data-square="${ptrDragFrom}"]`);
-        if (btn && virtualPiece) {
-          const spritePath = getPieceSpritePath(virtualPiece.color, virtualPiece.type);
-          const useEpicDrag = document.documentElement.dataset.dragEffect === "epic";
-          if (useEpicDrag) {
-            const wrapper = document.createElement("div");
-            wrapper.classList.add("drag-epic-active");
-            wrapper.style.setProperty("--drag-epic-translate", "translate(-50%, -50%)");
-            Object.assign(wrapper.style, {
-              position: "fixed",
-              pointerEvents: "none",
-              zIndex: "12000",
-              width: `${btn.offsetWidth}px`,
-              height: `${btn.offsetHeight}px`,
-              opacity: "1"
-            });
-            const img = document.createElement("img");
-            img.src = spritePath;
-            img.alt = "";
-            img.draggable = false;
-            wrapper.append(img);
-            ptrDragNode = wrapper;
-          } else {
-            const img = document.createElement("img");
-            img.src = spritePath;
-            Object.assign(img.style, {
-              position: "fixed",
-              pointerEvents: "none",
-              zIndex: "12000",
-              width: `${btn.offsetWidth}px`,
-              height: `${btn.offsetHeight}px`,
-              transform: "translate(-50%, -50%)",
-              opacity: "1"
-            });
-            ptrDragNode = img;
-          }
-          document.body.append(ptrDragNode);
-          btn.classList.add("dragging");
-          if (useEpicDrag) {
-            btn.classList.add("dragging-epic");
-          }
-        }
       }
-      const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
-      dragHoverSquare = hoverSquare ?? null;
-      syncBoardInteractionState();
+      if (ptrDragMoved) {
+        const hoverSquare = getSquareFromPoint(event.clientX, event.clientY);
+        dragHoverSquare = hoverSquare ?? null;
+        syncBoardInteractionState();
+      }
       if (ptrDragNode) {
         ptrDragNode.style.left = `${event.clientX}px`;
         ptrDragNode.style.top = `${event.clientY}px`;
@@ -36643,6 +36706,12 @@ var require_main_runtime = __commonJS({
       flipBoardButton.hidden = !isGameActive;
       focusModeButton.hidden = !isGameActive;
       gameNav.hidden = !isGameActive;
+      if (isGameActive && pendingFocusModeRestore && !state.focusMode) {
+        state.focusMode = true;
+        applyFocusMode();
+        persistFocusMode(true);
+        pendingFocusModeRestore = false;
+      }
       seatCard.hidden = !hasRoom;
       summaryCard.hidden = !isGameActive;
       movesCard.hidden = !isGameActive;
@@ -36656,6 +36725,8 @@ var require_main_runtime = __commonJS({
       if (!isGameActive && state.focusMode) {
         state.focusMode = false;
         applyFocusMode();
+        persistFocusMode(false);
+        pendingFocusModeRestore = false;
       }
       if (!snapshot) {
         clearLowTimeWarningEffect();
@@ -36978,7 +37049,9 @@ var require_main_runtime = __commonJS({
         if (!isHistoryView && state.legalMovesEnabled && state.legalTargets.includes(square)) button.classList.add("legal");
         if (lastMoveSquares.has(squareName)) button.classList.add("last-move");
         if (checkedKingSquare === squareName) button.classList.add("in-check");
-        if (square === ptrDragFrom) button.classList.add("dragging");
+        const isBeingDragged = square === ptrDragFrom;
+        const dragVisualActive = isBeingDragged && Boolean(ptrDragNode || ptrDragMoved);
+        if (dragVisualActive) button.classList.add("dragging");
         if (ptrDragMoved && square === ptrDragFrom) button.classList.add("drag-origin");
         if (ptrDragMoved && dragHoverSquare === square) {
           button.classList.add("drag-hover-legal");
@@ -36998,8 +37071,7 @@ var require_main_runtime = __commonJS({
           pieceElement.className = `piece piece-${piece.type} ${piece.color === "w" ? "white" : "black"}`;
           const isMyPremove = suppressAnimationForMove && square === suppressAnimationForMove.to;
           const isTargetOfActiveAnimation = square === animatingToSquare && !animationFinished;
-          const isBeingDragged = square === ptrDragFrom;
-          const shouldHide = isTargetOfActiveAnimation && activeGhostNode || isBeingDragged;
+          const shouldHide = isTargetOfActiveAnimation && activeGhostNode || dragVisualActive;
           if (shouldHide && !isMyPremove && !isHistoryView) {
             pieceElement.style.opacity = "0";
             pieceElement.style.visibility = "hidden";
@@ -37162,7 +37234,8 @@ var require_main_runtime = __commonJS({
         }
         squareButton.classList.toggle("selected", state.selectedSquare === square);
         squareButton.classList.toggle("legal", state.legalMovesEnabled && state.legalTargets.includes(square));
-        squareButton.classList.toggle("dragging", square === ptrDragFrom);
+        const dragVisualActive = square === ptrDragFrom && Boolean(ptrDragNode || ptrDragMoved);
+        squareButton.classList.toggle("dragging", dragVisualActive);
         squareButton.classList.toggle("drag-origin", ptrDragMoved && square === ptrDragFrom);
         squareButton.classList.toggle(
           "drag-hover-legal",
@@ -38200,6 +38273,8 @@ var require_main_runtime = __commonJS({
       }
       state.focusMode = nextMode;
       applyFocusMode();
+      persistFocusMode(state.focusMode);
+      pendingFocusModeRestore = false;
     }
     var toastTimer = 0;
     var centerFlashTimer = 0;
