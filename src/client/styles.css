@@ -899,24 +899,6 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   display: none !important;
 }
 
-.drag-epic-active::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 92%;
-  height: 92%;
-  border-radius: 50%;
-  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0) 68%);
-  transform: translate(calc(-50% + 12px), calc(-50% + 14px)) scale(1.08);
-  opacity: 0.75;
-  filter: blur(10px);
-  animation: drag-epic-shadow 350ms ease-in-out infinite alternate;
-  pointer-events: none;
-  z-index: 0;
-  will-change: transform, opacity, filter;
-}
-
 .drag-epic-active img {
   width: 100%;
   height: 100%;
@@ -924,6 +906,10 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
   display: block;
   position: relative;
   z-index: 1;
+  filter: drop-shadow(6px 8px 10px rgba(0, 0, 0, 0.45));
+  -webkit-filter: drop-shadow(6px 8px 10px rgba(0, 0, 0, 0.45));
+  animation: drag-epic-shadow 350ms ease-in-out infinite alternate;
+  will-change: filter;
 }
 
 .square.dragging-epic {
@@ -952,16 +938,13 @@ body.bot-picker-open .app-shell > :not(.account-sidebar):not(.sidebar-backdrop) 
 
 @keyframes drag-epic-shadow {
   0% {
-    transform: translate(calc(-50% + 12px), calc(-50% + 14px)) scale(1.08);
-    opacity: 0.75;
-    filter: blur(10px);
+    filter: drop-shadow(4px 6px 8px rgba(0, 0, 0, 0.75));
   }
   100% {
-    transform: translate(calc(-50% + 6px), calc(-50% + 8px)) scale(0.92);
-    opacity: 0.92;
-    filter: blur(6px);
+    filter: drop-shadow(8px 10px 12px rgba(0, 0, 0, 0.5));
   }
 }
+
 
 @keyframes drag-epic-ring {
   0% {
