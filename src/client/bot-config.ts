@@ -13,16 +13,16 @@ const PIECE_VALUES: Record<string, number> = {
 };
 
 export const BOT_DIFFICULTY_PRESETS: BotDifficultyPreset[] = [
-  { level: 1, label: "Level 1 - 800 Elo", elo: 800, skillLevel: 2, moveTimeMs: 170, fullStrength: false },
-  { level: 2, label: "Level 2 - 1000 Elo", elo: 1000, skillLevel: 4, moveTimeMs: 230, fullStrength: false },
-  { level: 3, label: "Level 3 - 1200 Elo", elo: 1200, skillLevel: 4, moveTimeMs: 240, fullStrength: false },
-  { level: 4, label: "Level 4 - 1400 Elo", elo: 1400, skillLevel: 6, moveTimeMs: 340, fullStrength: false },
-  { level: 5, label: "Level 5 - 1600 Elo", elo: 1600, skillLevel: 9, moveTimeMs: 470, fullStrength: false },
-  { level: 6, label: "Level 6 - 1800 Elo", elo: 1800, skillLevel: 12, moveTimeMs: 650, fullStrength: false },
-  { level: 7, label: "Level 7 - 2000 Elo", elo: 2000, skillLevel: 14, moveTimeMs: 900, fullStrength: false },
-  { level: 8, label: "Level 8 - 2200 Elo", elo: 2200, skillLevel: 16, moveTimeMs: 1250, fullStrength: false },
-  { level: 9, label: "Level 9 - 2400 Elo", elo: 2400, skillLevel: 18, moveTimeMs: 1700, fullStrength: false },
-  { level: 10, label: "Level 10 - Full Strength", elo: null, skillLevel: 20, moveTimeMs: 2600, fullStrength: true },
+  { level: 1, label: "Level 1", elo: 800, skillLevel: 2, moveTimeMs: 170, fullStrength: false },
+  { level: 2, label: "Level 2", elo: 1000, skillLevel: 4, moveTimeMs: 230, fullStrength: false },
+  { level: 3, label: "Level 3", elo: 1200, skillLevel: 4, moveTimeMs: 240, fullStrength: false },
+  { level: 4, label: "Level 4", elo: 1400, skillLevel: 6, moveTimeMs: 340, fullStrength: false },
+  { level: 5, label: "Level 5", elo: 1600, skillLevel: 9, moveTimeMs: 470, fullStrength: false },
+  { level: 6, label: "Level 6", elo: 1800, skillLevel: 12, moveTimeMs: 650, fullStrength: false },
+  { level: 7, label: "Level 7", elo: 2000, skillLevel: 14, moveTimeMs: 900, fullStrength: false },
+  { level: 8, label: "Level 8", elo: 2200, skillLevel: 16, moveTimeMs: 1250, fullStrength: false },
+  { level: 9, label: "Level 9", elo: 2400, skillLevel: 18, moveTimeMs: 1700, fullStrength: false },
+  { level: 10, label: "Level 10", elo: null, skillLevel: 20, moveTimeMs: 2600, fullStrength: true },
 ];
 
 export const TIME_CONTROL_PRESETS: TimeControlPreset[] = [
@@ -74,7 +74,7 @@ export function getBotDifficultyPreset(level: number): BotDifficultyPreset {
 }
 
 export function botDifficultySummary(preset: BotDifficultyPreset): string {
-  return preset.fullStrength ? `Level ${preset.level} Max` : `Level ${preset.level} ${preset.elo} Elo`;
+  return `Level ${preset.level}`;
 }
 
 export function moveToUci(move: Move): string {
