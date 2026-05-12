@@ -1237,66 +1237,6 @@ body.focus-mode.focus-analyze .analyze-move-list {
 [data-theme=refined] .move-quality-badge.blunder {
   transform: none;
 }
-.square.selected.dragging {
-  box-shadow: none !important;
-}
-.square.dragging::after,
-.square.dragging::before {
-  display: none !important;
-}
-.drag-epic-active img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
-  position: relative;
-  z-index: 2;
-  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.18)) !important;
-  -webkit-filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.18)) !important;
-  box-shadow: none !important;
-}
-.drag-epic-active::before {
-  display: none !important;
-}
-@keyframes drag-epic-pulse {
-  0% {
-    transform: var(--drag-epic-translate, translate(-50%, -50%)) scale(1);
-  }
-  100% {
-    transform: var(--drag-epic-translate, translate(-50%, -50%)) scale(1.06);
-  }
-}
-@keyframes drag-epic-ring {
-  0% {
-    opacity: 0.9;
-    transform: translate(-50%, -50%) scale(0.9);
-  }
-  60% {
-    opacity: 0.4;
-    transform: translate(-50%, -50%) scale(1.06);
-  }
-  100% {
-    opacity: 0.7;
-    transform: translate(-50%, -50%) scale(1);
-  }
-}
-@keyframes drag-drop-fill {
-  0% {
-    opacity: 0.9;
-    transform: scale(0.8);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1.2);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .drag-epic-active,
-  .drag-epic-active::after,
-  .square.drag-drop-flash::after {
-    animation: none;
-  }
-}
 
 /* src/client/arrows.css */
 .board-arrows,
